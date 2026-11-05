@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -183,10 +184,10 @@ public class QuizEarnApp : Form
     private Label lblUpdateStatus;
     private Button btnCheckUpdate;
     private Panel pnlUpdateCard;
-    private CheckBox chkAutoCheckUpdates;
-    private CheckBox chkSettingsAlwaysOnTop;
-    private CheckBox chkSettingsAutoMute;
-    private CheckBox chkSettingsTurbo;
+    private DarkToggleSwitch chkAutoCheckUpdates;
+    private DarkToggleSwitch chkSettingsAlwaysOnTop;
+    private DarkToggleSwitch chkSettingsAutoMute;
+    private DarkToggleSwitch chkSettingsTurbo;
 
     // Data View UI Elements
     private Label lblDataCoinsVal;
@@ -985,66 +986,30 @@ public class QuizEarnApp : Form
         lblPrefsHead.AutoSize = true;
         pnlPrefsCard.Controls.Add(lblPrefsHead);
 
-        chkAutoCheckUpdates = new CheckBox();
-        chkAutoCheckUpdates.Text = "Auto-check for updates on startup";
-        chkAutoCheckUpdates.Font = new Font("Segoe UI", 9f);
-        chkAutoCheckUpdates.ForeColor = Color.FromArgb(180, 180, 185);
-        chkAutoCheckUpdates.FlatStyle = FlatStyle.Flat;
-        chkAutoCheckUpdates.FlatAppearance.BorderColor = Color.FromArgb(35, 35, 40);
-        chkAutoCheckUpdates.FlatAppearance.CheckedBackColor = Color.FromArgb(22, 22, 26);
+        chkAutoCheckUpdates = new DarkToggleSwitch();
         chkAutoCheckUpdates.Checked = autoCheckUpdates;
-        chkAutoCheckUpdates.Location = new Point(16, 32);
-        chkAutoCheckUpdates.Size = new Size(470, 24);
-        chkAutoCheckUpdates.CheckedChanged += delegate {
+        CreateToggleRow(pnlPrefsCard, "Auto-check for updates on startup", chkAutoCheckUpdates, 34, () => {
             autoCheckUpdates = chkAutoCheckUpdates.Checked;
             SaveStatsToFile();
-        };
-        pnlPrefsCard.Controls.Add(chkAutoCheckUpdates);
+        });
 
-        chkSettingsAutoMute = new CheckBox();
-        chkSettingsAutoMute.Text = "Auto-Mute Ads while solving quizzes (keeps PC quiet)";
-        chkSettingsAutoMute.Font = new Font("Segoe UI", 9f);
-        chkSettingsAutoMute.ForeColor = Color.FromArgb(180, 180, 185);
-        chkSettingsAutoMute.FlatStyle = FlatStyle.Flat;
-        chkSettingsAutoMute.FlatAppearance.BorderColor = Color.FromArgb(35, 35, 40);
-        chkSettingsAutoMute.FlatAppearance.CheckedBackColor = Color.FromArgb(22, 22, 26);
+        chkSettingsAutoMute = new DarkToggleSwitch();
         chkSettingsAutoMute.Checked = true;
-        chkSettingsAutoMute.Location = new Point(16, 66);
-        chkSettingsAutoMute.Size = new Size(470, 24);
-        chkSettingsAutoMute.CheckedChanged += delegate {
+        CreateToggleRow(pnlPrefsCard, "Auto-Mute Ads while solving quizzes (keeps PC quiet)", chkSettingsAutoMute, 66, () => {
             if (chkAutoMute != null) chkAutoMute.Checked = chkSettingsAutoMute.Checked;
-        };
-        pnlPrefsCard.Controls.Add(chkSettingsAutoMute);
+        });
 
-        chkSettingsTurbo = new CheckBox();
-        chkSettingsTurbo.Text = "Turbo Speed Solver (fast answering mode)";
-        chkSettingsTurbo.Font = new Font("Segoe UI", 9f);
-        chkSettingsTurbo.ForeColor = Color.FromArgb(180, 180, 185);
-        chkSettingsTurbo.FlatStyle = FlatStyle.Flat;
-        chkSettingsTurbo.FlatAppearance.BorderColor = Color.FromArgb(35, 35, 40);
-        chkSettingsTurbo.FlatAppearance.CheckedBackColor = Color.FromArgb(22, 22, 26);
+        chkSettingsTurbo = new DarkToggleSwitch();
         chkSettingsTurbo.Checked = true;
-        chkSettingsTurbo.Location = new Point(16, 100);
-        chkSettingsTurbo.Size = new Size(470, 24);
-        chkSettingsTurbo.CheckedChanged += delegate {
+        CreateToggleRow(pnlPrefsCard, "Turbo Speed Solver (fast answering mode)", chkSettingsTurbo, 98, () => {
             if (chkTurboSpeed != null) chkTurboSpeed.Checked = chkSettingsTurbo.Checked;
-        };
-        pnlPrefsCard.Controls.Add(chkSettingsTurbo);
+        });
 
-        chkSettingsAlwaysOnTop = new CheckBox();
-        chkSettingsAlwaysOnTop.Text = "Always On Top window mode";
-        chkSettingsAlwaysOnTop.Font = new Font("Segoe UI", 9f);
-        chkSettingsAlwaysOnTop.ForeColor = Color.FromArgb(180, 180, 185);
-        chkSettingsAlwaysOnTop.FlatStyle = FlatStyle.Flat;
-        chkSettingsAlwaysOnTop.FlatAppearance.BorderColor = Color.FromArgb(35, 35, 40);
-        chkSettingsAlwaysOnTop.FlatAppearance.CheckedBackColor = Color.FromArgb(22, 22, 26);
+        chkSettingsAlwaysOnTop = new DarkToggleSwitch();
         chkSettingsAlwaysOnTop.Checked = false;
-        chkSettingsAlwaysOnTop.Location = new Point(16, 134);
-        chkSettingsAlwaysOnTop.Size = new Size(470, 24);
-        chkSettingsAlwaysOnTop.CheckedChanged += delegate {
+        CreateToggleRow(pnlPrefsCard, "Always On Top window mode", chkSettingsAlwaysOnTop, 130, () => {
             this.TopMost = chkSettingsAlwaysOnTop.Checked;
-        };
-        pnlPrefsCard.Controls.Add(chkSettingsAlwaysOnTop);
+        });
 
         // Card 3: About Standalone
         Panel pnlAboutCard = new Panel();
@@ -4013,6 +3978,51 @@ public class QuizEarnApp : Form
         }
     }
 
+    private Panel CreateToggleRow(Panel parent, string text, DarkToggleSwitch toggle, int y, Action onToggle)
+    {
+        Panel row = new Panel();
+        row.BackColor = Color.Transparent;
+        row.Location = new Point(12, y);
+        row.Size = new Size(480, 28);
+        row.Cursor = Cursors.Hand;
+
+        Label lbl = new Label();
+        lbl.Text = text;
+        lbl.Font = new Font("Segoe UI", 9f);
+        lbl.ForeColor = toggle.Checked ? Color.FromArgb(220, 220, 225) : Color.FromArgb(140, 140, 145);
+        lbl.Location = new Point(4, 4);
+        lbl.Size = new Size(410, 20);
+        lbl.Cursor = Cursors.Hand;
+
+        toggle.Location = new Point(430, 4);
+        toggle.Size = new Size(38, 20);
+
+        Action updateColor = () => {
+            lbl.ForeColor = toggle.Checked ? Color.FromArgb(225, 225, 230) : Color.FromArgb(140, 140, 145);
+        };
+
+        toggle.CheckedChanged += delegate {
+            updateColor();
+            if (onToggle != null) onToggle();
+        };
+
+        lbl.Click += delegate {
+            toggle.Checked = !toggle.Checked;
+        };
+        row.Click += delegate {
+            toggle.Checked = !toggle.Checked;
+        };
+
+        lbl.MouseEnter += delegate { if (!toggle.Checked) lbl.ForeColor = Color.FromArgb(185, 185, 190); };
+        lbl.MouseLeave += delegate { updateColor(); };
+
+        row.Controls.Add(lbl);
+        row.Controls.Add(toggle);
+        parent.Controls.Add(row);
+
+        return row;
+    }
+
     private static Mutex appMutex = null;
 
     [STAThread]
@@ -4078,5 +4088,125 @@ public class QuizEarnApp : Form
             }
         }
         Application.Run(app);
+    }
+}
+
+public class DarkToggleSwitch : Control
+{
+    private bool _checked = false;
+    private bool _isHovered = false;
+    public event EventHandler CheckedChanged;
+
+    public bool Checked
+    {
+        get { return _checked; }
+        set
+        {
+            if (_checked != value)
+            {
+                _checked = value;
+                this.Invalidate();
+                if (CheckedChanged != null) CheckedChanged(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    public DarkToggleSwitch()
+    {
+        this.SetStyle(ControlStyles.UserPaint |
+                      ControlStyles.AllPaintingInWmPaint |
+                      ControlStyles.OptimizedDoubleBuffer |
+                      ControlStyles.ResizeRedraw |
+                      ControlStyles.SupportsTransparentBackColor, true);
+        this.Size = new Size(38, 20);
+        this.BackColor = Color.Transparent;
+        this.Cursor = Cursors.Hand;
+        this.TabStop = false;
+    }
+
+    protected override void OnMouseEnter(EventArgs e)
+    {
+        base.OnMouseEnter(e);
+        _isHovered = true;
+        this.Invalidate();
+    }
+
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        base.OnMouseLeave(e);
+        _isHovered = false;
+        this.Invalidate();
+    }
+
+    protected override void OnClick(EventArgs e)
+    {
+        base.OnClick(e);
+        this.Checked = !this.Checked;
+    }
+
+    protected override void OnPaint(PaintEventArgs pe)
+    {
+        Graphics g = pe.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+
+        int w = this.Width;
+        int h = this.Height;
+        int d = h - 1;
+
+        using (GraphicsPath path = new GraphicsPath())
+        {
+            path.AddArc(0, 0, d, d, 90, 180);
+            path.AddArc(w - d - 1, 0, d, d, 270, 180);
+            path.CloseFigure();
+
+            if (_checked)
+            {
+                Color bgColor = _isHovered ? Color.FromArgb(20, 200, 140) : Color.FromArgb(16, 185, 129);
+                Color borderColor = _isHovered ? Color.FromArgb(25, 225, 160) : Color.FromArgb(5, 150, 105);
+
+                using (SolidBrush bgBrush = new SolidBrush(bgColor))
+                {
+                    g.FillPath(bgBrush, path);
+                }
+                using (Pen borderPen = new Pen(borderColor, 1f))
+                {
+                    g.DrawPath(borderPen, path);
+                }
+
+                int knobSize = h - 6;
+                int knobX = w - knobSize - 3;
+                int knobY = 3;
+
+                using (SolidBrush knobBrush = new SolidBrush(Color.White))
+                {
+                    g.FillEllipse(knobBrush, knobX, knobY, knobSize, knobSize);
+                }
+            }
+            else
+            {
+                Color bgColor = _isHovered ? Color.FromArgb(28, 28, 34) : Color.FromArgb(18, 18, 22);
+                Color borderColor = _isHovered ? Color.FromArgb(58, 58, 68) : Color.FromArgb(38, 38, 46);
+                Color knobColor = _isHovered ? Color.FromArgb(150, 150, 160) : Color.FromArgb(100, 100, 110);
+
+                using (SolidBrush bgBrush = new SolidBrush(bgColor))
+                {
+                    g.FillPath(bgBrush, path);
+                }
+                using (Pen borderPen = new Pen(borderColor, 1f))
+                {
+                    g.DrawPath(borderPen, path);
+                }
+
+                int knobSize = h - 8;
+                int knobX = 4;
+                int knobY = 4;
+
+                using (SolidBrush knobBrush = new SolidBrush(knobColor))
+                {
+                    g.FillEllipse(knobBrush, knobX, knobY, knobSize, knobSize);
+                }
+            }
+        }
     }
 }
