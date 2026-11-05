@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -167,8 +167,8 @@ public class QuizEarnApp : Form
     private List<string> claimsHistory = new List<string>();
 
     // App Version & Cloud Auto-Updater State
-    private const string APP_VERSION = "2.2";
-    private const int APP_VERSION_CODE = 220;
+    private const string APP_VERSION = "2.3";
+    private const int APP_VERSION_CODE = 230;
     private string updateFeedUrl = "https://raw.githubusercontent.com/THESHMIL0/QuizEarnBot/main/version.json";
     private string remoteVersion = "";
     private int remoteVersionCode = 0;
@@ -2869,17 +2869,46 @@ public class QuizEarnApp : Form
         return false;
     }
 
-    private int ParseSecondsNeeded(string xml)
+    private int ParseSecondsNeeded(string xml, int buttonY = 0)
     {
-        // 0. Check if usage is already verified or 100% completed!
-        // When usage reaches 100%, Quiz & Earn displays "Usage verified! 100%", but the button still says "Open App" until tapped once.
-        if (xml.Contains("Usage verified") || xml.Contains("100%"))
+        // 1. Isolate text near buttonY (+/- 180px) to inspect the specific active card rather than global page
+        string cardScope = xml;
+        if (buttonY > 0)
+        {
+            try
+            {
+                MatchCollection matches = Regex.Matches(xml, @"<node [^>]*text=""([^""]*)""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
+                List<string> nearTexts = new List<string>();
+                foreach (Match m in matches)
+                {
+                    string t = m.Groups[1].Value.Trim();
+                    if (string.IsNullOrEmpty(t)) continue;
+                    int y1 = int.Parse(m.Groups[3].Value);
+                    int y2 = int.Parse(m.Groups[5].Value);
+                    int yc = (y1 + y2) / 2;
+                    if (Math.Abs(yc - buttonY) <= 180)
+                    {
+                        nearTexts.Add(t);
+                    }
+                }
+                if (nearTexts.Count > 0)
+                {
+                    cardScope = string.Join(" | ", nearTexts);
+                    Log(string.Format("[ðŸ’Ž Claimer] Card node texts near Y={0}: {1}", buttonY, cardScope.Length > 100 ? cardScope.Substring(0, 100) + "..." : cardScope));
+                }
+            }
+            catch {}
+        }
+
+        // 0. Check if usage is already verified or 100% completed on this card!
+        if (cardScope.IndexOf("Usage verified", StringComparison.OrdinalIgnoreCase) >= 0 ||
+            Regex.IsMatch(cardScope, @"\b100\s*%", RegexOptions.IgnoreCase))
         {
             return 0;
         }
 
-        // e.g. "1m 8s more needed" or "10m 52s more needed"
-        Match m1 = Regex.Match(xml, @"(\d+)\s*m(?:in)?\s*(\d+)\s*s(?:ec)?\s*more\s*needed", RegexOptions.IgnoreCase);
+        // A. e.g. "1m 8s more needed" or "7m 55s more needed"
+        Match m1 = Regex.Match(cardScope, @"(\d+)\s*m(?:in)?\s*(\d+)\s*s(?:ec)?\s*more\s*needed", RegexOptions.IgnoreCase);
         if (m1.Success)
         {
             int mins = int.Parse(m1.Groups[1].Value);
@@ -2887,24 +2916,24 @@ public class QuizEarnApp : Form
             return (mins * 60) + secs + 4;
         }
 
-        // e.g. "1m more needed" or "5 min more needed"
-        Match m1b = Regex.Match(xml, @"(\d+)\s*m(?:in)?\s*more\s*needed", RegexOptions.IgnoreCase);
+        // B. e.g. "1m more needed" or "5 min more needed"
+        Match m1b = Regex.Match(cardScope, @"(\d+)\s*m(?:in)?\s*more\s*needed", RegexOptions.IgnoreCase);
         if (m1b.Success)
         {
             int mins = int.Parse(m1b.Groups[1].Value);
             return (mins * 60) + 4;
         }
 
-        // e.g. "45s more needed" or "30 sec more needed"
-        Match m2 = Regex.Match(xml, @"(\d+)\s*s(?:ec)?\s*more\s*needed", RegexOptions.IgnoreCase);
+        // C. e.g. "45s more needed" or "30 sec more needed"
+        Match m2 = Regex.Match(cardScope, @"(\d+)\s*s(?:ec)?\s*more\s*needed", RegexOptions.IgnoreCase);
         if (m2.Success)
         {
             int secs = int.Parse(m2.Groups[1].Value);
             return secs + 4;
         }
 
-        // e.g. "Usage Progress 10m 52s / 12m 0s"
-        Match mProgress = Regex.Match(xml, @"(\d+)\s*m\s*(\d+)\s*s\s*\/\s*(\d+)\s*m\s*(\d+)\s*s", RegexOptions.IgnoreCase);
+        // D. e.g. "Usage Progress 4m 5s / 12m 0s"
+        Match mProgress = Regex.Match(cardScope, @"(\d+)\s*m\s*(\d+)\s*s\s*\/\s*(\d+)\s*m\s*(\d+)\s*s", RegexOptions.IgnoreCase);
         if (mProgress.Success)
         {
             int doneSec = int.Parse(mProgress.Groups[1].Value) * 60 + int.Parse(mProgress.Groups[2].Value);
@@ -2914,25 +2943,44 @@ public class QuizEarnApp : Form
             return 0;
         }
 
-        // e.g. "Use app for 12 more minutes"
-        Match m3 = Regex.Match(xml, @"Use\s*app\s*for\s*(\d+)\s*more\s*minutes", RegexOptions.IgnoreCase);
+        // E. e.g. "Usage Progress 1s / 12m 0s"
+        Match mProgressSec = Regex.Match(cardScope, @"(\d+)\s*s\s*\/\s*(\d+)\s*m\s*(\d+)\s*s", RegexOptions.IgnoreCase);
+        if (mProgressSec.Success)
+        {
+            int doneSec = int.Parse(mProgressSec.Groups[1].Value);
+            int totalSec = int.Parse(mProgressSec.Groups[2].Value) * 60 + int.Parse(mProgressSec.Groups[3].Value);
+            int diff = totalSec - doneSec;
+            if (diff > 0) return diff + 4;
+            return 0;
+        }
+
+        // F. e.g. "Use app for 12 more minutes" or "Use app for 12 minutes"
+        Match m3 = Regex.Match(cardScope, @"Use\s*app\s*for\s*(\d+)\s*(?:more\s*)?(?:min|minutes)", RegexOptions.IgnoreCase);
         if (m3.Success)
         {
             int mins = int.Parse(m3.Groups[1].Value);
-            return (mins * 60) + 5;
+            return (mins * 60) + 4;
         }
 
-        // e.g. "Tap 'Open App' to start using it for 12 min"
-        Match m4 = Regex.Match(xml, @"using\s*it\s*for\s*(\d+)\s*min", RegexOptions.IgnoreCase);
+        // G. e.g. "Tap 'Open App' to start using it for 12 min"
+        Match m4 = Regex.Match(cardScope, @"using\s*it\s*for\s*(\d+)\s*(?:min|minutes)", RegexOptions.IgnoreCase);
         if (m4.Success)
         {
             int mins = int.Parse(m4.Groups[1].Value);
-            return (mins * 60) + 5;
+            return (mins * 60) + 4;
+        }
+
+        // H. Fallback: Check if cardScope contains "Xm Ys"
+        Match mFall = Regex.Match(cardScope, @"(\d+)\s*m\s*(\d+)\s*s", RegexOptions.IgnoreCase);
+        if (mFall.Success)
+        {
+            int mins = int.Parse(mFall.Groups[1].Value);
+            int secs = int.Parse(mFall.Groups[2].Value);
+            return (mins * 60) + secs + 4;
         }
 
         return 65;
     }
-
     private bool FindAndClickReadyOfferCard(string xml, HashSet<string> skippedApps, out string clickedTitle)
     {
         clickedTitle = "";
@@ -3121,7 +3169,7 @@ public class QuizEarnApp : Form
                     // SAFETY: Never tap navigation bar (oy < 1560)
                     if (oy < 1560)
                     {
-                        int staySeconds = ParseSecondsNeeded(xml);
+                        int staySeconds = ParseSecondsNeeded(xml, oy);
                         if (staySeconds <= 0)
                         {
                             Log(string.Format("[💎 Claimer] Usage already 100% verified! Quick-tapping 'Open App' at ({0}, {1})...", ox, oy));

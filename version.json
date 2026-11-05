@@ -1,8 +1,8 @@
 ﻿{
-    "changelog":  "Fix Auto-Offer same-app loop lock, Load More expansion, SafeBeginInvoke hardening, and socket stability.",
-    "version":  "2.2",
+    "changelog":  "Accurate per-card stay timer (+4s precision), Pure OLED dark modal popups, iOS-style toggle switches, and BlueStacks ADB port stability.",
+    "version":  "2.3",
     "mandatory":  false,
     "download_url":  "https://raw.githubusercontent.com/THESHMIL0/QuizEarnBot/main/QuizEarnBot.exe",
-    "version_code":  220,
+    "version_code":  230,
     "release_date":  "2026-11-05"
 }
