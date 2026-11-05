@@ -1,0 +1,8 @@
+﻿{
+    "changelog":  "Settings menu with Cloud Auto-Updater, Fixed Bonus Rewards claiming across all apps, Pure OLED Black theme enhancements.",
+    "version":  "2.1",
+    "mandatory":  false,
+    "download_url":  "https://raw.githubusercontent.com/THESHMIL0/QuizEarnBot/main/QuizEarnBot.exe",
+    "version_code":  210,
+    "release_date":  "2026-11-05"
+}
