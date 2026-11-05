@@ -299,7 +299,15 @@ public class QuizEarnApp : Form
     private void InitializeComponent()
     {
         this.Text = "Quiz & Earn - Auto Quiz & Reward Bot";
-        try { this.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch {}
+        try
+        {
+            string icoPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app.ico");
+            if (File.Exists(icoPath))
+                this.Icon = new Icon(icoPath);
+            else
+                this.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+        }
+        catch {}
         this.ClientSize = new Size(544, 835);
         this.StartPosition = FormStartPosition.CenterScreen;
         // Pure OLED Pitch Black Dark++ Theme (Stealth Minimalist)
@@ -318,12 +326,28 @@ public class QuizEarnApp : Form
         pnlHomeView.BackColor = Color.Black;
         this.Controls.Add(pnlHomeView);
 
-        // Header Title
+        // Header Logo & Title
+        PictureBox picLogo = new PictureBox();
+        picLogo.Location = new Point(20, 14);
+        picLogo.Size = new Size(30, 30);
+        picLogo.SizeMode = PictureBoxSizeMode.Zoom;
+        picLogo.BackColor = Color.Transparent;
+        try
+        {
+            string pngPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logo.png");
+            string icoPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app.ico");
+            if (File.Exists(pngPath)) picLogo.Image = Image.FromFile(pngPath);
+            else if (File.Exists(icoPath)) picLogo.Image = new Icon(icoPath, 64, 64).ToBitmap();
+            else if (this.Icon != null) picLogo.Image = this.Icon.ToBitmap();
+        }
+        catch {}
+        pnlHomeView.Controls.Add(picLogo);
+
         lblTitle = new Label();
         lblTitle.Text = "Quiz & Earn Auto-Bot";
         lblTitle.Font = new Font("Segoe UI", 16f, FontStyle.Bold);
         lblTitle.ForeColor = Color.FromArgb(160, 160, 165);
-        lblTitle.Location = new Point(20, 16);
+        lblTitle.Location = new Point(56, 14);
         lblTitle.AutoSize = true;
         pnlHomeView.Controls.Add(lblTitle);
 
