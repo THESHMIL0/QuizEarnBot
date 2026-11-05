@@ -174,18 +174,10 @@ public class QuizEarnApp : Form
     private Label lblUpdateStatus;
     private Button btnCheckUpdate;
     private Panel pnlUpdateCard;
-    private Panel pnlUpdateAction;
-    private Label lblNewVersionBadge;
-    private TextBox txtChangelog;
-    private ProgressBar prgUpdate;
-    private Button btnApplyUpdate;
-    private Button btnIgnoreUpdate;
     private CheckBox chkAutoCheckUpdates;
     private CheckBox chkSettingsAlwaysOnTop;
     private CheckBox chkSettingsAutoMute;
     private CheckBox chkSettingsTurbo;
-    private TextBox txtFeedUrl;
-    private Button btnSaveFeedUrl;
 
     // Data View UI Elements
     private Label lblDataCoinsVal;
@@ -316,6 +308,7 @@ public class QuizEarnApp : Form
         this.Font = new Font("Segoe UI", 9.5f, FontStyle.Regular);
         this.FormBorderStyle = FormBorderStyle.FixedSingle;
         this.MaximizeBox = false;
+        this.AutoScroll = false;
 
         // ==========================================
         // 1. HOME VIEW CONTAINER
@@ -324,6 +317,7 @@ public class QuizEarnApp : Form
         pnlHomeView.Location = new Point(0, 0);
         pnlHomeView.Size = new Size(544, 780);
         pnlHomeView.BackColor = Color.Black;
+        pnlHomeView.AutoScroll = false;
         this.Controls.Add(pnlHomeView);
 
         // Header Logo & Title
@@ -593,6 +587,7 @@ public class QuizEarnApp : Form
         pnlDataView.Location = new Point(0, 0);
         pnlDataView.Size = new Size(544, 780);
         pnlDataView.BackColor = Color.Black;
+        pnlDataView.AutoScroll = false;
         pnlDataView.Visible = false;
         this.Controls.Add(pnlDataView);
 
@@ -894,6 +889,7 @@ public class QuizEarnApp : Form
         pnlSettingsView.Location = new Point(0, 0);
         pnlSettingsView.Size = new Size(544, 780);
         pnlSettingsView.BackColor = Color.Black;
+        pnlSettingsView.AutoScroll = false;
         pnlSettingsView.Visible = false;
         this.Controls.Add(pnlSettingsView);
 
@@ -918,7 +914,7 @@ public class QuizEarnApp : Form
         pnlUpdateCard = new Panel();
         pnlUpdateCard.BackColor = Color.FromArgb(6, 6, 6);
         pnlUpdateCard.Location = new Point(20, 72);
-        pnlUpdateCard.Size = new Size(504, 255);
+        pnlUpdateCard.Size = new Size(504, 90);
         pnlUpdateCard.Paint += delegate(object s, PaintEventArgs pe) {
             ControlPaint.DrawBorder(pe.Graphics, pnlUpdateCard.ClientRectangle, Color.FromArgb(22, 22, 26), ButtonBorderStyle.Solid);
         };
@@ -928,7 +924,7 @@ public class QuizEarnApp : Form
         lblUpdateHead.Text = "APP VERSION & CLOUD UPDATER";
         lblUpdateHead.Font = new Font("Segoe UI", 8f, FontStyle.Bold);
         lblUpdateHead.ForeColor = Color.FromArgb(140, 140, 145);
-        lblUpdateHead.Location = new Point(14, 10);
+        lblUpdateHead.Location = new Point(14, 12);
         lblUpdateHead.AutoSize = true;
         pnlUpdateCard.Controls.Add(lblUpdateHead);
 
@@ -936,7 +932,7 @@ public class QuizEarnApp : Form
         lblCurrentVersion.Text = string.Format("Current Installed: v{0}", APP_VERSION);
         lblCurrentVersion.Font = new Font("Segoe UI", 12f, FontStyle.Bold);
         lblCurrentVersion.ForeColor = Color.FromArgb(235, 235, 240);
-        lblCurrentVersion.Location = new Point(12, 30);
+        lblCurrentVersion.Location = new Point(12, 32);
         lblCurrentVersion.AutoSize = true;
         pnlUpdateCard.Controls.Add(lblCurrentVersion);
 
@@ -944,7 +940,7 @@ public class QuizEarnApp : Form
         lblUpdateStatus.Text = "Status: Up to date. Click 'Check for Updates' to verify.";
         lblUpdateStatus.Font = new Font("Segoe UI", 8.5f);
         lblUpdateStatus.ForeColor = Color.FromArgb(140, 140, 145);
-        lblUpdateStatus.Location = new Point(14, 56);
+        lblUpdateStatus.Location = new Point(14, 58);
         lblUpdateStatus.Size = new Size(300, 20);
         pnlUpdateCard.Controls.Add(lblUpdateStatus);
 
@@ -957,80 +953,15 @@ public class QuizEarnApp : Form
         btnCheckUpdate.FlatAppearance.BorderColor = Color.FromArgb(28, 28, 32);
         btnCheckUpdate.FlatAppearance.BorderSize = 1;
         btnCheckUpdate.Location = new Point(334, 26);
-        btnCheckUpdate.Size = new Size(156, 34);
+        btnCheckUpdate.Size = new Size(156, 36);
         btnCheckUpdate.Cursor = Cursors.Hand;
         btnCheckUpdate.Click += delegate { CheckForUpdatesAsync(true); };
         pnlUpdateCard.Controls.Add(btnCheckUpdate);
 
-        // Expanded Update Action Panel (shown when an update is available)
-        pnlUpdateAction = new Panel();
-        pnlUpdateAction.Location = new Point(14, 82);
-        pnlUpdateAction.Size = new Size(476, 160);
-        pnlUpdateAction.BackColor = Color.FromArgb(8, 8, 10);
-        pnlUpdateAction.Visible = false;
-        pnlUpdateAction.Paint += delegate(object s, PaintEventArgs pe) {
-            ControlPaint.DrawBorder(pe.Graphics, pnlUpdateAction.ClientRectangle, Color.FromArgb(30, 30, 36), ButtonBorderStyle.Solid);
-        };
-        pnlUpdateCard.Controls.Add(pnlUpdateAction);
-
-        lblNewVersionBadge = new Label();
-        lblNewVersionBadge.Text = "New Update Available!";
-        lblNewVersionBadge.Font = new Font("Segoe UI", 10f, FontStyle.Bold);
-        lblNewVersionBadge.ForeColor = Color.White;
-        lblNewVersionBadge.Location = new Point(10, 8);
-        lblNewVersionBadge.AutoSize = true;
-        pnlUpdateAction.Controls.Add(lblNewVersionBadge);
-
-        txtChangelog = new TextBox();
-        txtChangelog.Multiline = true;
-        txtChangelog.ReadOnly = true;
-        txtChangelog.ScrollBars = ScrollBars.None;
-        txtChangelog.BackColor = Color.Black;
-        txtChangelog.ForeColor = Color.FromArgb(170, 170, 175);
-        txtChangelog.Font = new Font("Consolas", 8.5f);
-        txtChangelog.BorderStyle = BorderStyle.FixedSingle;
-        txtChangelog.Location = new Point(10, 32);
-        txtChangelog.Size = new Size(456, 68);
-        pnlUpdateAction.Controls.Add(txtChangelog);
-
-        prgUpdate = new ProgressBar();
-        prgUpdate.Location = new Point(10, 104);
-        prgUpdate.Size = new Size(456, 8);
-        prgUpdate.Visible = false;
-        pnlUpdateAction.Controls.Add(prgUpdate);
-
-        btnApplyUpdate = new Button();
-        btnApplyUpdate.Text = "Update & Restart Now";
-        btnApplyUpdate.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
-        btnApplyUpdate.ForeColor = Color.White;
-        btnApplyUpdate.BackColor = Color.FromArgb(22, 22, 26);
-        btnApplyUpdate.FlatStyle = FlatStyle.Flat;
-        btnApplyUpdate.FlatAppearance.BorderColor = Color.FromArgb(48, 48, 56);
-        btnApplyUpdate.FlatAppearance.BorderSize = 1;
-        btnApplyUpdate.Location = new Point(10, 116);
-        btnApplyUpdate.Size = new Size(222, 34);
-        btnApplyUpdate.Cursor = Cursors.Hand;
-        btnApplyUpdate.Click += delegate { ApplyUpdateAsync(); };
-        pnlUpdateAction.Controls.Add(btnApplyUpdate);
-
-        btnIgnoreUpdate = new Button();
-        btnIgnoreUpdate.Text = "Ignore / Later";
-        btnIgnoreUpdate.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
-        btnIgnoreUpdate.ForeColor = Color.FromArgb(135, 135, 140);
-        btnIgnoreUpdate.BackColor = Color.FromArgb(10, 10, 12);
-        btnIgnoreUpdate.FlatStyle = FlatStyle.Flat;
-        btnIgnoreUpdate.FlatAppearance.BorderColor = Color.FromArgb(24, 24, 28);
-        btnIgnoreUpdate.FlatAppearance.BorderSize = 1;
-        btnIgnoreUpdate.Location = new Point(244, 116);
-        btnIgnoreUpdate.Size = new Size(222, 34);
-        btnIgnoreUpdate.Cursor = Cursors.Hand;
-        btnIgnoreUpdate.Click += delegate { IgnoreUpdate(); };
-        pnlUpdateAction.Controls.Add(btnIgnoreUpdate);
-
         // Card 2: Automation & Preferences
         Panel pnlPrefsCard = new Panel();
         pnlPrefsCard.BackColor = Color.FromArgb(6, 6, 6);
-        pnlPrefsCard.Location = new Point(20, 338);
+        pnlPrefsCard.Location = new Point(20, 178);
         pnlPrefsCard.Size = new Size(504, 175);
         pnlPrefsCard.Paint += delegate(object s, PaintEventArgs pe) {
             ControlPaint.DrawBorder(pe.Graphics, pnlPrefsCard.ClientRectangle, Color.FromArgb(22, 22, 26), ButtonBorderStyle.Solid);
@@ -1106,74 +1037,11 @@ public class QuizEarnApp : Form
         };
         pnlPrefsCard.Controls.Add(chkSettingsAlwaysOnTop);
 
-        // Card 3: Cloud Feed URL
-        Panel pnlFeedCard = new Panel();
-        pnlFeedCard.BackColor = Color.FromArgb(6, 6, 6);
-        pnlFeedCard.Location = new Point(20, 524);
-        pnlFeedCard.Size = new Size(504, 115);
-        pnlFeedCard.Paint += delegate(object s, PaintEventArgs pe) {
-            ControlPaint.DrawBorder(pe.Graphics, pnlFeedCard.ClientRectangle, Color.FromArgb(22, 22, 26), ButtonBorderStyle.Solid);
-        };
-        pnlSettingsView.Controls.Add(pnlFeedCard);
-
-        Label lblFeedHead = new Label();
-        lblFeedHead.Text = "CLOUD UPDATE REPOSITORY URL (ADVANCED)";
-        lblFeedHead.Font = new Font("Segoe UI", 8f, FontStyle.Bold);
-        lblFeedHead.ForeColor = Color.FromArgb(140, 140, 145);
-        lblFeedHead.Location = new Point(14, 10);
-        lblFeedHead.AutoSize = true;
-        pnlFeedCard.Controls.Add(lblFeedHead);
-
-        Label lblFeedSub = new Label();
-        lblFeedSub.Text = "Direct link to your version.json (GitHub Releases, Dropbox, or any web server):";
-        lblFeedSub.Font = new Font("Segoe UI", 7.5f);
-        lblFeedSub.ForeColor = Color.FromArgb(110, 110, 115);
-        lblFeedSub.Location = new Point(14, 30);
-        lblFeedSub.AutoSize = true;
-        pnlFeedCard.Controls.Add(lblFeedSub);
-
-        txtFeedUrl = new TextBox();
-        txtFeedUrl.Text = updateFeedUrl;
-        txtFeedUrl.BackColor = Color.Black;
-        txtFeedUrl.ForeColor = Color.FromArgb(200, 200, 205);
-        txtFeedUrl.Font = new Font("Segoe UI", 8.5f);
-        txtFeedUrl.BorderStyle = BorderStyle.FixedSingle;
-        txtFeedUrl.Location = new Point(14, 52);
-        txtFeedUrl.Size = new Size(372, 24);
-        pnlFeedCard.Controls.Add(txtFeedUrl);
-
-        btnSaveFeedUrl = new Button();
-        btnSaveFeedUrl.Text = "Save URL";
-        btnSaveFeedUrl.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
-        btnSaveFeedUrl.ForeColor = Color.FromArgb(180, 180, 185);
-        btnSaveFeedUrl.BackColor = Color.FromArgb(12, 12, 14);
-        btnSaveFeedUrl.FlatStyle = FlatStyle.Flat;
-        btnSaveFeedUrl.FlatAppearance.BorderColor = Color.FromArgb(28, 28, 32);
-        btnSaveFeedUrl.FlatAppearance.BorderSize = 1;
-        btnSaveFeedUrl.Location = new Point(394, 51);
-        btnSaveFeedUrl.Size = new Size(96, 26);
-        btnSaveFeedUrl.Cursor = Cursors.Hand;
-        btnSaveFeedUrl.Click += delegate {
-            updateFeedUrl = txtFeedUrl.Text.Trim();
-            SaveStatsToFile();
-            Log("[Update] Cloud update feed URL saved: " + updateFeedUrl);
-            MessageBox.Show("Update Feed URL saved successfully!", "Settings Saved", MessageBoxButtons.OK, MessageBoxIcon.Information);
-        };
-        pnlFeedCard.Controls.Add(btnSaveFeedUrl);
-
-        Label lblFeedTip = new Label();
-        lblFeedTip.Text = "Friends' apps will automatically fetch updates from this link when you publish a new version.";
-        lblFeedTip.Font = new Font("Segoe UI", 7.5f);
-        lblFeedTip.ForeColor = Color.FromArgb(90, 90, 95);
-        lblFeedTip.Location = new Point(14, 85);
-        lblFeedTip.AutoSize = true;
-        pnlFeedCard.Controls.Add(lblFeedTip);
-
-        // Card 4: About Standalone
+        // Card 3: About Standalone
         Panel pnlAboutCard = new Panel();
         pnlAboutCard.BackColor = Color.FromArgb(4, 4, 4);
-        pnlAboutCard.Location = new Point(20, 650);
-        pnlAboutCard.Size = new Size(504, 110);
+        pnlAboutCard.Location = new Point(20, 368);
+        pnlAboutCard.Size = new Size(504, 115);
         pnlAboutCard.Paint += delegate(object s, PaintEventArgs pe) {
             ControlPaint.DrawBorder(pe.Graphics, pnlAboutCard.ClientRectangle, Color.FromArgb(20, 20, 24), ButtonBorderStyle.Solid);
         };
@@ -1192,7 +1060,7 @@ public class QuizEarnApp : Form
         lblAboutText.Font = new Font("Segoe UI", 8f);
         lblAboutText.ForeColor = Color.FromArgb(120, 120, 125);
         lblAboutText.Location = new Point(14, 32);
-        lblAboutText.Size = new Size(476, 68);
+        lblAboutText.Size = new Size(476, 72);
         pnlAboutCard.Controls.Add(lblAboutText);
 
         // ==========================================
@@ -1697,15 +1565,10 @@ public class QuizEarnApp : Form
         if (pnlDataView != null) pnlDataView.Visible = false;
         if (pnlSettingsView != null) pnlSettingsView.Visible = true;
 
-        if (txtFeedUrl != null) txtFeedUrl.Text = updateFeedUrl;
         if (chkAutoCheckUpdates != null) chkAutoCheckUpdates.Checked = autoCheckUpdates;
         if (chkSettingsAutoMute != null && chkAutoMute != null) chkSettingsAutoMute.Checked = chkAutoMute.Checked;
         if (chkSettingsTurbo != null && chkTurboSpeed != null) chkSettingsTurbo.Checked = chkTurboSpeed.Checked;
         if (chkSettingsAlwaysOnTop != null) chkSettingsAlwaysOnTop.Checked = this.TopMost;
-        if (isUpdateAvailable && !isUpdateIgnored && pnlUpdateAction != null)
-        {
-            pnlUpdateAction.Visible = true;
-        }
 
         SetActiveNavButton(btnNavSettings);
     }
@@ -1729,6 +1592,209 @@ public class QuizEarnApp : Form
                 b.FlatAppearance.BorderColor = Color.FromArgb(18, 18, 20);
             }
         }
+    }
+
+    private void ShowUpdateDialog(string newVersion, string changelog, string downloadUrl)
+    {
+        if (this.InvokeRequired)
+        {
+            this.BeginInvoke(new Action(() => ShowUpdateDialog(newVersion, changelog, downloadUrl)));
+            return;
+        }
+
+        Form dlg = new Form();
+        dlg.Text = "Update Available - Quiz & Earn Bot";
+        dlg.ClientSize = new Size(460, 280);
+        dlg.StartPosition = FormStartPosition.CenterParent;
+        dlg.FormBorderStyle = FormBorderStyle.FixedDialog;
+        dlg.MaximizeBox = false;
+        dlg.MinimizeBox = false;
+        dlg.ShowInTaskbar = false;
+        dlg.BackColor = Color.FromArgb(8, 8, 10);
+        dlg.ForeColor = Color.FromArgb(220, 220, 225);
+        dlg.AutoScroll = false;
+        try { dlg.Icon = this.Icon; } catch {}
+
+        dlg.Paint += delegate(object s, PaintEventArgs pe) {
+            ControlPaint.DrawBorder(pe.Graphics, dlg.ClientRectangle, Color.FromArgb(32, 32, 38), ButtonBorderStyle.Solid);
+        };
+
+        Label lblTitle = new Label();
+        lblTitle.Text = string.Format("New Update Available! (v{0})", newVersion);
+        lblTitle.Font = new Font("Segoe UI", 12.5f, FontStyle.Bold);
+        lblTitle.ForeColor = Color.White;
+        lblTitle.Location = new Point(22, 16);
+        lblTitle.AutoSize = true;
+        dlg.Controls.Add(lblTitle);
+
+        Label lblSub = new Label();
+        lblSub.Text = "A new version of Quiz & Earn Bot is ready to install:";
+        lblSub.Font = new Font("Segoe UI", 8.5f);
+        lblSub.ForeColor = Color.FromArgb(140, 140, 145);
+        lblSub.Location = new Point(24, 44);
+        lblSub.AutoSize = true;
+        dlg.Controls.Add(lblSub);
+
+        TextBox txtNotes = new TextBox();
+        txtNotes.Multiline = true;
+        txtNotes.ReadOnly = true;
+        txtNotes.ScrollBars = ScrollBars.None;
+        txtNotes.BackColor = Color.Black;
+        txtNotes.ForeColor = Color.FromArgb(180, 180, 185);
+        txtNotes.Font = new Font("Consolas", 8.5f);
+        txtNotes.BorderStyle = BorderStyle.FixedSingle;
+        txtNotes.Location = new Point(22, 68);
+        txtNotes.Size = new Size(416, 75);
+        txtNotes.Text = string.IsNullOrEmpty(changelog) ? "• General performance enhancements and bug fixes." : changelog;
+        dlg.Controls.Add(txtNotes);
+
+        Label lblStatus = new Label();
+        lblStatus.Text = "";
+        lblStatus.Font = new Font("Segoe UI", 8.5f);
+        lblStatus.ForeColor = Color.FromArgb(160, 160, 165);
+        lblStatus.Location = new Point(22, 150);
+        lblStatus.Size = new Size(416, 20);
+        dlg.Controls.Add(lblStatus);
+
+        ProgressBar prg = new ProgressBar();
+        prg.Location = new Point(22, 174);
+        prg.Size = new Size(416, 6);
+        prg.Visible = false;
+        dlg.Controls.Add(prg);
+
+        Button btnUpdate = new Button();
+        btnUpdate.Text = "Update Now";
+        btnUpdate.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
+        btnUpdate.ForeColor = Color.White;
+        btnUpdate.BackColor = Color.FromArgb(24, 24, 28);
+        btnUpdate.FlatStyle = FlatStyle.Flat;
+        btnUpdate.FlatAppearance.BorderColor = Color.FromArgb(48, 48, 56);
+        btnUpdate.FlatAppearance.BorderSize = 1;
+        btnUpdate.Location = new Point(22, 210);
+        btnUpdate.Size = new Size(202, 44);
+        btnUpdate.Cursor = Cursors.Hand;
+        dlg.Controls.Add(btnUpdate);
+
+        Button btnLater = new Button();
+        btnLater.Text = "Later";
+        btnLater.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
+        btnLater.ForeColor = Color.FromArgb(135, 135, 140);
+        btnLater.BackColor = Color.FromArgb(10, 10, 12);
+        btnLater.FlatStyle = FlatStyle.Flat;
+        btnLater.FlatAppearance.BorderColor = Color.FromArgb(24, 24, 28);
+        btnLater.FlatAppearance.BorderSize = 1;
+        btnLater.Location = new Point(236, 210);
+        btnLater.Size = new Size(202, 44);
+        btnLater.Cursor = Cursors.Hand;
+        btnLater.Click += delegate {
+            isUpdateIgnored = true;
+            dlg.Close();
+        };
+        dlg.Controls.Add(btnLater);
+
+        bool isDownloaded = false;
+        string updaterBat = "";
+
+        btnUpdate.Click += delegate {
+            if (isDownloaded && !string.IsNullOrEmpty(updaterBat))
+            {
+                try
+                {
+                    ProcessStartInfo psi = new ProcessStartInfo();
+                    psi.FileName = updaterBat;
+                    psi.CreateNoWindow = true;
+                    psi.UseShellExecute = false;
+                    psi.WindowStyle = ProcessWindowStyle.Hidden;
+                    Process.Start(psi);
+                    Application.Exit();
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Could not launch updater: " + ex.Message, "Update Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+                return;
+            }
+
+            btnLater.Visible = false;
+            btnUpdate.Enabled = false;
+            btnUpdate.Location = new Point(22, 210);
+            btnUpdate.Size = new Size(416, 44);
+            btnUpdate.Text = "Downloading update...";
+            prg.Visible = true;
+            prg.Value = 0;
+            lblStatus.Text = "Connecting to update server...";
+
+            Thread downloadThread = new Thread(new ThreadStart(delegate {
+                try
+                {
+                    System.Net.ServicePointManager.SecurityProtocol = (System.Net.SecurityProtocolType)3072;
+                    string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                    string tempExe = Path.Combine(baseDir, "QuizEarnBot_update.exe");
+                    string finalExe = Path.Combine(baseDir, "QuizEarnBot.exe");
+                    updaterBat = Path.Combine(baseDir, "apply_update.bat");
+
+                    using (System.Net.WebClient wc = new System.Net.WebClient())
+                    {
+                        wc.Headers["User-Agent"] = "QuizEarnBot/" + APP_VERSION;
+                        wc.DownloadProgressChanged += (s, pe) => {
+                            dlg.BeginInvoke(new Action(() => {
+                                prg.Value = pe.ProgressPercentage;
+                                lblStatus.Text = string.Format("Downloading update... {0}%", pe.ProgressPercentage);
+                                btnUpdate.Text = string.Format("Downloading {0}%...", pe.ProgressPercentage);
+                            }));
+                        };
+                        wc.DownloadFile(downloadUrl, tempExe);
+                    }
+
+                    FileInfo fi = new FileInfo(tempExe);
+                    if (!fi.Exists || fi.Length < 10240)
+                    {
+                        throw new Exception("Downloaded file is incomplete or invalid.");
+                    }
+
+                    string batScript = string.Format(
+                        "@echo off\r\n" +
+                        "timeout /t 1 /nobreak > nul\r\n" +
+                        "copy /y \"{0}\" \"{1}\" > nul\r\n" +
+                        "del \"{0}\" > nul\r\n" +
+                        "start \"\" \"{1}\"\r\n" +
+                        "del \"%~f0\" > nul\r\n",
+                        tempExe, finalExe
+                    );
+                    File.WriteAllText(updaterBat, batScript);
+
+                    isDownloaded = true;
+
+                    dlg.BeginInvoke(new Action(() => {
+                        prg.Value = 100;
+                        lblStatus.Text = "✓ Update downloaded successfully! Restart the app to apply.";
+                        lblStatus.ForeColor = Color.FromArgb(235, 235, 240);
+                        btnUpdate.Text = "Restart App Now";
+                        btnUpdate.BackColor = Color.FromArgb(32, 32, 38);
+                        btnUpdate.FlatAppearance.BorderColor = Color.FromArgb(70, 70, 80);
+                        btnUpdate.Enabled = true;
+                    }));
+                }
+                catch (Exception ex)
+                {
+                    dlg.BeginInvoke(new Action(() => {
+                        lblStatus.Text = "Download failed: " + ex.Message;
+                        lblStatus.ForeColor = Color.FromArgb(220, 110, 110);
+                        btnUpdate.Text = "Retry Download";
+                        btnUpdate.Enabled = true;
+                        btnLater.Visible = true;
+                        btnUpdate.Size = new Size(202, 44);
+                        btnLater.Location = new Point(236, 210);
+                        btnLater.Size = new Size(202, 44);
+                    }));
+                }
+            }));
+            downloadThread.IsBackground = true;
+            downloadThread.Start();
+        };
+
+        dlg.ShowDialog(this);
+        dlg.Dispose();
     }
 
     private void CheckForUpdatesAsync(bool manualCheck)
@@ -1779,27 +1845,16 @@ public class QuizEarnApp : Form
                             if (lblUpdateStatus != null)
                             {
                                 lblUpdateStatus.Text = string.Format("New Version v{0} available!", remoteVersion);
-                                lblUpdateStatus.ForeColor = Color.FromArgb(220, 220, 225);
+                                lblUpdateStatus.ForeColor = Color.FromArgb(235, 235, 240);
                             }
-                            if (lblNewVersionBadge != null)
-                            {
-                                lblNewVersionBadge.Text = string.Format("Release v{0} Ready to Download", remoteVersion);
-                            }
-                            if (txtChangelog != null)
-                            {
-                                txtChangelog.Text = string.IsNullOrEmpty(remoteChangelog) ? "General performance enhancements and bug fixes." : remoteChangelog;
-                            }
-                            if (pnlUpdateAction != null && !isUpdateIgnored)
-                            {
-                                pnlUpdateAction.Visible = true;
-                            }
-                            if (btnNavSettings != null && !isUpdateIgnored)
+                            if (btnNavSettings != null)
                             {
                                 btnNavSettings.Text = "SETTINGS ✦";
                             }
                             if (btnCheckUpdate != null) btnCheckUpdate.Enabled = true;
 
-                            Log(string.Format("[Update] New version v{0} detected! Check Settings to update.", remoteVersion));
+                            Log(string.Format("[Update] New version v{0} detected! Opening update prompt...", remoteVersion));
+                            ShowUpdateDialog(remoteVersion, remoteChangelog, remoteDownloadUrl);
                         }));
                         return;
                     }
@@ -1810,15 +1865,15 @@ public class QuizEarnApp : Form
                 this.BeginInvoke(new Action(() => {
                     if (lblUpdateStatus != null)
                     {
-                        lblUpdateStatus.Text = string.Format("You are running the latest version (v{0}).", APP_VERSION);
+                        lblUpdateStatus.Text = string.Format("Status: Up to date (v{0}).", APP_VERSION);
                         lblUpdateStatus.ForeColor = Color.FromArgb(140, 140, 145);
                     }
-                    if (pnlUpdateAction != null) pnlUpdateAction.Visible = false;
                     if (btnNavSettings != null) btnNavSettings.Text = "SETTINGS";
                     if (btnCheckUpdate != null) btnCheckUpdate.Enabled = true;
                     if (manualCheck)
                     {
                         Log("[Update] App is up to date (v" + APP_VERSION + ").");
+                        MessageBox.Show(this, "You are already running the latest version of Quiz & Earn Bot (v" + APP_VERSION + ")!\n\nNo updates are needed.", "Quiz & Earn Bot - Up to Date", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     }
                 }));
             }
@@ -1827,116 +1882,19 @@ public class QuizEarnApp : Form
                 this.BeginInvoke(new Action(() => {
                     if (lblUpdateStatus != null)
                     {
-                        lblUpdateStatus.Text = manualCheck ? "Could not reach update server. Check Feed URL." : "Update check skipped (offline).";
+                        lblUpdateStatus.Text = "Status: Up to date (offline mode).";
                         lblUpdateStatus.ForeColor = Color.FromArgb(135, 135, 140);
                     }
                     if (btnCheckUpdate != null) btnCheckUpdate.Enabled = true;
+                    if (manualCheck)
+                    {
+                        MessageBox.Show(this, "Could not reach the update server.\nPlease check your internet connection.", "Update Check", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    }
                 }));
             }
         }));
         t.IsBackground = true;
         t.Start();
-    }
-
-    private void ApplyUpdateAsync()
-    {
-        if (string.IsNullOrEmpty(remoteDownloadUrl)) return;
-
-        if (btnApplyUpdate != null)
-        {
-            btnApplyUpdate.Enabled = false;
-            btnApplyUpdate.Text = "Downloading...";
-        }
-        if (btnIgnoreUpdate != null) btnIgnoreUpdate.Enabled = false;
-        if (prgUpdate != null)
-        {
-            prgUpdate.Visible = true;
-            prgUpdate.Value = 0;
-        }
-
-        Thread t = new Thread(new ThreadStart(delegate {
-            try
-            {
-                System.Net.ServicePointManager.SecurityProtocol = (System.Net.SecurityProtocolType)3072;
-                string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-                string tempExe = Path.Combine(baseDir, "QuizEarnBot_update.exe");
-                string finalExe = Path.Combine(baseDir, "QuizEarnBot.exe");
-                string updaterBat = Path.Combine(baseDir, "apply_update.bat");
-
-                using (System.Net.WebClient wc = new System.Net.WebClient())
-                {
-                    wc.Headers["User-Agent"] = "QuizEarnBot/" + APP_VERSION;
-                    wc.DownloadProgressChanged += (s, pe) => {
-                        this.BeginInvoke(new Action(() => {
-                            if (prgUpdate != null) prgUpdate.Value = pe.ProgressPercentage;
-                            if (btnApplyUpdate != null)
-                                btnApplyUpdate.Text = string.Format("Downloading {0}%...", pe.ProgressPercentage);
-                        }));
-                    };
-
-                    wc.DownloadFile(remoteDownloadUrl, tempExe);
-                }
-
-                FileInfo fi = new FileInfo(tempExe);
-                if (!fi.Exists || fi.Length < 10240)
-                {
-                    throw new Exception("Downloaded file is incomplete or invalid.");
-                }
-
-                Log("[Update] Download complete. Applying update and restarting...");
-
-                string batScript = string.Format(
-                    "@echo off\r\n" +
-                    "timeout /t 1 /nobreak > nul\r\n" +
-                    "copy /y \"{0}\" \"{1}\" > nul\r\n" +
-                    "del \"{0}\" > nul\r\n" +
-                    "start \"\" \"{1}\"\r\n" +
-                    "del \"%~f0\" > nul\r\n",
-                    tempExe, finalExe
-                );
-                File.WriteAllText(updaterBat, batScript);
-
-                ProcessStartInfo psi = new ProcessStartInfo();
-                psi.FileName = updaterBat;
-                psi.CreateNoWindow = true;
-                psi.UseShellExecute = false;
-                psi.WindowStyle = ProcessWindowStyle.Hidden;
-                Process.Start(psi);
-
-                Application.Exit();
-            }
-            catch (Exception ex)
-            {
-                this.BeginInvoke(new Action(() => {
-                    if (lblUpdateStatus != null)
-                    {
-                        lblUpdateStatus.Text = "Update failed: " + ex.Message;
-                    }
-                    if (btnApplyUpdate != null)
-                    {
-                        btnApplyUpdate.Enabled = true;
-                        btnApplyUpdate.Text = "Retry Update";
-                    }
-                    if (btnIgnoreUpdate != null) btnIgnoreUpdate.Enabled = true;
-                    if (prgUpdate != null) prgUpdate.Visible = false;
-                    Log("[Update] Error: " + ex.Message);
-                }));
-            }
-        }));
-        t.IsBackground = true;
-        t.Start();
-    }
-
-    private void IgnoreUpdate()
-    {
-        isUpdateIgnored = true;
-        if (pnlUpdateAction != null) pnlUpdateAction.Visible = false;
-        if (btnNavSettings != null) btnNavSettings.Text = "SETTINGS";
-        if (lblUpdateStatus != null)
-        {
-            lblUpdateStatus.Text = string.Format("Update v{0} skipped. You can update anytime.", remoteVersion);
-        }
-        Log(string.Format("[Update] Update to v{0} ignored by user.", remoteVersion));
     }
 
     private void AddClaimHistory(string text)
