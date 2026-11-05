@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Diagnostics;
@@ -45,19 +45,28 @@ public class QuizEarnApp : Form
     private const int DWMWA_CAPTION_COLOR = 35;
     private const int DWMWA_TEXT_COLOR = 36;
 
-    private void ApplyDwmDarkMode()
+    public static void ApplyDwmDarkTo(IntPtr hwnd)
     {
         try
         {
             int darkMode = 1;
-            int r1 = DwmSetWindowAttribute(this.Handle, DWMWA_USE_IMMERSIVE_DARK_MODE, ref darkMode, sizeof(int));
-            int r2 = DwmSetWindowAttribute(this.Handle, DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1, ref darkMode, sizeof(int));
+            DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ref darkMode, sizeof(int));
+            DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1, ref darkMode, sizeof(int));
             int blackColor = 0x00000000;
-            int r3 = DwmSetWindowAttribute(this.Handle, DWMWA_CAPTION_COLOR, ref blackColor, sizeof(int));
-            int r4 = DwmSetWindowAttribute(this.Handle, DWMWA_BORDER_COLOR, ref blackColor, sizeof(int));
-            int textColor = 0x00808080; // Subdued stealth gray for caption title
-            int r5 = DwmSetWindowAttribute(this.Handle, DWMWA_TEXT_COLOR, ref textColor, sizeof(int));
-            Log(string.Format("[DWM] Titlebar DarkMode applied: r1=0x{0:X8}, r3(caption)=0x{1:X8}, r4(border)=0x{2:X8}, r5(text)=0x{3:X8}", r1, r3, r4, r5));
+            DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, ref blackColor, sizeof(int));
+            DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, ref blackColor, sizeof(int));
+            int textColor = 0x00808080;
+            DwmSetWindowAttribute(hwnd, DWMWA_TEXT_COLOR, ref textColor, sizeof(int));
+        }
+        catch {}
+    }
+
+    private void ApplyDwmDarkMode()
+    {
+        try
+        {
+            ApplyDwmDarkTo(this.Handle);
+            Log("[DWM] Titlebar DarkMode applied.");
         }
         catch (Exception ex)
         {
@@ -866,7 +875,7 @@ public class QuizEarnApp : Form
         btnDataResetToday.Size = new Size(246, 36);
         btnDataResetToday.Cursor = Cursors.Hand;
         btnDataResetToday.Click += delegate {
-            if (MessageBox.Show("Are you sure you want to reset today's coins, 25-gem count, and claims log back to 0?", "Reset Today's Stats", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+            if (ShowDarkConfirm("Reset Today's Stats", "Are you sure you want to reset today's coins, 25-gem count, and claims log back to 0?"))
             {
                 todayCoinsClaimed = 0;
                 today25GemsCount = 0;
@@ -1600,6 +1609,196 @@ public class QuizEarnApp : Form
         }
     }
 
+    private void ShowDarkAlert(string title, string message, string buttonText = "OK")
+    {
+        if (this.InvokeRequired)
+        {
+            this.BeginInvoke(new Action(() => ShowDarkAlert(title, message, buttonText)));
+            return;
+        }
+
+        using (Form dlg = new Form())
+        {
+            dlg.Text = title;
+            dlg.ClientSize = new Size(430, 185);
+            dlg.StartPosition = FormStartPosition.CenterParent;
+            dlg.FormBorderStyle = FormBorderStyle.FixedDialog;
+            dlg.MaximizeBox = false;
+            dlg.MinimizeBox = false;
+            dlg.ShowInTaskbar = false;
+            dlg.BackColor = Color.FromArgb(8, 8, 10);
+            dlg.ForeColor = Color.FromArgb(220, 220, 225);
+            try { dlg.Icon = this.Icon; } catch {}
+
+            dlg.HandleCreated += delegate {
+                ApplyDwmDarkTo(dlg.Handle);
+            };
+
+            dlg.Paint += delegate(object s, PaintEventArgs pe) {
+                ControlPaint.DrawBorder(pe.Graphics, dlg.ClientRectangle, Color.FromArgb(36, 36, 44), ButtonBorderStyle.Solid);
+            };
+
+            bool isSuccess = title.IndexOf("Up to Date", StringComparison.OrdinalIgnoreCase) >= 0 || title.IndexOf("Success", StringComparison.OrdinalIgnoreCase) >= 0;
+            bool isWarning = title.IndexOf("Check", StringComparison.OrdinalIgnoreCase) >= 0 || title.IndexOf("Warning", StringComparison.OrdinalIgnoreCase) >= 0 || title.IndexOf("Error", StringComparison.OrdinalIgnoreCase) >= 0;
+
+            Label lblBadge = new Label();
+            lblBadge.Font = new Font("Segoe UI", 12f, FontStyle.Bold);
+            lblBadge.Size = new Size(24, 24);
+            lblBadge.Location = new Point(22, 18);
+            lblBadge.TextAlign = ContentAlignment.MiddleCenter;
+            if (isSuccess)
+            {
+                lblBadge.Text = "âœ“";
+                lblBadge.ForeColor = Color.FromArgb(70, 210, 130);
+            }
+            else if (isWarning)
+            {
+                lblBadge.Text = "!";
+                lblBadge.ForeColor = Color.FromArgb(240, 170, 50);
+            }
+            else
+            {
+                lblBadge.Text = "âœ¦";
+                lblBadge.ForeColor = Color.FromArgb(170, 170, 180);
+            }
+            dlg.Controls.Add(lblBadge);
+
+            Label lblTitle = new Label();
+            lblTitle.Text = title;
+            lblTitle.Font = new Font("Segoe UI", 11.5f, FontStyle.Bold);
+            lblTitle.ForeColor = Color.White;
+            lblTitle.Location = new Point(50, 19);
+            lblTitle.AutoSize = true;
+            dlg.Controls.Add(lblTitle);
+
+            Label lblMsg = new Label();
+            lblMsg.Text = message;
+            lblMsg.Font = new Font("Segoe UI", 9.5f);
+            lblMsg.ForeColor = Color.FromArgb(170, 170, 175);
+            lblMsg.Location = new Point(24, 52);
+            lblMsg.Size = new Size(382, 60);
+            dlg.Controls.Add(lblMsg);
+
+            Button btnOk = new Button();
+            btnOk.Text = buttonText;
+            btnOk.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
+            btnOk.ForeColor = Color.White;
+            btnOk.BackColor = Color.FromArgb(24, 24, 28);
+            btnOk.FlatStyle = FlatStyle.Flat;
+            btnOk.FlatAppearance.BorderColor = Color.FromArgb(48, 48, 56);
+            btnOk.FlatAppearance.BorderSize = 1;
+            btnOk.Location = new Point(140, 124);
+            btnOk.Size = new Size(150, 38);
+            btnOk.Cursor = Cursors.Hand;
+            btnOk.TabStop = false;
+            btnOk.MouseEnter += delegate { btnOk.BackColor = Color.FromArgb(36, 36, 42); btnOk.FlatAppearance.BorderColor = Color.FromArgb(70, 70, 80); };
+            btnOk.MouseLeave += delegate { btnOk.BackColor = Color.FromArgb(24, 24, 28); btnOk.FlatAppearance.BorderColor = Color.FromArgb(48, 48, 56); };
+            btnOk.Click += delegate { dlg.Close(); };
+            dlg.Controls.Add(btnOk);
+
+            dlg.AcceptButton = btnOk;
+            dlg.CancelButton = btnOk;
+
+            dlg.ShowDialog(this);
+        }
+    }
+
+    private bool ShowDarkConfirm(string title, string message, string yesText = "Yes", string noText = "No")
+    {
+        if (this.InvokeRequired)
+        {
+            return (bool)this.Invoke(new Func<bool>(() => ShowDarkConfirm(title, message, yesText, noText)));
+        }
+
+        bool result = false;
+        using (Form dlg = new Form())
+        {
+            dlg.Text = title;
+            dlg.ClientSize = new Size(430, 185);
+            dlg.StartPosition = FormStartPosition.CenterParent;
+            dlg.FormBorderStyle = FormBorderStyle.FixedDialog;
+            dlg.MaximizeBox = false;
+            dlg.MinimizeBox = false;
+            dlg.ShowInTaskbar = false;
+            dlg.BackColor = Color.FromArgb(8, 8, 10);
+            dlg.ForeColor = Color.FromArgb(220, 220, 225);
+            try { dlg.Icon = this.Icon; } catch {}
+
+            dlg.HandleCreated += delegate {
+                ApplyDwmDarkTo(dlg.Handle);
+            };
+
+            dlg.Paint += delegate(object s, PaintEventArgs pe) {
+                ControlPaint.DrawBorder(pe.Graphics, dlg.ClientRectangle, Color.FromArgb(36, 36, 44), ButtonBorderStyle.Solid);
+            };
+
+            Label lblBadge = new Label();
+            lblBadge.Font = new Font("Segoe UI", 12f, FontStyle.Bold);
+            lblBadge.Size = new Size(24, 24);
+            lblBadge.Location = new Point(22, 18);
+            lblBadge.TextAlign = ContentAlignment.MiddleCenter;
+            lblBadge.Text = "?";
+            lblBadge.ForeColor = Color.FromArgb(140, 140, 220);
+            dlg.Controls.Add(lblBadge);
+
+            Label lblTitle = new Label();
+            lblTitle.Text = title;
+            lblTitle.Font = new Font("Segoe UI", 11.5f, FontStyle.Bold);
+            lblTitle.ForeColor = Color.White;
+            lblTitle.Location = new Point(50, 19);
+            lblTitle.AutoSize = true;
+            dlg.Controls.Add(lblTitle);
+
+            Label lblMsg = new Label();
+            lblMsg.Text = message;
+            lblMsg.Font = new Font("Segoe UI", 9.5f);
+            lblMsg.ForeColor = Color.FromArgb(170, 170, 175);
+            lblMsg.Location = new Point(24, 52);
+            lblMsg.Size = new Size(382, 60);
+            dlg.Controls.Add(lblMsg);
+
+            Button btnYes = new Button();
+            btnYes.Text = yesText;
+            btnYes.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
+            btnYes.ForeColor = Color.White;
+            btnYes.BackColor = Color.FromArgb(32, 32, 38);
+            btnYes.FlatStyle = FlatStyle.Flat;
+            btnYes.FlatAppearance.BorderColor = Color.FromArgb(60, 60, 72);
+            btnYes.FlatAppearance.BorderSize = 1;
+            btnYes.Location = new Point(80, 124);
+            btnYes.Size = new Size(125, 38);
+            btnYes.Cursor = Cursors.Hand;
+            btnYes.TabStop = false;
+            btnYes.MouseEnter += delegate { btnYes.BackColor = Color.FromArgb(44, 44, 52); btnYes.FlatAppearance.BorderColor = Color.FromArgb(80, 80, 95); };
+            btnYes.MouseLeave += delegate { btnYes.BackColor = Color.FromArgb(32, 32, 38); btnYes.FlatAppearance.BorderColor = Color.FromArgb(60, 60, 72); };
+            btnYes.Click += delegate { result = true; dlg.Close(); };
+            dlg.Controls.Add(btnYes);
+
+            Button btnNo = new Button();
+            btnNo.Text = noText;
+            btnNo.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
+            btnNo.ForeColor = Color.FromArgb(160, 160, 170);
+            btnNo.BackColor = Color.FromArgb(14, 14, 18);
+            btnNo.FlatStyle = FlatStyle.Flat;
+            btnNo.FlatAppearance.BorderColor = Color.FromArgb(32, 32, 40);
+            btnNo.FlatAppearance.BorderSize = 1;
+            btnNo.Location = new Point(225, 124);
+            btnNo.Size = new Size(125, 38);
+            btnNo.Cursor = Cursors.Hand;
+            btnNo.TabStop = false;
+            btnNo.MouseEnter += delegate { btnNo.BackColor = Color.FromArgb(24, 24, 30); btnNo.FlatAppearance.BorderColor = Color.FromArgb(48, 48, 58); };
+            btnNo.MouseLeave += delegate { btnNo.BackColor = Color.FromArgb(14, 14, 18); btnNo.FlatAppearance.BorderColor = Color.FromArgb(32, 32, 40); };
+            btnNo.Click += delegate { result = false; dlg.Close(); };
+            dlg.Controls.Add(btnNo);
+
+            dlg.AcceptButton = btnYes;
+            dlg.CancelButton = btnNo;
+
+            dlg.ShowDialog(this);
+        }
+        return result;
+    }
+
     private void ShowUpdateDialog(string newVersion, string changelog, string downloadUrl)
     {
         if (this.InvokeRequired)
@@ -1620,6 +1819,9 @@ public class QuizEarnApp : Form
         dlg.ForeColor = Color.FromArgb(220, 220, 225);
         dlg.AutoScroll = false;
         try { dlg.Icon = this.Icon; } catch {}
+        dlg.HandleCreated += delegate {
+            ApplyDwmDarkTo(dlg.Handle);
+        };
 
         dlg.Paint += delegate(object s, PaintEventArgs pe) {
             ControlPaint.DrawBorder(pe.Graphics, dlg.ClientRectangle, Color.FromArgb(32, 32, 38), ButtonBorderStyle.Solid);
@@ -1716,7 +1918,7 @@ public class QuizEarnApp : Form
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show("Could not launch updater: " + ex.Message, "Update Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    ShowDarkAlert("Update Error", "Could not launch updater: " + ex.Message);
                 }
                 return;
             }
@@ -1884,7 +2086,7 @@ public class QuizEarnApp : Form
                     if (manualCheck)
                     {
                         Log("[Update] App is up to date (v" + APP_VERSION + ").");
-                        MessageBox.Show(this, "You are already running the latest version of Quiz & Earn Bot (v" + APP_VERSION + ")!\n\nNo updates are needed.", "Quiz & Earn Bot - Up to Date", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        ShowDarkAlert("Quiz & Earn Bot - Up to Date", "You are already running the latest version of Quiz & Earn Bot (v" + APP_VERSION + ")!\n\nNo updates are needed.");
                     }
                 }));
             }
@@ -1899,7 +2101,7 @@ public class QuizEarnApp : Form
                     if (btnCheckUpdate != null) btnCheckUpdate.Enabled = true;
                     if (manualCheck)
                     {
-                        MessageBox.Show(this, "Could not reach the update server.\nPlease check your internet connection.", "Update Check", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        ShowDarkAlert("Update Check", "Could not reach the update server.\nPlease check your internet connection.");
                     }
                 }));
             }
