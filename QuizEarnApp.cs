@@ -2200,22 +2200,32 @@ public class QuizEarnApp : Form
             p.StartInfo.Arguments = isGlobalCmd ? arguments : string.Format("-s {0} {1}", adbPort, arguments);
             p.StartInfo.UseShellExecute = false;
             p.StartInfo.RedirectStandardOutput = true;
-            p.StartInfo.RedirectStandardError = false;
+            p.StartInfo.RedirectStandardError = true;
             p.StartInfo.CreateNoWindow = true;
 
             StringBuilder sb = new StringBuilder();
             p.OutputDataReceived += delegate(object sender, DataReceivedEventArgs e) {
                 if (e.Data != null) sb.AppendLine(e.Data);
             };
+            p.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs e) {
+                if (e.Data != null) sb.AppendLine(e.Data);
+            };
 
             p.Start();
             p.BeginOutputReadLine();
+            p.BeginErrorReadLine();
             bool exited = p.WaitForExit(6000);
             if (!exited)
             {
                 try { p.Kill(); } catch {}
             }
-            return sb.ToString();
+            string res = sb.ToString();
+            if ((res.Contains("device not found") || res.Contains("device offline")) && !isGlobalCmd && adbPort != "emulator-5554")
+            {
+                adbPort = "emulator-5554";
+                return RunAdb(arguments);
+            }
+            return res;
         }
         catch { return ""; }
     }
@@ -2352,6 +2362,7 @@ public class QuizEarnApp : Form
     {
         // 1. Check existing connected devices (Physical USB phones, Emulators)
         string devOut = RunAdb("devices");
+        string candidateDev = "";
         foreach (string line in devOut.Split('\n'))
         {
             string trimmed = line.Trim();
@@ -2364,10 +2375,14 @@ public class QuizEarnApp : Form
                 string state = parts[1].ToLower();
                 if (state == "device")
                 {
-                    adbPort = parts[0];
-                    UpdatePortLabel(adbPort);
-                    UpdateScreenResolution();
-                    return true;
+                    if (parts[0].StartsWith("emulator-"))
+                    {
+                        adbPort = parts[0];
+                        UpdatePortLabel(adbPort);
+                        UpdateScreenResolution();
+                        return true;
+                    }
+                    if (string.IsNullOrEmpty(candidateDev)) candidateDev = parts[0];
                 }
                 else if (state == "unauthorized")
                 {
@@ -2375,6 +2390,13 @@ public class QuizEarnApp : Form
                     return false;
                 }
             }
+        }
+        if (!string.IsNullOrEmpty(candidateDev))
+        {
+            adbPort = candidateDev;
+            UpdatePortLabel(adbPort);
+            UpdateScreenResolution();
+            return true;
         }
 
         // 2. Discover and connect listening emulator ports
@@ -2623,10 +2645,95 @@ public class QuizEarnApp : Form
             if (string.IsNullOrEmpty(xml) || string.IsNullOrEmpty(textKeyword)) return false;
 
             MatchCollection nodes = Regex.Matches(xml, @"<node\s+[^>]*>", RegexOptions.Singleline);
+            
+            // Pass 1: Look for exact text or content-desc match on a clickable or Button node
             foreach (Match n in nodes)
             {
                 string tag = n.Value;
-                if (tag.IndexOf(textKeyword, StringComparison.OrdinalIgnoreCase) >= 0)
+                bool isClickable = tag.IndexOf("clickable=\"true\"", StringComparison.OrdinalIgnoreCase) >= 0;
+                bool isButton = tag.IndexOf("Button", StringComparison.OrdinalIgnoreCase) >= 0;
+                
+                bool isExactMatch = tag.IndexOf(string.Format("text=\"{0}\"", textKeyword), StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                    tag.IndexOf(string.Format("content-desc=\"{0}\"", textKeyword), StringComparison.OrdinalIgnoreCase) >= 0;
+
+                if (isExactMatch && (isClickable || isButton))
+                {
+                    Match bm = Regex.Match(tag, @"bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
+                    if (bm.Success)
+                    {
+                        int x1 = int.Parse(bm.Groups[1].Value);
+                        int y1 = int.Parse(bm.Groups[2].Value);
+                        int x2 = int.Parse(bm.Groups[3].Value);
+                        int y2 = int.Parse(bm.Groups[4].Value);
+                        if (y2 < 1560)
+                        {
+                            centerX = (x1 + x2) / 2;
+                            centerY = (y1 + y2) / 2;
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            // Pass 2: Look for exact match on ANY node
+            foreach (Match n in nodes)
+            {
+                string tag = n.Value;
+                bool isExactMatch = tag.IndexOf(string.Format("text=\"{0}\"", textKeyword), StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                    tag.IndexOf(string.Format("content-desc=\"{0}\"", textKeyword), StringComparison.OrdinalIgnoreCase) >= 0;
+
+                if (isExactMatch)
+                {
+                    Match bm = Regex.Match(tag, @"bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
+                    if (bm.Success)
+                    {
+                        int x1 = int.Parse(bm.Groups[1].Value);
+                        int y1 = int.Parse(bm.Groups[2].Value);
+                        int x2 = int.Parse(bm.Groups[3].Value);
+                        int y2 = int.Parse(bm.Groups[4].Value);
+                        if (y2 < 1560)
+                        {
+                            centerX = (x1 + x2) / 2;
+                            centerY = (y1 + y2) / 2;
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            // Pass 3: Look for clickable nodes containing keyword (excluding descriptive helper text)
+            foreach (Match n in nodes)
+            {
+                string tag = n.Value;
+                bool isClickable = tag.IndexOf("clickable=\"true\"", StringComparison.OrdinalIgnoreCase) >= 0;
+                bool isButton = tag.IndexOf("Button", StringComparison.OrdinalIgnoreCase) >= 0;
+                bool isLongInstruction = tag.IndexOf("to start using", StringComparison.OrdinalIgnoreCase) >= 0;
+
+                if ((isClickable || isButton) && !isLongInstruction && tag.IndexOf(textKeyword, StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    Match bm = Regex.Match(tag, @"bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
+                    if (bm.Success)
+                    {
+                        int x1 = int.Parse(bm.Groups[1].Value);
+                        int y1 = int.Parse(bm.Groups[2].Value);
+                        int x2 = int.Parse(bm.Groups[3].Value);
+                        int y2 = int.Parse(bm.Groups[4].Value);
+                        if (y2 < 1560)
+                        {
+                            centerX = (x1 + x2) / 2;
+                            centerY = (y1 + y2) / 2;
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            // Pass 4: Fallback to any node containing keyword (excluding descriptive helper text)
+            foreach (Match n in nodes)
+            {
+                string tag = n.Value;
+                bool isLongInstruction = tag.IndexOf("to start using", StringComparison.OrdinalIgnoreCase) >= 0;
+                if (!isLongInstruction && tag.IndexOf(textKeyword, StringComparison.OrdinalIgnoreCase) >= 0)
                 {
                     Match bm = Regex.Match(tag, @"bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
                     if (bm.Success)
@@ -2900,6 +3007,18 @@ public class QuizEarnApp : Form
                 if (tm2.Success) appTitle = tm2.Groups[1].Value.Trim();
             }
 
+            // Extract Offer App Package Name from top of detail page (e.g. com.ind.circuitpath)
+            string offerPkg = "";
+            Match pm = Regex.Match(xml, @"<node[^>]*text=""([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)+)""");
+            if (pm.Success)
+            {
+                string candidate = pm.Groups[1].Value.Trim();
+                if (candidate != "com.quiz.earn.money.game" && !candidate.StartsWith("android."))
+                {
+                    offerPkg = candidate;
+                }
+            }
+
             // 1. Check for Claim Button first! (Matches "Claim" in text or content-desc)
             int cx, cy;
             if (TryFindNodeBounds(xml, "Claim", out cx, out cy))
@@ -2975,6 +3094,20 @@ public class QuizEarnApp : Form
                     DismissAppDialogs();
 
                     string targetPkg = ExtractPackageName(GetCurrentFocus());
+                    if ((string.IsNullOrEmpty(targetPkg) || targetPkg == "com.quiz.earn.money.game") && !string.IsNullOrEmpty(offerPkg))
+                    {
+                        Log(string.Format("[Claimer] Target app did not launch on button tap. Direct launching '{0}'...", offerPkg));
+                        RunAdb(string.Format("shell monkey -p {0} -c android.intent.category.LAUNCHER 1", offerPkg));
+                        Thread.Sleep(3500);
+                        targetPkg = ExtractPackageName(GetCurrentFocus());
+                    }
+                    if (targetPkg == "com.quiz.earn.money.game")
+                    {
+                        Log("[Claimer] Warning: Target app could not be opened. Returning to offers list...");
+                        AdbKey(4);
+                        Thread.Sleep(2000);
+                        break;
+                    }
                     Log(string.Format("[💎 Claimer] Staying active in app '{0}' for {1}s...", targetPkg, staySeconds));
 
                     int remaining = staySeconds;
@@ -3201,7 +3334,7 @@ public class QuizEarnApp : Form
                 if (xml.Contains("SUPER OFFER") || xml.Contains("Guaranteed") || xml.Contains("1,000"))
                 {
                     Log("[💎 Claimer] On Home screen. Tapping Super Offer 1,000 card...");
-                    AdbTapRef(156, 816);
+                    AdbTap(160, 650);
                     Thread.Sleep(3000);
                     continue;
                 }
