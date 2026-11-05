@@ -8,8 +8,9 @@ param(
     [string]$DownloadUrl = "https://raw.githubusercontent.com/THESHMIL0/QuizEarnBot/main/QuizEarnBot.exe"
 )
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 $WorkingDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+Set-Location $WorkingDir
 
 Write-Host "=====================================================" -ForegroundColor Cyan
 Write-Host "  QUIZ & EARN BOT - ONE-CLICK RELEASE PUBLISHER      " -ForegroundColor Green
@@ -22,8 +23,14 @@ $SourcePath = Join-Path $WorkingDir "QuizEarnApp.cs"
 $ExePath = Join-Path $WorkingDir "QuizEarnBot.exe"
 
 if (Test-Path $SourcePath) {
-    Write-Host "[1/4] Compiling QuizEarnApp.cs..." -ForegroundColor Yellow
-    & $CscPath /target:winexe /out:"$ExePath" /platform:anycpu /optimize+ "$SourcePath"
+    Write-Host "[1/4] Compiling QuizEarnApp.cs with app logo & manifest..." -ForegroundColor Yellow
+    $ico = Join-Path $WorkingDir "app.ico"
+    $manifest = Join-Path $WorkingDir "app.manifest"
+    $compileArgs = @("/target:winexe", "/out:$ExePath", "/platform:anycpu", "/optimize+")
+    if (Test-Path $ico) { $compileArgs += "/win32icon:$ico" }
+    if (Test-Path $manifest) { $compileArgs += "/win32manifest:$manifest" }
+    $compileArgs += "$SourcePath"
+    & $CscPath $compileArgs
     if ($LASTEXITCODE -ne 0) {
         Write-Error "Compilation failed."
     }
@@ -51,20 +58,39 @@ $ZipPath = Join-Path $WorkingDir "QuizEarnBot_v$($NewVersion)_Portable.zip"
 if (Test-Path $ZipPath) { Remove-Item $ZipPath -Force }
 
 Write-Host "[3/4] Creating portable distribution zip: $ZipPath..." -ForegroundColor Yellow
-$adbPath = Join-Path $WorkingDir "adb.exe"
-$dll1 = Join-Path $WorkingDir "AdbWinApi.dll"
-$dll2 = Join-Path $WorkingDir "AdbWinUsbApi.dll"
-$FilesToZip = @($ExePath, $adbPath, $dll1, $dll2, $VersionJsonPath) | Where-Object { Test-Path $_ }
+$StageDir = Join-Path $env:TEMP "QuizEarnBot_Stage"
+if (Test-Path $StageDir) { Remove-Item $StageDir -Recurse -Force }
+New-Item -ItemType Directory -Path $StageDir | Out-Null
 
-Compress-Archive -Path $FilesToZip -DestinationPath $ZipPath -Force
-Write-Host "  -> Portable ZIP created: $(Get-Item $ZipPath | Select-Object -ExpandProperty Length) bytes" -ForegroundColor Green
+$FilesToCopy = @($ExePath, (Join-Path $WorkingDir "adb.exe"), (Join-Path $WorkingDir "AdbWinApi.dll"), (Join-Path $WorkingDir "AdbWinUsbApi.dll"), $VersionJsonPath, (Join-Path $WorkingDir "app.ico"), (Join-Path $WorkingDir "logo.png"))
+foreach ($f in $FilesToCopy) {
+    if (Test-Path $f) {
+        Copy-Item -Path $f -Destination $StageDir -Force
+    }
+}
 
-# 4. Summary & Instructions
+Compress-Archive -Path "$StageDir\*" -DestinationPath $ZipPath -Force
+Remove-Item $StageDir -Recurse -Force
+Write-Host "  -> Portable ZIP created: $((Get-Item $ZipPath).Length) bytes" -ForegroundColor Green
+
+# 4. Push to GitHub
+Write-Host "[4/4] Pushing update live to GitHub..." -ForegroundColor Yellow
+$git = "C:\Users\THESHMIL\AppData\Local\Programs\Git\cmd\git.exe"
+if (Test-Path $git) {
+    & $git add version.json QuizEarnBot.exe "QuizEarnBot_v$($NewVersion)_Portable.zip" QuizEarnApp.cs README.md app.ico logo.png app.manifest .gitignore 2>$null
+    $commitMsg = "Release v$($NewVersion) - $($Changelog)"
+    & $git commit -m "$commitMsg" 2>$null
+    & $git push origin main
+    Write-Host "  -> Successfully published live to GitHub repository!" -ForegroundColor Green
+}
+
+# Summary
 Write-Host ""
 Write-Host "=====================================================" -ForegroundColor Cyan
-Write-Host "  RELEASE READY TO SHARE WITH FRIENDS!              " -ForegroundColor Green
+Write-Host "  RELEASE v$NewVersion PUBLISHED TO GITHUB!          " -ForegroundColor Green
 Write-Host "=====================================================" -ForegroundColor Cyan
-Write-Host "1. Upload 'version.json' and 'QuizEarnBot.exe' to your host (e.g. GitHub raw / cloud host)."
-Write-Host "2. When your friends launch their app, it will detect v$NewVersion automatically!"
-Write-Host "3. They can click '[ Update & Restart Now ]' or '[ Ignore / Later ]' in their Settings tab."
+Write-Host "Repository: https://github.com/THESHMIL0/QuizEarnBot"
+Write-Host "Feed URL:   https://raw.githubusercontent.com/THESHMIL0/QuizEarnBot/main/version.json"
+Write-Host ""
+Write-Host "Your friends' apps will now automatically detect this update!" -ForegroundColor Green
 Write-Host "=====================================================" -ForegroundColor Cyan
