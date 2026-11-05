@@ -1,4 +1,4 @@
-﻿{
+{
     "changelog":  "Accurate per-card stay timer (+4s precision), Verify Usage \u0026 Open App auto-handler, Pure OLED dark modal popups, and iOS toggle switches.",
     "version":  "2.3",
     "mandatory":  false,

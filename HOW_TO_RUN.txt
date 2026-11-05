@@ -1,0 +1,26 @@
+=====================================================
+ QUIZ & EARN AUTO-BOT (v2.1 Portable Release)
+=====================================================
+
+QUICK SETUP (Takes 30 seconds):
+
+1. BLUESTACKS SETUP:
+   - Open BlueStacks 5.
+   - Click Settings (Gear Icon) -> Advanced.
+   - Turn ON "Android Debug Bridge (ADB)".
+   - Make sure your BlueStacks display is set to Phone (Portrait) mode (e.g., 900x1600 or 720x1280).
+
+2. RUN THE BOT:
+   - Open Quiz & Earn inside BlueStacks.
+   - Double-click "QuizEarnBot.exe" (or run "Start_Bot.bat").
+   - If Windows shows a blue "Windows protected your PC" screen:
+     Click "More info" -> Click "Run anyway".
+     (Windows shows this for any new app downloaded from the web).
+
+3. HOW TO USE:
+   - Auto-Claim All 10 Offers: Click [ AUTO-CLAIM ALL OFFERS (1-Click) ]
+   - Auto-Solve 25 Captchas: Click [ START QUIZ EARN BOT ]
+
+All tools (ADB + DLLs) are pre-included. No installation needed!
+=====================================================
+
