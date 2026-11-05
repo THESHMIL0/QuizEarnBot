@@ -1,0 +1,10 @@
+# Personal runtime data & logs
+quizearn_stats.json
+*.log
+*.xml
+apply_update.bat
+QuizEarnBot_update.exe
+
+# Temporary & editor files
+.vscode/
+scratch/
