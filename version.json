@@ -1,5 +1,5 @@
 ﻿{
-    "changelog":  "Fix Auto-Offer same-app loop lock with round-robin cycle tracking, Load More list expansion, matching ADB socket stability, and pure OLED dark dialogs.",
+    "changelog":  "Auto-Offer round-robin cycle tracking, dynamic Load More list expansion, crash-proof SafeBeginInvoke cross-thread dispatch, matching ADB socket stability, and pure OLED dark dialogs.",
     "version":  "2.2",
     "mandatory":  false,
     "download_url":  "https://raw.githubusercontent.com/THESHMIL0/QuizEarnBot/main/QuizEarnBot.exe",

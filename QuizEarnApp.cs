@@ -87,6 +87,14 @@ public class QuizEarnApp : Form
         ApplyDwmDarkMode();
     }
 
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        base.OnFormClosing(e);
+        try {
+            File.AppendAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "close_reason.log"), string.Format("[CLOSE] Reason: {0}, Cancel: {1}\nStackTrace:\n{2}\n", e.CloseReason, e.Cancel, Environment.StackTrace));
+        } catch {}
+    }
+
     // UI Elements
     private Label lblTitle;
     private Label lblStatus;
@@ -1143,7 +1151,7 @@ public class QuizEarnApp : Form
                             Log(string.Format("[ADB] Auto-connected to device on {0}! Ready to start.", adbPort));
                             if (this.InvokeRequired)
                             {
-                                this.BeginInvoke(new Action(delegate {
+                                SafeBeginInvoke(new Action(delegate {
                                     if (!isRunning)
                                     {
                                         lblStatus.Text = string.Format("READY (Connected: {0})", adbPort);
@@ -1161,7 +1169,7 @@ public class QuizEarnApp : Form
                             UpdatePortLabel("Waiting for ADB (Turn on ADB)...");
                             if (this.InvokeRequired)
                             {
-                                this.BeginInvoke(new Action(delegate {
+                                SafeBeginInvoke(new Action(delegate {
                                     if (!isRunning)
                                     {
                                         lblStatus.Text = "WAITING FOR ADB (Turn on ADB)";
@@ -1346,12 +1354,26 @@ public class QuizEarnApp : Form
         catch {}
     }
 
+    private void SafeBeginInvoke(Action action)
+    {
+        try {
+            if (this.IsHandleCreated && !this.IsDisposed) {
+                this.BeginInvoke(action);
+            }
+        } catch {}
+    }
+
     private void Log(string message)
     {
         if (this.InvokeRequired)
         {
-            this.BeginInvoke(new Action<string>(Log), message);
+            try {
+                if (this.IsHandleCreated && !this.IsDisposed) {
+                    this.BeginInvoke(new Action<string>(Log), message);
+                }
+            } catch {}
             return;
+        }
         }
         string time = DateTime.Now.ToString("HH:mm:ss");
         string line = string.Format("[{0}] {1}\n", time, message);
@@ -1977,7 +1999,7 @@ public class QuizEarnApp : Form
             {
                 if (manualCheck)
                 {
-                    this.BeginInvoke(new Action(() => {
+                    SafeBeginInvoke(new Action(() => {
                         if (lblUpdateStatus != null) lblUpdateStatus.Text = "Checking update server...";
                         if (btnCheckUpdate != null) btnCheckUpdate.Enabled = false;
                     }));
@@ -2019,7 +2041,7 @@ public class QuizEarnApp : Form
                     {
                         isUpdateAvailable = true;
 
-                        this.BeginInvoke(new Action(() => {
+                        SafeBeginInvoke(new Action(() => {
                             if (lblUpdateStatus != null)
                             {
                                 lblUpdateStatus.Text = string.Format("New Version v{0} available!", remoteVersion);
@@ -2040,7 +2062,7 @@ public class QuizEarnApp : Form
 
                 // Up to date
                 isUpdateAvailable = false;
-                this.BeginInvoke(new Action(() => {
+                SafeBeginInvoke(new Action(() => {
                     if (lblUpdateStatus != null)
                     {
                         lblUpdateStatus.Text = string.Format("Status: Up to date (v{0}).", APP_VERSION);
@@ -2057,7 +2079,7 @@ public class QuizEarnApp : Form
             }
             catch
             {
-                this.BeginInvoke(new Action(() => {
+                SafeBeginInvoke(new Action(() => {
                     if (lblUpdateStatus != null)
                     {
                         lblUpdateStatus.Text = "Status: Up to date (offline mode).";
@@ -2155,7 +2177,7 @@ public class QuizEarnApp : Form
     {
         if (this.InvokeRequired)
         {
-            this.BeginInvoke(new Action(delegate { UpdateDashboard(lastCaptchaDigit); }));
+            SafeBeginInvoke(new Action(delegate { UpdateDashboard(lastCaptchaDigit); }));
             return;
         }
 
@@ -2171,7 +2193,7 @@ public class QuizEarnApp : Form
     {
         if (this.InvokeRequired)
         {
-            this.BeginInvoke(new Action(delegate { UpdatePortLabel(text); }));
+            SafeBeginInvoke(new Action(delegate { UpdatePortLabel(text); }));
             return;
         }
         if (text.StartsWith("Connected:") || text.StartsWith("ADB:") || text.StartsWith("Waiting") || text.StartsWith("Device") || text.StartsWith("Allow"))
@@ -2487,7 +2509,7 @@ public class QuizEarnApp : Form
         {
             isBoosting = false;
             Log("[⚡ Booster] Usage Booster stopped by user.");
-            this.BeginInvoke(new Action(() => {
+            SafeBeginInvoke(new Action(() => {
                 if (lblBoostStatus != null)
                 {
                     lblBoostStatus.Text = "Booster: Stopped";
@@ -2572,7 +2594,7 @@ public class QuizEarnApp : Form
                 }
 
                 string statusText = string.Format("⚡ {0:D2}:{1:D2} left ({2})", mLeft, sLeft, pkgDisplay);
-                this.BeginInvoke(new Action(() => {
+                SafeBeginInvoke(new Action(() => {
                     if (lblBoostStatus != null)
                     {
                         lblBoostStatus.Text = statusText;
@@ -2617,7 +2639,7 @@ public class QuizEarnApp : Form
 
                 try { System.Media.SystemSounds.Asterisk.Play(); } catch {}
 
-                this.BeginInvoke(new Action(() => {
+                SafeBeginInvoke(new Action(() => {
                     if (lblBoostStatus != null)
                     {
                         lblBoostStatus.Text = "⚡ Completed! Ready to claim coins.";
@@ -3148,7 +3170,7 @@ public class QuizEarnApp : Form
                             }
                             string status = string.Format("💎 {0:D2}:{1:D2} left ({2})", rm, rs, pkgShort);
 
-                            this.BeginInvoke(new Action(() => {
+                            SafeBeginInvoke(new Action(() => {
                                 if (lblBoostStatus != null)
                                 {
                                     lblBoostStatus.Text = status;
@@ -3367,7 +3389,7 @@ public class QuizEarnApp : Form
                             }
                             Log(string.Format("[💎 Claimer] All pending offers are on cooldown or completed for this cycle! Next offer unlocks in ~{0}. Returning to Quiz...", nextUnlock));
                             
-                            this.BeginInvoke(new Action(() => {
+                            SafeBeginInvoke(new Action(() => {
                                 if (lblBoostStatus != null)
                                 {
                                     lblBoostStatus.Text = string.Format("Cooldown (Next: {0})", nextUnlock);
@@ -3425,7 +3447,7 @@ public class QuizEarnApp : Form
         {
             isAutoOffering = false;
             isBoosting = false;
-            this.BeginInvoke(new Action(() => {
+            SafeBeginInvoke(new Action(() => {
                 if (lblBoostStatus != null)
                 {
                     lblBoostStatus.Text = "Claimer: Idle";
@@ -3479,7 +3501,7 @@ public class QuizEarnApp : Form
             isAutoOffering = false;
             isBoosting = false;
             Log("[💎 Claimer] Auto-Offer Claimer stopped by user.");
-            this.BeginInvoke(new Action(() => {
+            SafeBeginInvoke(new Action(() => {
                 if (lblBoostStatus != null)
                 {
                     lblBoostStatus.Text = "Claimer: Stopped";
@@ -3908,7 +3930,7 @@ public class QuizEarnApp : Form
                     Log("[ALERT] 25 GEMS TARGET REACHED! 1,000 Coins Super Offer unlocked. Bot paused for claim.");
                     if (this.InvokeRequired)
                     {
-                        this.BeginInvoke(new Action(delegate {
+                        SafeBeginInvoke(new Action(delegate {
                             lblStatus.Text = "STANDBY - 25 Gems Hit!";
                             lblStatus.ForeColor = Color.FromArgb(155, 155, 160);
                         }));
@@ -4235,30 +4257,16 @@ public class QuizEarnApp : Form
         appMutex = new Mutex(true, "QuizEarnBot_SingleInstance_Mutex_9921", out createdNew);
         if (!createdNew)
         {
-            try
-            {
+            try {
                 Process current = Process.GetCurrentProcess();
-                bool foundVisible = false;
-                foreach (Process p in Process.GetProcessesByName(current.ProcessName))
-                {
-                    if (p.Id != current.Id)
-                    {
-                        if (p.MainWindowHandle != IntPtr.Zero)
-                        {
-                            ShowWindow(p.MainWindowHandle, 9); // SW_RESTORE
-                            SetForegroundWindow(p.MainWindowHandle);
-                            foundVisible = true;
-                            break;
-                        }
-                        else
-                        {
-                            try { p.Kill(); } catch {}
-                        }
+                foreach (Process p in Process.GetProcessesByName(current.ProcessName)) {
+                    if (p.Id != current.Id && p.MainWindowHandle != IntPtr.Zero) {
+                        ShowWindow(p.MainWindowHandle, 9);
+                        SetForegroundWindow(p.MainWindowHandle);
+                        return;
                     }
                 }
-                if (foundVisible) return;
-            }
-            catch {}
+            } catch {}
         }
 
         AppDomain.CurrentDomain.UnhandledException += delegate(object s, UnhandledExceptionEventArgs e) {
@@ -4290,7 +4298,14 @@ public class QuizEarnApp : Form
                 };
             }
         }
-        Application.Run(app);
+        try
+        {
+            Application.Run(app);
+        }
+        catch (Exception ex)
+        {
+            File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "run_error.log"), "[APP RUN CRASH] " + ex.ToString());
+        }
     }
 }
 
