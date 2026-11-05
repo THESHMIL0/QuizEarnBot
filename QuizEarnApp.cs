@@ -2912,8 +2912,9 @@ public class QuizEarnApp : Form
         return 65;
     }
 
-    private bool FindAndClickReadyOfferCard(string xml, HashSet<string> skippedApps = null)
+    private bool FindAndClickReadyOfferCard(string xml, HashSet<string> skippedApps, out string clickedTitle)
     {
+        clickedTitle = "";
         try
         {
             // Method 1: Structure-based container matching (supports both Standard Milestones & Bonus Rewards!)
@@ -2932,11 +2933,13 @@ public class QuizEarnApp : Form
                 if (title == "How to Complete" || title == "Need help with offers?" || title == "Load More" || title.Contains("Important Guidelines"))
                     continue;
 
+                // DEDUPLICATION: If this app was already processed or verified in this cycle, skip it!
                 if (skippedApps != null && skippedApps.Contains(title))
                     continue;
 
                 bool isStandardReady = Regex.IsMatch(block, @"text=""[^""]*(?:Use\s*app\s*for|Claim|Open\s*App)", RegexOptions.IgnoreCase);
-                bool isCooldown = Regex.IsMatch(block, @"text=""[^""]*Unlocks\s*in", RegexOptions.IgnoreCase);
+                bool isZeroCooldown = Regex.IsMatch(block, @"text=""[^""]*(?:Unlocks\s*in|After)\s*0[ms]", RegexOptions.IgnoreCase);
+                bool isCooldown = !isZeroCooldown && Regex.IsMatch(block, @"text=""[^""]*(?:Unlocks\s*in|After)\s*(?:\d+h|\d+m|[1-9]\d*s)", RegexOptions.IgnoreCase);
                 bool isProof = Regex.IsMatch(block, @"text=""[^""]*Proof\s*(?:rejected|under\s*review)", RegexOptions.IgnoreCase);
 
                 Match taskM = Regex.Match(block, @"text=""(\d+)""[^>]*>.*?text=""/""[^>]*>.*?text=""(\d+)""", RegexOptions.Singleline);
@@ -2953,6 +2956,7 @@ public class QuizEarnApp : Form
                     int tapY = (y1 + y2) / 2;
                     string desc = hasBonusActive ? "Active Bonus Reward" : (hasStandardPending ? string.Format("Milestone ({0}/{1})", done, total) : "Ready Milestone");
                     Log(string.Format("[🎁 Claimer] Found offer card '{0}' ({1})! Opening at ({2}, {3})...", title, desc, tapX, tapY));
+                    clickedTitle = title;
                     AdbTap(tapX, tapY);
                     return true;
                 }
@@ -2973,7 +2977,26 @@ public class QuizEarnApp : Form
 
                 if (tapY > 160 && tapY < 1550)
                 {
-                    Log(string.Format("[💎 Claimer] Found ready offer on list! Opening card at ({0}, {1})...", tapX, tapY));
+                    // Try to associate with nearest card title
+                    string nearbyTitle = "";
+                    MatchCollection titleMatches = Regex.Matches(xml, @"<node[^>]*class=""android\.widget\.TextView""[^>]*bounds=""\[105,(\d+)\]\[\d+,(\d+)\]""[^>]*text=""([^""]+)""");
+                    foreach (Match tm2 in titleMatches)
+                    {
+                        int ty1 = int.Parse(tm2.Groups[1].Value);
+                        int ty2 = int.Parse(tm2.Groups[2].Value);
+                        if (ty2 <= y1 && (y1 - ty2) < 260)
+                        {
+                            nearbyTitle = tm2.Groups[3].Value.Trim();
+                            break;
+                        }
+                    }
+
+                    if (skippedApps != null && !string.IsNullOrEmpty(nearbyTitle) && skippedApps.Contains(nearbyTitle))
+                        continue;
+
+                    clickedTitle = nearbyTitle;
+                    string label = string.IsNullOrEmpty(nearbyTitle) ? "ready offer" : "'" + nearbyTitle + "'";
+                    Log(string.Format("[💎 Claimer] Found {0} on list! Opening card at ({1}, {2})...", label, tapX, tapY));
                     AdbTap(tapX, tapY);
                     return true;
                 }
@@ -2983,210 +3006,225 @@ public class QuizEarnApp : Form
         return false;
     }
 
-    private void ProcessOfferAppDetails(HashSet<string> cooldownBonusApps = null)
+    private void ProcessOfferAppDetails(string targetTitle, HashSet<string> cycleCompletedApps, HashSet<string> cooldownBonusApps = null)
     {
         int consecutiveLoops = 0;
         int scrollAttempts = 0;
-        while (isAutoOffering && consecutiveLoops < 20)
+        string appTitle = targetTitle ?? "";
+        string offerPkg = "";
+
+        try
         {
-            consecutiveLoops++;
-            string xml = DumpAndReadXml("/sdcard/detail_chk.xml");
-            if (string.IsNullOrEmpty(xml))
+            while (isAutoOffering && consecutiveLoops < 20)
             {
-                Thread.Sleep(1000);
-                continue;
-            }
-
-            // Extract App Title for logging and cooldown tracking
-            string appTitle = "";
-            Match tm = Regex.Match(xml, @"<node[^>]*class=""android\.widget\.TextView""[^>]*bounds=""\[102,\d+\]\[\d+,\d+\]""[^>]*text=""([^""]+)""");
-            if (tm.Success) appTitle = tm.Groups[1].Value.Trim();
-            if (string.IsNullOrEmpty(appTitle))
-            {
-                Match tm2 = Regex.Match(xml, @"<node[^>]*text=""([^""]+)""[^>]*class=""android\.widget\.TextView""");
-                if (tm2.Success) appTitle = tm2.Groups[1].Value.Trim();
-            }
-
-            // Extract Offer App Package Name from top of detail page (e.g. com.ind.circuitpath)
-            string offerPkg = "";
-            Match pm = Regex.Match(xml, @"<node[^>]*text=""([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)+)""");
-            if (pm.Success)
-            {
-                string candidate = pm.Groups[1].Value.Trim();
-                if (candidate != "com.quiz.earn.money.game" && !candidate.StartsWith("android."))
+                consecutiveLoops++;
+                string xml = DumpAndReadXml("/sdcard/detail_chk.xml");
+                if (string.IsNullOrEmpty(xml))
                 {
-                    offerPkg = candidate;
+                    Thread.Sleep(1000);
+                    continue;
                 }
-            }
 
-            // 1. Check for Claim Button first! (Matches "Claim" in text or content-desc)
-            int cx, cy;
-            if (TryFindNodeBounds(xml, "Claim", out cx, out cy))
-            {
-                // SAFETY: Never tap navigation bar (cy < 1560)
-                if (cy < 1560)
+                // Extract App Title for logging and cooldown tracking
+                Match tm = Regex.Match(xml, @"<node[^>]*class=""android\.widget\.TextView""[^>]*bounds=""\[102,\d+\]\[\d+,\d+\]""[^>]*text=""([^""]+)""");
+                if (tm.Success) appTitle = tm.Groups[1].Value.Trim();
+                if (string.IsNullOrEmpty(appTitle))
                 {
-                    int rewardCoins = 100;
-                    try
+                    Match tm2 = Regex.Match(xml, @"<node[^>]*text=""([^""]+)""[^>]*class=""android\.widget\.TextView""");
+                    if (tm2.Success) appTitle = tm2.Groups[1].Value.Trim();
+                }
+
+                // Extract Offer App Package Name from top of detail page (e.g. com.ind.circuitpath, wni.WeathernewsTouch.jp)
+                Match pm = Regex.Match(xml, @"<node[^>]*text=""([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)+)""");
+                if (pm.Success)
+                {
+                    string candidate = pm.Groups[1].Value.Trim();
+                    if (candidate != "com.quiz.earn.money.game" && !candidate.StartsWith("android."))
                     {
-                        MatchCollection cms = Regex.Matches(xml, @"<node[^>]*text=""([0-9]{2,5})""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
-                        int bestDist = int.MaxValue;
-                        foreach (Match cm in cms)
+                        offerPkg = candidate;
+                    }
+                }
+
+                // 1. Check for Claim Button first! (Matches "Claim" in text or content-desc)
+                int cx, cy;
+                if (TryFindNodeBounds(xml, "Claim", out cx, out cy))
+                {
+                    // SAFETY: Never tap navigation bar (cy < 1560)
+                    if (cy < 1560)
+                    {
+                        int rewardCoins = 100;
+                        try
                         {
-                            int ny = (int.Parse(cm.Groups[3].Value) + int.Parse(cm.Groups[5].Value)) / 2;
-                            int dist = Math.Abs(ny - cy);
-                            if (dist < bestDist && dist < 160)
+                            MatchCollection cms = Regex.Matches(xml, @"<node[^>]*text=""([0-9]{2,5})""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
+                            int bestDist = int.MaxValue;
+                            foreach (Match cm in cms)
                             {
-                                bestDist = dist;
-                                int val;
-                                if (int.TryParse(cm.Groups[1].Value, out val) && val > 0)
+                                int ny = (int.Parse(cm.Groups[3].Value) + int.Parse(cm.Groups[5].Value)) / 2;
+                                int dist = Math.Abs(ny - cy);
+                                if (dist < bestDist && dist < 160)
                                 {
-                                    rewardCoins = val;
+                                    bestDist = dist;
+                                    int val;
+                                    if (int.TryParse(cm.Groups[1].Value, out val) && val > 0)
+                                    {
+                                        rewardCoins = val;
+                                    }
                                 }
                             }
                         }
-                    }
-                    catch {}
+                        catch {}
 
-                    Log(string.Format("[💎 Claimer] Milestone / Bonus ready! Tapping CLAIM (+{0} Coins) at ({1}, {2})...", rewardCoins, cx, cy));
-                    AdbTap(cx, cy);
+                        Log(string.Format("[💎 Claimer] Milestone / Bonus ready! Tapping CLAIM (+{0} Coins) at ({1}, {2})...", rewardCoins, cx, cy));
+                        AdbTap(cx, cy);
 
-                    todayCoinsClaimed += rewardCoins;
-                    totalCoinsClaimed += rewardCoins;
-                    todayOffersClaimed++;
-                    totalOffersClaimed++;
-                    string titleTag = string.IsNullOrEmpty(appTitle) ? "Offer Milestone" : appTitle;
-                    AddClaimHistory(string.Format("{0} (+{1:N0} Coins)", titleTag, rewardCoins));
-                    SaveStatsToFile();
-                    UpdateDataDashboard();
+                        todayCoinsClaimed += rewardCoins;
+                        totalCoinsClaimed += rewardCoins;
+                        todayOffersClaimed++;
+                        totalOffersClaimed++;
+                        string titleTag = string.IsNullOrEmpty(appTitle) ? (string.IsNullOrEmpty(targetTitle) ? "Offer Milestone" : targetTitle) : appTitle;
+                        AddClaimHistory(string.Format("{0} (+{1:N0} Coins)", titleTag, rewardCoins));
+                        SaveStatsToFile();
+                        UpdateDataDashboard();
 
-                    Thread.Sleep(3000);
-                    RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
-                    Thread.Sleep(2000);
-                    continue; // Re-check if next milestone unlocked!
-                }
-            }
-
-            // 2. Check for Open App Button! (Matches "Open App" in text or content-desc)
-            int ox, oy;
-            if (TryFindNodeBounds(xml, "Open App", out ox, out oy))
-            {
-                // SAFETY: Never tap navigation bar (oy < 1560)
-                if (oy < 1560)
-                {
-                    int staySeconds = ParseSecondsNeeded(xml);
-                    if (staySeconds <= 0)
-                    {
-                        Log(string.Format("[💎 Claimer] Usage already 100% verified! Quick-tapping 'Open App' at ({0}, {1})...", ox, oy));
-                        AdbTap(ox, oy);
-                        Thread.Sleep(2500);
-                        Log("[💎 Claimer] Switching immediately back to Quiz & Earn to collect Claim button...");
+                        Thread.Sleep(3000);
                         RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
-                        Thread.Sleep(2500);
+                        Thread.Sleep(2000);
+                        continue; // Re-check if next milestone unlocked!
+                    }
+                }
+
+                // 2. Check for Open App Button! (Matches "Open App" in text or content-desc)
+                int ox, oy;
+                if (TryFindNodeBounds(xml, "Open App", out ox, out oy))
+                {
+                    // SAFETY: Never tap navigation bar (oy < 1560)
+                    if (oy < 1560)
+                    {
+                        int staySeconds = ParseSecondsNeeded(xml);
+                        if (staySeconds <= 0)
+                        {
+                            Log(string.Format("[💎 Claimer] Usage already 100% verified! Quick-tapping 'Open App' at ({0}, {1})...", ox, oy));
+                            AdbTap(ox, oy);
+                            Thread.Sleep(2500);
+                            Log("[💎 Claimer] Switching immediately back to Quiz & Earn to collect Claim button...");
+                            RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
+                            Thread.Sleep(2500);
+                            continue; // Re-check screen for Claim button!
+                        }
+
+                        Log(string.Format("[💎 Claimer] Found 'Open App' for Bonus / Milestone! Time required: {0}s. Tapping button at ({1}, {2})...", staySeconds, ox, oy));
+                        AdbTap(ox, oy);
+                        Thread.Sleep(3500);
+
+                        // Check and dismiss any notification / permission popup immediately on launch!
+                        DismissAppDialogs();
+
+                        string targetPkg = ExtractPackageName(GetCurrentFocus());
+                        if ((string.IsNullOrEmpty(targetPkg) || targetPkg == "com.quiz.earn.money.game") && !string.IsNullOrEmpty(offerPkg))
+                        {
+                            Log(string.Format("[Claimer] Target app did not launch on button tap. Direct launching '{0}'...", offerPkg));
+                            RunAdb(string.Format("shell monkey -p {0} -c android.intent.category.LAUNCHER 1", offerPkg));
+                            Thread.Sleep(3500);
+                            targetPkg = ExtractPackageName(GetCurrentFocus());
+                        }
+                        if (targetPkg == "com.quiz.earn.money.game")
+                        {
+                            Log("[Claimer] Warning: Target app could not be opened. Returning to offers list...");
+                            break;
+                        }
+                        Log(string.Format("[💎 Claimer] Staying active in app '{0}' for {1}s...", targetPkg, staySeconds));
+
+                        int remaining = staySeconds;
+                        int keepAlive = 0;
+                        while (isAutoOffering && remaining > 0)
+                        {
+                            int rm = remaining / 60;
+                            int rs = remaining % 60;
+                            string pkgShort = string.IsNullOrEmpty(targetPkg) ? "Offer App" : targetPkg;
+                            if (pkgShort.Contains("."))
+                            {
+                                string[] pts = pkgShort.Split('.');
+                                pkgShort = pts[pts.Length - 1];
+                            }
+                            string status = string.Format("💎 {0:D2}:{1:D2} left ({2})", rm, rs, pkgShort);
+
+                            this.BeginInvoke(new Action(() => {
+                                if (lblBoostStatus != null)
+                                {
+                                    lblBoostStatus.Text = status;
+                                    lblBoostStatus.ForeColor = Color.FromArgb(180, 180, 185);
+                                }
+                            }));
+
+                            // Auto-dismiss blocking notification/permission dialogs if they appear after splash screen
+                            if (keepAlive == 3 || keepAlive == 7 || (keepAlive > 0 && keepAlive % 20 == 0))
+                            {
+                                DismissAppDialogs();
+                            }
+
+                            if (keepAlive % 15 == 0)
+                            {
+                                RunAdb("shell input swipe 450 700 450 720 120");
+                            }
+
+                            Thread.Sleep(1000);
+                            remaining--;
+                            keepAlive++;
+                        }
+
+                        if (!isAutoOffering) return;
+
+                        Log("[💎 Claimer] Required time completed! Returning to Quiz & Earn...");
+                        RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
+                        Thread.Sleep(3000);
                         continue; // Re-check screen for Claim button!
                     }
-
-                    Log(string.Format("[💎 Claimer] Found 'Open App' for Bonus / Milestone! Time required: {0}s. Tapping button at ({1}, {2})...", staySeconds, ox, oy));
-                    AdbTap(ox, oy);
-                    Thread.Sleep(3500);
-
-                    // Check and dismiss any notification / permission popup immediately on launch!
-                    DismissAppDialogs();
-
-                    string targetPkg = ExtractPackageName(GetCurrentFocus());
-                    if ((string.IsNullOrEmpty(targetPkg) || targetPkg == "com.quiz.earn.money.game") && !string.IsNullOrEmpty(offerPkg))
-                    {
-                        Log(string.Format("[Claimer] Target app did not launch on button tap. Direct launching '{0}'...", offerPkg));
-                        RunAdb(string.Format("shell monkey -p {0} -c android.intent.category.LAUNCHER 1", offerPkg));
-                        Thread.Sleep(3500);
-                        targetPkg = ExtractPackageName(GetCurrentFocus());
-                    }
-                    if (targetPkg == "com.quiz.earn.money.game")
-                    {
-                        Log("[Claimer] Warning: Target app could not be opened. Returning to offers list...");
-                        AdbKey(4);
-                        Thread.Sleep(2000);
-                        break;
-                    }
-                    Log(string.Format("[💎 Claimer] Staying active in app '{0}' for {1}s...", targetPkg, staySeconds));
-
-                    int remaining = staySeconds;
-                    int keepAlive = 0;
-                    while (isAutoOffering && remaining > 0)
-                    {
-                        int rm = remaining / 60;
-                        int rs = remaining % 60;
-                        string pkgShort = string.IsNullOrEmpty(targetPkg) ? "Offer App" : targetPkg;
-                        if (pkgShort.Contains("."))
-                        {
-                            string[] pts = pkgShort.Split('.');
-                            pkgShort = pts[pts.Length - 1];
-                        }
-                        string status = string.Format("💎 {0:D2}:{1:D2} left ({2})", rm, rs, pkgShort);
-
-                        this.BeginInvoke(new Action(() => {
-                            if (lblBoostStatus != null)
-                            {
-                                lblBoostStatus.Text = status;
-                                lblBoostStatus.ForeColor = Color.FromArgb(180, 180, 185);
-                            }
-                        }));
-
-                        // Auto-dismiss blocking notification/permission dialogs if they appear after splash screen
-                        if (keepAlive == 3 || keepAlive == 7 || (keepAlive > 0 && keepAlive % 20 == 0))
-                        {
-                            DismissAppDialogs();
-                        }
-
-                        if (keepAlive % 15 == 0)
-                        {
-                            RunAdb("shell input swipe 450 700 450 720 120");
-                        }
-
-                        Thread.Sleep(1000);
-                        remaining--;
-                        keepAlive++;
-                    }
-
-                    if (!isAutoOffering) return;
-
-                    Log("[💎 Claimer] Required time completed! Returning to Quiz & Earn...");
-                    RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
-                    Thread.Sleep(3000);
-                    continue; // Re-check screen for Claim button!
                 }
-            }
 
-            // 3. Scroll Down to Reveal Lower Milestones & "BONUS REWARDS" section
-            // Many apps have 6+ standard milestones; BONUS REWARDS is at the bottom!
-            if (scrollAttempts < 3)
-            {
-                scrollAttempts++;
-                Log(string.Format("[💎 Claimer] Scrolling down to inspect BONUS REWARDS & lower milestones ({0}/3)...", scrollAttempts));
-                RunAdb("shell input swipe 450 1100 450 500 300");
-                Thread.Sleep(1500);
-                continue; // Re-dump XML in the new scrolled position
-            }
-
-            // 4. Check if the app's remaining milestone or bonus is on cooldown
-            Match cdMatch = Regex.Match(xml, @"Unlocks\s*in\s*([0-9hm\s]+)", RegexOptions.IgnoreCase);
-            if (cdMatch.Success)
-            {
-                string cdStr = cdMatch.Groups[1].Value.Trim();
-                Log(string.Format("[🎁 Bonus] '{0}' is on cooldown ({1}). Skipping for this cycle.", string.IsNullOrEmpty(appTitle) ? "App" : appTitle, cdStr));
-                if (cooldownBonusApps != null && !string.IsNullOrEmpty(appTitle))
+                // 3. Scroll Down to Reveal Lower Milestones & "BONUS REWARDS" section
+                // Many apps have 6+ standard milestones; BONUS REWARDS is at the bottom!
+                if (scrollAttempts < 3)
                 {
-                    cooldownBonusApps.Add(appTitle);
+                    scrollAttempts++;
+                    Log(string.Format("[💎 Claimer] Scrolling down to inspect BONUS REWARDS & lower milestones ({0}/3)...", scrollAttempts));
+                    RunAdb("shell input swipe 450 1100 450 500 300");
+                    Thread.Sleep(1500);
+                    continue; // Re-dump XML in the new scrolled position
                 }
+
+                // 4. Check if the app's remaining milestone or bonus is on cooldown
+                Match cdMatch = Regex.Match(xml, @"(?:Unlocks\s*in|After)\s*([0-9hm\s]+)", RegexOptions.IgnoreCase);
+                if (cdMatch.Success)
+                {
+                    string cdStr = cdMatch.Groups[1].Value.Trim();
+                    string displayTitle = string.IsNullOrEmpty(appTitle) ? targetTitle : appTitle;
+                    Log(string.Format("[🎁 Bonus] '{0}' is on cooldown ({1}). Skipping for this cycle.", displayTitle, cdStr));
+                    if (cooldownBonusApps != null)
+                    {
+                        if (!string.IsNullOrEmpty(targetTitle)) cooldownBonusApps.Add(targetTitle);
+                        if (!string.IsNullOrEmpty(appTitle)) cooldownBonusApps.Add(appTitle);
+                    }
+                }
+                else
+                {
+                    string displayTitle = string.IsNullOrEmpty(appTitle) ? targetTitle : appTitle;
+                    Log(string.Format("[💎 Claimer] No more active milestones or bonus tasks for '{0}'. Returning to offers list...", displayTitle));
+                }
+
+                break;
             }
-            else
+        }
+        finally
+        {
+            // CRITICAL FIX: ALWAYS record this app as processed in the cycle so the bot NEVER loops on the same app!
+            if (cycleCompletedApps != null)
             {
-                Log(string.Format("[💎 Claimer] No more active milestones or bonus tasks for '{0}'. Returning to offers list...", string.IsNullOrEmpty(appTitle) ? "this app" : appTitle));
+                if (!string.IsNullOrEmpty(targetTitle)) cycleCompletedApps.Add(targetTitle);
+                if (!string.IsNullOrEmpty(appTitle)) cycleCompletedApps.Add(appTitle);
             }
 
-            AdbKey(4); // Use BlueStacks / Android hardware Back button (KEYCODE_BACK)
+            AdbKey(4); // BlueStacks / Android hardware Back button (KEYCODE_BACK)
             Thread.Sleep(2000);
-            break;
         }
     }
 
@@ -3196,7 +3234,9 @@ public class QuizEarnApp : Form
         {
             Log("[💎 Claimer] Initializing Auto-Offer Claimer...");
             int totalAppsProcessed = 0;
+            HashSet<string> cycleCompletedApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             HashSet<string> cooldownBonusApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            string lastOpenedTitle = "";
 
             while (isAutoOffering)
             {
@@ -3218,7 +3258,7 @@ public class QuizEarnApp : Form
                 if (xml.Contains("REWARDS") || xml.Contains("Remove Wrong App") || xml.Contains("Usage Progress") || xml.Contains("Initial Install Reward"))
                 {
                     Log("[💎 Claimer] Inside offer app details page. Processing milestones & bonus...");
-                    ProcessOfferAppDetails(cooldownBonusApps);
+                    ProcessOfferAppDetails(lastOpenedTitle, cycleCompletedApps, cooldownBonusApps);
                     totalAppsProcessed++;
                     Thread.Sleep(1500);
 
@@ -3251,36 +3291,66 @@ public class QuizEarnApp : Form
                         AdbTap(846, 90);
                         Thread.Sleep(3000);
                         cooldownBonusApps.Clear(); // Cooldown finished, clear skipped cache
+                        cycleCompletedApps.Clear();
                         continue;
                     }
 
                     Log("[💎 Claimer] On 'My Super Offers' list. Scanning for ready apps & bonus rewards...");
-                    bool foundApp = FindAndClickReadyOfferCard(xml, cooldownBonusApps);
+                    string clickedTitle;
+                    bool foundApp = FindAndClickReadyOfferCard(xml, cycleCompletedApps, out clickedTitle);
                     if (foundApp)
                     {
+                        lastOpenedTitle = clickedTitle;
                         Thread.Sleep(2500);
                         continue;
                     }
                     else
                     {
-                        // Check lower cards by scrolling down up to 3 times
-                        bool foundOnScroll = false;
-                        for (int scrollPass = 1; scrollPass <= 3; scrollPass++)
+                        // Check if Load More button is visible on page 1 and tap it to reveal all offers
+                        int lmx, lmy;
+                        if (TryFindNodeBounds(xml, "Load More", out lmx, out lmy) && lmy < 1550)
                         {
-                            Log(string.Format("[💎 Claimer] Scrolling down to find more ready offers (page {0}/3)...", scrollPass));
+                            Log(string.Format("[💎 Claimer] Found 'Load More' button at ({0}, {1}). Tapping to reveal more offers...", lmx, lmy));
+                            AdbTap(lmx, lmy);
+                            Thread.Sleep(2500);
+                            xml = DumpAndReadXml("/sdcard/offer_flow.xml");
+                            if (FindAndClickReadyOfferCard(xml, cycleCompletedApps, out clickedTitle))
+                            {
+                                lastOpenedTitle = clickedTitle;
+                                Thread.Sleep(2500);
+                                continue;
+                            }
+                        }
+
+                        // Check lower cards by scrolling down up to 4 times
+                        bool foundOnScroll = false;
+                        for (int scrollPass = 1; scrollPass <= 4; scrollPass++)
+                        {
+                            Log(string.Format("[💎 Claimer] Scrolling down to find more ready offers (page {0}/4)...", scrollPass));
                             RunAdb("shell input swipe 450 1200 450 400 350");
                             Thread.Sleep(2000);
                             string scrolledXml = DumpAndReadXml("/sdcard/offer_flow.xml");
+
+                            // Check Load More on scrolled page too
+                            if (TryFindNodeBounds(scrolledXml, "Load More", out lmx, out lmy) && lmy < 1550)
+                            {
+                                AdbTap(lmx, lmy);
+                                Thread.Sleep(2500);
+                                scrolledXml = DumpAndReadXml("/sdcard/offer_flow.xml");
+                            }
+
                             if (Regex.IsMatch(scrolledXml, @"Unlocks\s*in\s*0[ms]", RegexOptions.IgnoreCase))
                             {
                                 Log("[💎 Claimer] Detected offer with 0m cooldown! Tapping Refresh offers...");
                                 AdbTap(846, 90);
                                 Thread.Sleep(3000);
                                 cooldownBonusApps.Clear();
+                                cycleCompletedApps.Clear();
                                 scrolledXml = DumpAndReadXml("/sdcard/offer_flow.xml");
                             }
-                            if (FindAndClickReadyOfferCard(scrolledXml, cooldownBonusApps))
+                            if (FindAndClickReadyOfferCard(scrolledXml, cycleCompletedApps, out clickedTitle))
                             {
+                                lastOpenedTitle = clickedTitle;
                                 foundOnScroll = true;
                                 break;
                             }
@@ -3295,7 +3365,7 @@ public class QuizEarnApp : Form
                             {
                                 nextUnlock = cdMatches[0].Groups[1].Value.Trim();
                             }
-                            Log(string.Format("[💎 Claimer] All pending offers are on cooldown! Next offer unlocks in ~{0}. Returning to Quiz...", nextUnlock));
+                            Log(string.Format("[💎 Claimer] All pending offers are on cooldown or completed for this cycle! Next offer unlocks in ~{0}. Returning to Quiz...", nextUnlock));
                             
                             this.BeginInvoke(new Action(() => {
                                 if (lblBoostStatus != null)
