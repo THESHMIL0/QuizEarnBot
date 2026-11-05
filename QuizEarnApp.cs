@@ -3172,8 +3172,10 @@ public class QuizEarnApp : Form
                     isVerifyBtn = hasActionBtn;
                 }
 
-                if (hasActionBtn && oy < 1560)
+                if (hasActionBtn)
                 {
+                    if (oy < 1560)
+                    {
                     int staySeconds = ParseSecondsNeeded(xml, oy);
                     if (staySeconds <= 0)
                     {
