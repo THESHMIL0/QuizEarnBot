@@ -3162,31 +3162,43 @@ public class QuizEarnApp : Form
                     }
                 }
 
-                // 2. Check for Open App Button! (Matches "Open App" in text or content-desc)
+                // 2. Check for Open App OR Verify Usage Button!
                 int ox, oy;
-                if (TryFindNodeBounds(xml, "Open App", out ox, out oy))
+                bool hasActionBtn = TryFindNodeBounds(xml, "Open App", out ox, out oy);
+                bool isVerifyBtn = false;
+                if (!hasActionBtn)
                 {
-                    // SAFETY: Never tap navigation bar (oy < 1560)
-                    if (oy < 1560)
-                    {
-                        int staySeconds = ParseSecondsNeeded(xml, oy);
-                        if (staySeconds <= 0)
-                        {
-                            Log(string.Format("[💎 Claimer] Usage already 100% verified! Quick-tapping 'Open App' at ({0}, {1})...", ox, oy));
-                            AdbTap(ox, oy);
-                            Thread.Sleep(2500);
-                            Log("[💎 Claimer] Switching immediately back to Quiz & Earn to collect Claim button...");
-                            RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
-                            Thread.Sleep(2500);
-                            continue; // Re-check screen for Claim button!
-                        }
+                    hasActionBtn = TryFindNodeBounds(xml, "Verify Usage", out ox, out oy);
+                    isVerifyBtn = hasActionBtn;
+                }
 
-                        Log(string.Format("[💎 Claimer] Found 'Open App' for Bonus / Milestone! Time required: {0}s. Tapping button at ({1}, {2})...", staySeconds, ox, oy));
+                if (hasActionBtn && oy < 1560)
+                {
+                    int staySeconds = ParseSecondsNeeded(xml, oy);
+                    if (staySeconds <= 0)
+                    {
+                        Log(string.Format("[ðŸ’Ž Claimer] Usage requirement fulfilled! Quick-tapping '{0}' at ({1}, {2})...", isVerifyBtn ? "Verify Usage" : "Open App", ox, oy));
+                        AdbTap(ox, oy);
+                        Thread.Sleep(3000);
+                        continue; // Re-check screen for Claim button!
+                    }
+
+                    Log(string.Format("[ðŸ’Ž Claimer] Found '{0}' for Bonus / Milestone! Time required: {1}s ({2}m {3}s)...", isVerifyBtn ? "Verify Usage" : "Open App", staySeconds, staySeconds / 60, staySeconds % 60));
+
+                    if (isVerifyBtn && !string.IsNullOrEmpty(offerPkg))
+                    {
+                        Log(string.Format("[ðŸ’Ž Claimer] Launching '{0}' to complete remaining usage time...", offerPkg));
+                        RunAdb(string.Format("shell monkey -p {0} -c android.intent.category.LAUNCHER 1", offerPkg));
+                        Thread.Sleep(3500);
+                    }
+                    else
+                    {
                         AdbTap(ox, oy);
                         Thread.Sleep(3500);
+                    }
 
-                        // Check and dismiss any notification / permission popup immediately on launch!
-                        DismissAppDialogs();
+                    // Check and dismiss any notification / permission popup immediately on launch!
+                    DismissAppDialogs();
 
                         string targetPkg = ExtractPackageName(GetCurrentFocus());
                         if ((string.IsNullOrEmpty(targetPkg) || targetPkg == "com.quiz.earn.money.game") && !string.IsNullOrEmpty(offerPkg))
