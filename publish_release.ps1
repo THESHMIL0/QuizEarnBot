@@ -24,6 +24,8 @@ $ExePath = Join-Path $WorkingDir "QuizEarnBot.exe"
 
 if (Test-Path $SourcePath) {
     Write-Host "[1/4] Compiling QuizEarnApp.cs with app logo & manifest..." -ForegroundColor Yellow
+    Stop-Process -Name QuizEarnBot -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
     $ico = Join-Path $WorkingDir "app.ico"
     $manifest = Join-Path $WorkingDir "app.manifest"
     $compileArgs = @("/target:winexe", "/out:$ExePath", "/platform:anycpu", "/optimize+")
