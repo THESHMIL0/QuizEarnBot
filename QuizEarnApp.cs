@@ -159,8 +159,8 @@ public class QuizEarnApp : Form
     private List<string> claimsHistory = new List<string>();
 
     // App Version & Cloud Auto-Updater State
-    private const string APP_VERSION = "2.1";
-    private const int APP_VERSION_CODE = 210;
+    private const string APP_VERSION = "2.2";
+    private const int APP_VERSION_CODE = 220;
     private string updateFeedUrl = "https://raw.githubusercontent.com/THESHMIL0/QuizEarnBot/main/version.json";
     private string remoteVersion = "";
     private int remoteVersionCode = 0;
