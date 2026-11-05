@@ -1447,7 +1447,13 @@ public class QuizEarnApp : Form
                 if (mAutoUp.Success) autoCheckUpdates = bool.Parse(mAutoUp.Groups[1].Value);
 
                 Match mFeed = Regex.Match(json, @"""updateFeedUrl"":\s*""([^""]+)""");
-                if (mFeed.Success && !string.IsNullOrEmpty(mFeed.Groups[1].Value)) updateFeedUrl = mFeed.Groups[1].Value;
+                if (mFeed.Success && !string.IsNullOrEmpty(mFeed.Groups[1].Value))
+                {
+                    string feed = mFeed.Groups[1].Value.Trim();
+                    if (feed.Contains("raw.githubusercontent.com/THESHMIL/"))
+                        feed = feed.Replace("raw.githubusercontent.com/THESHMIL/", "raw.githubusercontent.com/THESHMIL0/");
+                    updateFeedUrl = feed;
+                }
 
                 claimsHistory.Clear();
                 if (isSameDay)
@@ -1811,6 +1817,11 @@ public class QuizEarnApp : Form
                 }
 
                 System.Net.ServicePointManager.SecurityProtocol = (System.Net.SecurityProtocolType)3072;
+
+                if (string.IsNullOrEmpty(updateFeedUrl) || updateFeedUrl.Contains("raw.githubusercontent.com/THESHMIL/"))
+                {
+                    updateFeedUrl = "https://raw.githubusercontent.com/THESHMIL0/QuizEarnBot/main/version.json";
+                }
 
                 string json = "";
                 using (System.Net.WebClient wc = new System.Net.WebClient())
