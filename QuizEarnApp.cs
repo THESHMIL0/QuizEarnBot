@@ -1,3 +1,4 @@
+using System.Net;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -167,8 +168,8 @@ public class QuizEarnApp : Form
     private List<string> claimsHistory = new List<string>();
 
     // App Version & Cloud Auto-Updater State
-    private const string APP_VERSION = "2.3";
-    private const int APP_VERSION_CODE = 230;
+    private const string APP_VERSION = "2.4";
+    private const int APP_VERSION_CODE = 240;
     private string updateFeedUrl = "https://raw.githubusercontent.com/THESHMIL0/QuizEarnBot/main/version.json";
     private string remoteVersion = "";
     private int remoteVersionCode = 0;
@@ -2986,95 +2987,84 @@ public class QuizEarnApp : Form
         clickedTitle = "";
         try
         {
-            // Method 1: Structure-based container matching (supports both Standard Milestones & Bonus Rewards!)
-            MatchCollection cardMatches = Regex.Matches(xml, @"<node[^>]*class=""android\.view\.View""[^>]*bounds=""\[24,(\d+)\]\[876,(\d+)\]"">(.*?)(?=<node[^>]*class=""android\.view\.View""[^>]*bounds=""\[24,|$)", RegexOptions.Singleline);
-            foreach (Match m in cardMatches)
+            // Find all offer titles on the list (Every offer title on the Super Offers list is at X=105)
+            MatchCollection titleNodes = Regex.Matches(xml, @"<node [^>]*text=""([^""]+)""[^>]*bounds=""\[105,(\d+)\]\[(\d+),(\d+)\]""");
+            
+            foreach (Match tm in titleNodes)
             {
-                int y1 = int.Parse(m.Groups[1].Value);
-                int y2 = int.Parse(m.Groups[2].Value);
-                if (y1 < 70 || y2 > 1550) continue;
+                string rawTitle = tm.Groups[1].Value.Trim();
+                string cleanTitle = WebUtility.HtmlDecode(rawTitle).Trim();
+                int ty1 = int.Parse(tm.Groups[2].Value);
+                int ty2 = int.Parse(tm.Groups[4].Value);
 
-                string block = m.Groups[3].Value;
-                Match tm = Regex.Match(block, @"<node[^>]*text=""([^""]+)""[^>]*class=""android\.widget\.TextView""");
-                if (!tm.Success) continue;
-                string title = tm.Groups[1].Value.Trim();
-
-                if (title == "How to Complete" || title == "Need help with offers?" || title == "Load More" || title.Contains("Important Guidelines"))
+                // Ignore headers and guidelines
+                if (cleanTitle == "Progress" || cleanTitle == "How to Complete" || cleanTitle.Contains("Important Guidelines") || cleanTitle == "Load More")
                     continue;
+
+                // Ignore off-screen cards
+                if (ty1 < 100 || ty2 > 1540) continue;
 
                 // DEDUPLICATION: If this app was already processed or verified in this cycle, skip it!
-                if (skippedApps != null && skippedApps.Contains(title))
+                if (skippedApps != null && (skippedApps.Contains(rawTitle) || skippedApps.Contains(cleanTitle)))
+                {
                     continue;
+                }
 
-                bool isStandardReady = Regex.IsMatch(block, @"text=""[^""]*(?:Use\s*app\s*for|Claim|Open\s*App)", RegexOptions.IgnoreCase);
-                bool isZeroCooldown = Regex.IsMatch(block, @"text=""[^""]*(?:Unlocks\s*in|After)\s*0[ms]", RegexOptions.IgnoreCase);
-                bool isCooldown = !isZeroCooldown && Regex.IsMatch(block, @"text=""[^""]*(?:Unlocks\s*in|After)\s*(?:\d+h|\d+m|[1-9]\d*s)", RegexOptions.IgnoreCase);
-                bool isProof = Regex.IsMatch(block, @"text=""[^""]*Proof\s*(?:rejected|under\s*review)", RegexOptions.IgnoreCase);
+                // Slice XML for this card's vertical window [ty1 - 30 to ty1 + 200]
+                int cardTop = Math.Max(0, ty1 - 30);
+                int cardBottom = ty1 + 200;
 
-                Match taskM = Regex.Match(block, @"text=""(\d+)""[^>]*>.*?text=""/""[^>]*>.*?text=""(\d+)""", RegexOptions.Singleline);
-                int done = taskM.Success ? int.Parse(taskM.Groups[1].Value) : 0;
-                int total = taskM.Success ? int.Parse(taskM.Groups[2].Value) : 0;
-                bool hasStandardPending = (total > 0 && done < total) && !isCooldown && !isProof;
+                MatchCollection cardTexts = Regex.Matches(xml, @"<node [^>]*text=""([^""]+)""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
+                List<string> texts = new List<string>();
+                foreach (Match cm in cardTexts)
+                {
+                    string ct = cm.Groups[1].Value.Trim();
+                    if (string.IsNullOrEmpty(ct)) continue;
+                    int cy1 = int.Parse(cm.Groups[3].Value);
+                    int cy2 = int.Parse(cm.Groups[5].Value);
+                    if (cy1 >= cardTop && cy2 <= cardBottom + 10)
+                    {
+                        texts.Add(ct);
+                    }
+                }
 
-                // CRITICAL BONUS DETECTION: Even if standard is done (e.g. 6/6), check if card mentions Bonus, Open App, or more needed!
-                bool hasBonusActive = Regex.IsMatch(block, @"(?:Bonus|BONUS|Open\s*App|more\s*needed)", RegexOptions.IgnoreCase) && !isCooldown && !isProof;
+                string cardContent = string.Join(" | ", texts);
 
-                if (isStandardReady || hasStandardPending || hasBonusActive)
+                bool isComplete = cardContent.IndexOf("All milestones completed", StringComparison.OrdinalIgnoreCase) >= 0;
+                bool isCooldown = Regex.IsMatch(cardContent, @"Unlocks\s*in\s*(?:\d+h|\d+m|[1-9]\d*s)", RegexOptions.IgnoreCase);
+                bool isReady = Regex.IsMatch(cardContent, @"(?:Use\s*app\s*for|Claim|Open\s*App)", RegexOptions.IgnoreCase);
+
+                if (isComplete)
+                {
+                    if (skippedApps != null) { skippedApps.Add(rawTitle); skippedApps.Add(cleanTitle); }
+                    continue;
+                }
+
+                if (isCooldown)
+                {
+                    if (skippedApps != null) { skippedApps.Add(rawTitle); skippedApps.Add(cleanTitle); }
+                    continue;
+                }
+
+                if (isReady)
                 {
                     int tapX = 450;
-                    int tapY = (y1 + y2) / 2;
-                    string desc = hasBonusActive ? "Active Bonus Reward" : (hasStandardPending ? string.Format("Milestone ({0}/{1})", done, total) : "Ready Milestone");
-                    Log(string.Format("[🎁 Claimer] Found offer card '{0}' ({1})! Opening at ({2}, {3})...", title, desc, tapX, tapY));
-                    clickedTitle = title;
-                    AdbTap(tapX, tapY);
-                    return true;
-                }
-            }
-
-            // Method 2 (Fallback): Find any "Use app for...", "Claim", "Open App", or "Bonus" button bounds directly
-            MatchCollection matches = Regex.Matches(xml, @"<node[^>]*text=""[^""]*(?:Use\s*app\s*for|Claim|Open\s*App|Bonus)[^""]*""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""", RegexOptions.IgnoreCase);
-            foreach (Match m in matches)
-            {
-                int x1 = int.Parse(m.Groups[1].Value);
-                int y1 = int.Parse(m.Groups[2].Value);
-                int x2 = int.Parse(m.Groups[3].Value);
-                int y2 = int.Parse(m.Groups[4].Value);
-
-                int tapX = 450;
-                int tapY = y1 - 100;
-                if (tapY < 160) tapY = (y1 + y2) / 2;
-
-                if (tapY > 160 && tapY < 1550)
-                {
-                    // Try to associate with nearest card title
-                    string nearbyTitle = "";
-                    MatchCollection titleMatches = Regex.Matches(xml, @"<node[^>]*class=""android\.widget\.TextView""[^>]*bounds=""\[105,(\d+)\]\[\d+,(\d+)\]""[^>]*text=""([^""]+)""");
-                    foreach (Match tm2 in titleMatches)
-                    {
-                        int ty1 = int.Parse(tm2.Groups[1].Value);
-                        int ty2 = int.Parse(tm2.Groups[2].Value);
-                        if (ty2 <= y1 && (y1 - ty2) < 260)
-                        {
-                            nearbyTitle = tm2.Groups[3].Value.Trim();
-                            break;
-                        }
-                    }
-
-                    if (skippedApps != null && !string.IsNullOrEmpty(nearbyTitle) && skippedApps.Contains(nearbyTitle))
-                        continue;
-
-                    clickedTitle = nearbyTitle;
-                    string label = string.IsNullOrEmpty(nearbyTitle) ? "ready offer" : "'" + nearbyTitle + "'";
-                    Log(string.Format("[💎 Claimer] Found {0} on list! Opening card at ({1}, {2})...", label, tapX, tapY));
+                    int tapY = ty1 + 75;
+                    clickedTitle = cleanTitle;
+                    if (skippedApps != null) { skippedApps.Add(rawTitle); skippedApps.Add(cleanTitle); }
+                    Log(string.Format("[ðŸŽ Claimer] Found ready offer '{0}'! Opening card at ({1}, {2})...", cleanTitle, tapX, tapY));
                     AdbTap(tapX, tapY);
                     return true;
                 }
             }
         }
-        catch {}
+        catch (Exception ex)
+        {
+            Log("[Claimer] Error scanning offer cards: " + ex.Message);
+        }
+
         return false;
     }
-
     private void ProcessOfferAppDetails(string targetTitle, HashSet<string> cycleCompletedApps, HashSet<string> cooldownBonusApps = null)
     {
         int consecutiveLoops = 0;
@@ -3302,8 +3292,16 @@ public class QuizEarnApp : Form
             // CRITICAL FIX: ALWAYS record this app as processed in the cycle so the bot NEVER loops on the same app!
             if (cycleCompletedApps != null)
             {
-                if (!string.IsNullOrEmpty(targetTitle)) cycleCompletedApps.Add(targetTitle);
-                if (!string.IsNullOrEmpty(appTitle)) cycleCompletedApps.Add(appTitle);
+                if (!string.IsNullOrEmpty(targetTitle))
+                {
+                    cycleCompletedApps.Add(targetTitle);
+                    cycleCompletedApps.Add(WebUtility.HtmlDecode(targetTitle).Trim());
+                }
+                if (!string.IsNullOrEmpty(appTitle))
+                {
+                    cycleCompletedApps.Add(appTitle);
+                    cycleCompletedApps.Add(WebUtility.HtmlDecode(appTitle).Trim());
+                }
             }
 
             AdbKey(4); // BlueStacks / Android hardware Back button (KEYCODE_BACK)
@@ -3487,7 +3485,15 @@ public class QuizEarnApp : Form
                 if (xml.Contains("SUPER OFFER") || xml.Contains("Guaranteed") || xml.Contains("1,000"))
                 {
                     Log("[💎 Claimer] On Home screen. Tapping Super Offer 1,000 card...");
-                    AdbTap(160, 650);
+                                        int scx, scy;
+                    if (TryFindNodeBounds(xml, "SUPER OFFER", out scx, out scy) || TryFindNodeBounds(xml, "1,000", out scx, out scy))
+                    {
+                        AdbTap(scx, scy + 40);
+                    }
+                    else
+                    {
+                        AdbTap(240, 370);
+                    }
                     Thread.Sleep(3000);
                     continue;
                 }
