@@ -1374,7 +1374,6 @@ public class QuizEarnApp : Form
             } catch {}
             return;
         }
-        }
         string time = DateTime.Now.ToString("HH:mm:ss");
         string line = string.Format("[{0}] {1}\n", time, message);
         txtLog.AppendText(line);
