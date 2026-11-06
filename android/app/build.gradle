@@ -5,20 +5,11 @@ android {
     compileSdk 33
 
     defaultConfig {
-        applicationId "com.quizearn.bot"
+        applicationId 'com.quizearn.bot'
         minSdk 24
         targetSdk 33
         versionCode 1
-        versionName "1.0.0"
-    }
-
-    buildTypes {
-        release {
-            minifyEnabled false
-        }
-        debug {
-            debuggable true
-        }
+        versionName '1.0'
     }
 
     compileOptions {
