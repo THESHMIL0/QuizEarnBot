@@ -18,12 +18,18 @@ jobs:
     steps:
       - name: Checkout Source Code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
+
+      - name: Accept Android SDK Licenses
+        run: |
+          yes | sdkmanager --licenses || true
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
@@ -50,6 +56,7 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main || true
           git add QuizEarnBot.apk
           git commit -m "Auto-publish QuizEarnBot.apk for direct web download [skip ci]" || echo "No changes to commit"
           git push origin main || echo "Push failed or already up to date"
