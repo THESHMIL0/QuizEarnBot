@@ -158,32 +158,30 @@ class FloatingOverlayService : Service() {
         container.addView(btnClose)
 
         // Draggable Touch Listener
-        container.setOnTouchListener(object : View.OnTouchListener {
-            private var initialX = 0
-            private var initialY = 0
-            private var initialTouchX = 0f
-            private var initialTouchY = 0f
+        var initialX = 0
+        var initialY = 0
+        var initialTouchX = 0f
+        var initialTouchY = 0f
 
-            override fun onTouch(v: View?, event: MotionEvent): Boolean {
-                val p = params ?: return false
-                when (event.action) {
-                    MotionEvent.ACTION_DOWN -> {
-                        initialX = p.x
-                        initialY = p.y
-                        initialTouchX = event.rawX
-                        initialTouchY = event.rawY
-                        return true
-                    }
-                    MotionEvent.ACTION_MOVE -> {
-                        p.x = initialX + (event.rawX - initialTouchX).toInt()
-                        p.y = initialY + (event.rawY - initialTouchY).toInt()
-                        windowManager.updateViewLayout(container, p)
-                        return true
-                    }
+        container.setOnTouchListener { _, event ->
+            val p = params ?: return@setOnTouchListener false
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    initialX = p.x
+                    initialY = p.y
+                    initialTouchX = event.rawX
+                    initialTouchY = event.rawY
+                    true
                 }
-                return false
+                MotionEvent.ACTION_MOVE -> {
+                    p.x = initialX + (event.rawX - initialTouchX).toInt()
+                    p.y = initialY + (event.rawY - initialTouchY).toInt()
+                    windowManager.updateViewLayout(container, p)
+                    true
+                }
+                else -> false
             }
-        })
+        }
 
         floatView = container
         windowManager.addView(floatView, params)
