@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en" class="dark scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quiz & Earn Bot — Autonomous Rewards & Quiz Suite</title>
+    <meta name="description" content="The ultimate autonomous automation utility for Quiz & Earn. Auto-solve quizzes, claim Super Offers & Bonus Rewards, and auto-recover from crashes.">
+    <link rel="icon" type="image/png" href="app_icon.png">
+    
+    <!-- Google Fonts & Tailwind CDN -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        oled: '#000000',
+                        surface: '#08080A',
+                        card: '#111115',
+                        border: '#1F1F26',
+                        emeraldNeon: '#10B981',
+                        purpleNeon: '#8B5CF6'
+                    },
+                    fontFamily: {
+                        sans: ['Plus Jakarta Sans', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace']
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body {
+            background-color: #000000;
+            color: #E2E8F0;
+            overflow-x: hidden;
+        }
+        .glow-emerald {
+            box-shadow: 0 0 35px -5px rgba(16, 185, 129, 0.25);
+        }
+        .glow-purple {
+            box-shadow: 0 0 35px -5px rgba(139, 92, 246, 0.25);
+        }
+        .bg-grid {
+            background-size: 40px 40px;
+            background-image: 
+                linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+        }
+    </style>
+</head>
+<body class="bg-black font-sans antialiased selection:bg-emerald-500 selection:text-black">
+
+    <!-- Subtle Background Ambient Gradients -->
+    <div class="fixed inset-0 bg-grid pointer-events-none z-0"></div>
+    <div class="fixed top-[-10%] left-[20%] w-[500px] h-[500px] bg-emerald-500/10 rounded-full blur-[140px] pointer-events-none"></div>
+    <div class="fixed bottom-[-10%] right-[15%] w-[600px] h-[600px] bg-purple-500/10 rounded-full blur-[160px] pointer-events-none"></div>
+
+    <!-- Navigation Bar -->
+    <header class="sticky top-0 z-50 backdrop-blur-xl bg-black/75 border-b border-border/80">
+        <div class="max-w-6xl mx-auto px-6 h-20 flex items-center justify-between">
+            <a href="#" class="flex items-center gap-3 group">
+                <img src="logo.png" alt="Quiz & Earn Bot Logo" class="w-10 h-10 rounded-xl shadow-lg group-hover:scale-105 transition-transform duration-300">
+                <div class="flex flex-col">
+                    <span class="font-bold text-lg tracking-tight text-white flex items-center gap-2">
+                        Quiz & Earn Bot
+                        <span id="nav-badge" class="px-2 py-0.5 text-[11px] font-mono font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 rounded-full">v2.6 Live</span>
+                    </span>
+                    <span class="text-xs text-gray-400 font-mono">Autonomous Reward Suite</span>
+                </div>
+            </a>
+
+            <nav class="hidden md:flex items-center gap-8 text-sm font-medium text-gray-300">
+                <a href="#features" class="hover:text-white transition">Features</a>
+                <a href="#updater" class="hover:text-white transition flex items-center gap-1.5">
+                    <i data-lucide="cloud-lightning" class="w-4 h-4 text-emerald-400"></i>
+                    Auto-Updater
+                </a>
+                <a href="#how-it-works" class="hover:text-white transition">Quick Setup</a>
+                <a href="#faq" class="hover:text-white transition">FAQ</a>
+                <a href="https://github.com/THESHMIL0/QuizEarnBot" target="_blank" class="hover:text-white transition flex items-center gap-1">
+                    <i data-lucide="github" class="w-4 h-4"></i> GitHub
+                </a>
+            </nav>
+
+            <a href="#download" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white text-black font-semibold text-sm hover:bg-gray-100 transition shadow-lg hover:shadow-white/20 active:scale-95">
+                <i data-lucide="download" class="w-4 h-4"></i>
+                <span>Download</span>
+            </a>
+        </div>
+    </header>
+
+    <!-- Main Content Container -->
+    <main class="relative z-10">
+
+        <!-- Hero Section -->
+        <section class="pt-20 pb-24 px-6 text-center max-w-4xl mx-auto">
+            <!-- Live Badge -->
+            <div class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-card border border-border text-xs font-mono text-gray-300 mb-8 shadow-inner">
+                <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span class="text-emerald-400 font-semibold" id="hero-version-text">v2.6 Available</span>
+                <span class="text-gray-500">•</span>
+                <span>Crash Recovery & Bonus Verifier Active</span>
+            </div>
+
+            <!-- Main Heading -->
+            <h1 class="text-4xl sm:text-6xl font-extrabold tracking-tight text-white leading-[1.15] mb-6">
+                Automate Quiz & Earn. <br class="hidden sm:inline" />
+                <span class="bg-gradient-to-r from-emerald-400 via-teal-300 to-purple-400 bg-clip-text text-transparent">
+                    100% Hands-Free & AFK.
+                </span>
+            </h1>
+
+            <p class="text-lg sm:text-xl text-gray-400 max-w-2xl mx-auto mb-10 leading-relaxed font-normal">
+                Solve math quizzes in milliseconds, claim Super Offers & Bonus Rewards, and auto-recover if BlueStacks crashes. Fully portable with built-in Cloud Auto-Updates.
+            </p>
+
+            <!-- Download CTA Buttons -->
+            <div id="download" class="flex flex-col sm:flex-row items-center justify-center gap-4 max-w-md mx-auto mb-14">
+                <a id="btn-download-zip" href="QuizEarnBot_v2.6_Portable.zip" class="w-full sm:w-auto flex-1 inline-flex items-center justify-center gap-3 px-6 py-4 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-black font-bold text-base transition shadow-xl glow-emerald active:scale-95">
+                    <i data-lucide="download" class="w-5 h-5"></i>
+                    <span>Download Portable (.zip)</span>
+                </a>
+                <a id="btn-download-exe" href="QuizEarnBot.exe" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-4 rounded-xl bg-card border border-border hover:border-gray-500 text-white font-semibold text-base transition active:scale-95">
+                    <i data-lucide="terminal" class="w-5 h-5 text-gray-400"></i>
+                    <span>Direct EXE</span>
+                </a>
+            </div>
+
+            <!-- Live Changelog & Auto-Updater Status Pill -->
+            <div class="p-5 rounded-2xl bg-card/60 backdrop-blur-md border border-border/80 text-left max-w-xl mx-auto">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs font-mono uppercase tracking-wider text-emerald-400 font-semibold flex items-center gap-1.5">
+                        <i data-lucide="sparkles" class="w-3.5 h-3.5"></i> Live Cloud Release Feed
+                    </span>
+                    <span id="release-date" class="text-xs text-gray-500 font-mono">Today</span>
+                </div>
+                <p id="release-changelog" class="text-xs text-gray-300 font-mono leading-relaxed">
+                    Auto-launch BlueStacks on crash/disconnect, automated watchdog recovery to Quiz & Earn, Google Play Store redirect guard, and Bonus Reward verifier.
+                </p>
+                <div class="mt-3 pt-3 border-t border-border/50 flex items-center justify-between text-[11px] text-gray-400">
+                    <span class="flex items-center gap-1 text-emerald-400">
+                        <i data-lucide="check-circle" class="w-3 h-3"></i> Auto-Updates: Enabled
+                    </span>
+                    <span class="font-mono">Windows 10 / 11 (64-bit)</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Feature Grid Section -->
+        <section id="features" class="py-20 px-6 max-w-6xl mx-auto border-t border-border/50">
+            <div class="text-center max-w-2xl mx-auto mb-16">
+                <h2 class="text-xs font-mono uppercase tracking-widest text-emerald-400 font-semibold mb-3">Engine Highlights</h2>
+                <h3 class="text-3xl sm:text-4xl font-bold text-white tracking-tight">Built for Unattended Reliability</h3>
+                <p class="text-gray-400 mt-3 text-sm sm:text-base">Everything needed to run 24/7 without getting stuck or frozen.</p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <!-- Card 1 -->
+                <div class="p-7 rounded-2xl bg-card border border-border hover:border-emerald-500/40 transition duration-300 group">
+                    <div class="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mb-6 group-hover:scale-110 transition-transform">
+                        <i data-lucide="zap" class="w-6 h-6"></i>
+                    </div>
+                    <h4 class="text-lg font-bold text-white mb-2">Turbo Speed Quiz Solver</h4>
+                    <p class="text-sm text-gray-400 leading-relaxed">
+                        Reads questions & math calculations with regex precision. Fast answer mode answers in under 600ms to maximize coins per minute.
+                    </p>
+                </div>
+
+                <!-- Card 2 -->
+                <div class="p-7 rounded-2xl bg-card border border-border hover:border-emerald-500/40 transition duration-300 group">
+                    <div class="w-12 h-12 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 mb-6 group-hover:scale-110 transition-transform">
+                        <i data-lucide="gift" class="w-6 h-6"></i>
+                    </div>
+                    <h4 class="text-lg font-bold text-white mb-2">1-Click Offer & Bonus Claimer</h4>
+                    <p class="text-sm text-gray-400 leading-relaxed">
+                        Scans "My Super Offers" list, completes sponsored app usage, inspects pending 6/7 bonus cards, tracks cooldown timers, and claims coins.
+                    </p>
+                </div>
+
+                <!-- Card 3 -->
+                <div class="p-7 rounded-2xl bg-card border border-border hover:border-emerald-500/40 transition duration-300 group">
+                    <div class="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400 mb-6 group-hover:scale-110 transition-transform">
+                        <i data-lucide="shield-check" class="w-6 h-6"></i>
+                    </div>
+                    <h4 class="text-lg font-bold text-white mb-2">BlueStacks Crash Watchdog</h4>
+                    <p class="text-sm text-gray-400 leading-relaxed">
+                        If BlueStacks crashes or drops connection, the bot auto-launches BlueStacks, waits for Android OS to boot, opens Quiz & Earn, and resumes.
+                    </p>
+                </div>
+
+                <!-- Card 4 -->
+                <div class="p-7 rounded-2xl bg-card border border-border hover:border-emerald-500/40 transition duration-300 group">
+                    <div class="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mb-6 group-hover:scale-110 transition-transform">
+                        <i data-lucide="cloud-lightning" class="w-6 h-6"></i>
+                    </div>
+                    <h4 class="text-lg font-bold text-white mb-2">Integrated Cloud Auto-Updater</h4>
+                    <p class="text-sm text-gray-400 leading-relaxed">
+                        Never check websites for updates manually. The bot detects GitHub releases on startup and updates itself in-place with a single click.
+                    </p>
+                </div>
+
+                <!-- Card 5 -->
+                <div class="p-7 rounded-2xl bg-card border border-border hover:border-emerald-500/40 transition duration-300 group">
+                    <div class="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 mb-6 group-hover:scale-110 transition-transform">
+                        <i data-lucide="smartphone" class="w-6 h-6"></i>
+                    </div>
+                    <h4 class="text-lg font-bold text-white mb-2">Real Phone & Universal Emulators</h4>
+                    <p class="text-sm text-gray-400 leading-relaxed">
+                        Works seamlessly with BlueStacks 5/4, LDPlayer, Nox, MuMu, or your physical Android phone plugged into USB with debugging enabled.
+                    </p>
+                </div>
+
+                <!-- Card 6 -->
+                <div class="p-7 rounded-2xl bg-card border border-border hover:border-emerald-500/40 transition duration-300 group">
+                    <div class="w-12 h-12 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 mb-6 group-hover:scale-110 transition-transform">
+                        <i data-lucide="activity" class="w-6 h-6"></i>
+                    </div>
+                    <h4 class="text-lg font-bold text-white mb-2">Pure OLED Stealth Dashboard</h4>
+                    <p class="text-sm text-gray-400 leading-relaxed">
+                        Pitch black `#000000` theme designed for long overnight runs. Real-time stats HUD tracks 25-gem cycles, coins claimed, and history.
+                    </p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Cloud Auto-Updater Highlight Section -->
+        <section id="updater" class="py-20 px-6 max-w-5xl mx-auto">
+            <div class="p-8 sm:p-12 rounded-3xl bg-gradient-to-b from-surface to-black border border-border glow-emerald relative overflow-hidden">
+                <div class="relative z-10 grid grid-cols-1 md:grid-cols-2 gap-10 items-center">
+                    <div>
+                        <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-mono text-xs font-semibold mb-4">
+                            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Seamless Auto-Updates
+                        </div>
+                        <h3 class="text-2xl sm:text-3xl font-bold text-white tracking-tight mb-4">
+                            You Only Download Once. <br />The Bot Handles the Rest.
+                        </h3>
+                        <p class="text-gray-400 text-sm sm:text-base leading-relaxed mb-6">
+                            Every copy of Quiz & Earn Bot is connected directly to our GitHub Release Feed. When a new version is released:
+                        </p>
+                        <ul class="space-y-3 text-sm text-gray-300">
+                            <li class="flex items-center gap-2">
+                                <i data-lucide="check" class="w-4 h-4 text-emerald-400 flex-shrink-0"></i>
+                                <span>Startup auto-check alerts you of new versions</span>
+                            </li>
+                            <li class="flex items-center gap-2">
+                                <i data-lucide="check" class="w-4 h-4 text-emerald-400 flex-shrink-0"></i>
+                                <span>Downloads and swaps binaries with zero user effort</span>
+                            </li>
+                            <li class="flex items-center gap-2">
+                                <i data-lucide="check" class="w-4 h-4 text-emerald-400 flex-shrink-0"></i>
+                                <span>Preserves all your stats, coin totals, and settings</span>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <!-- Visual Update Card Preview -->
+                    <div class="bg-card p-6 rounded-2xl border border-border/80 shadow-2xl font-mono text-xs">
+                        <div class="flex items-center justify-between pb-3 border-b border-border/60 mb-4">
+                            <span class="text-gray-400 flex items-center gap-2">
+                                <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                                Cloud Updater Engine
+                            </span>
+                            <span class="text-emerald-400">READY</span>
+                        </div>
+                        <div class="space-y-2 text-gray-300">
+                            <p class="text-gray-500">// Checking update feed...</p>
+                            <p class="text-white">&gt; Connected to GitHub API</p>
+                            <p class="text-white">&gt; Local version: <span class="text-emerald-400" id="preview-local-ver">v2.6</span></p>
+                            <p class="text-white">&gt; Remote version: <span class="text-emerald-400" id="preview-remote-ver">v2.6</span></p>
+                            <p class="text-emerald-400">&gt; Status: Up to date! No action required.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Quick 3-Step Setup Guide -->
+        <section id="how-it-works" class="py-20 px-6 max-w-4xl mx-auto border-t border-border/50">
+            <div class="text-center mb-16">
+                <h2 class="text-xs font-mono uppercase tracking-widest text-emerald-400 font-semibold mb-3">Getting Started</h2>
+                <h3 class="text-3xl font-bold text-white tracking-tight">Up and Running in 60 Seconds</h3>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div class="p-6 rounded-2xl bg-card border border-border">
+                    <span class="text-2xl font-mono font-bold text-emerald-400">01</span>
+                    <h4 class="text-base font-bold text-white mt-4 mb-2">Download & Extract</h4>
+                    <p class="text-xs text-gray-400 leading-relaxed">
+                        Download the portable zip archive and extract it anywhere on your PC (Desktop, USB, or Downloads). No installation required.
+                    </p>
+                </div>
+                <div class="p-6 rounded-2xl bg-card border border-border">
+                    <span class="text-2xl font-mono font-bold text-emerald-400">02</span>
+                    <h4 class="text-base font-bold text-white mt-4 mb-2">Open Quiz & Earn</h4>
+                    <p class="text-xs text-gray-400 leading-relaxed">
+                        Launch BlueStacks (or plug in your Android phone with USB Debugging enabled) and open the Quiz & Earn game.
+                    </p>
+                </div>
+                <div class="p-6 rounded-2xl bg-card border border-border">
+                    <span class="text-2xl font-mono font-bold text-emerald-400">03</span>
+                    <h4 class="text-base font-bold text-white mt-4 mb-2">Click Start Bot</h4>
+                    <p class="text-xs text-gray-400 leading-relaxed">
+                        Run <code class="text-emerald-400 font-mono">QuizEarnBot.exe</code> and click Start. The bot connects automatically and starts earning!
+                    </p>
+                </div>
+            </div>
+        </section>
+
+        <!-- FAQ Section -->
+        <section id="faq" class="py-20 px-6 max-w-3xl mx-auto border-t border-border/50">
+            <div class="text-center mb-16">
+                <h2 class="text-xs font-mono uppercase tracking-widest text-emerald-400 font-semibold mb-3">Common Questions</h2>
+                <h3 class="text-3xl font-bold text-white tracking-tight">Frequently Asked Questions</h3>
+            </div>
+
+            <div class="space-y-4">
+                <details class="group p-5 rounded-2xl bg-card border border-border [&_summary::-webkit-details-marker]:hidden cursor-pointer">
+                    <summary class="flex items-center justify-between font-semibold text-white text-sm">
+                        <span>Does the downloaded app have the auto-update feature?</span>
+                        <i data-lucide="chevron-down" class="w-4 h-4 text-gray-400 transition-transform group-open:rotate-180"></i>
+                    </summary>
+                    <p class="mt-3 text-xs text-gray-400 leading-relaxed">
+                        Yes! Every user who downloads the app has the built-in Cloud Auto-Updater. When you push a new release to GitHub, their bot automatically detects it on startup and updates itself in 1 click.
+                    </p>
+                </details>
+
+                <details class="group p-5 rounded-2xl bg-card border border-border [&_summary::-webkit-details-marker]:hidden cursor-pointer">
+                    <summary class="flex items-center justify-between font-semibold text-white text-sm">
+                        <span>Do I need to install .NET or extra software?</span>
+                        <i data-lucide="chevron-down" class="w-4 h-4 text-gray-400 transition-transform group-open:rotate-180"></i>
+                    </summary>
+                    <p class="mt-3 text-xs text-gray-400 leading-relaxed">
+                        No. The bot uses the pre-installed .NET Framework built into Windows 10 & 11, and the portable ZIP bundle includes all required ADB drivers. It has zero registry impact.
+                    </p>
+                </details>
+
+                <details class="group p-5 rounded-2xl bg-card border border-border [&_summary::-webkit-details-marker]:hidden cursor-pointer">
+                    <summary class="flex items-center justify-between font-semibold text-white text-sm">
+                        <span>Can I run this on my physical Android phone without BlueStacks?</span>
+                        <i data-lucide="chevron-down" class="w-4 h-4 text-gray-400 transition-transform group-open:rotate-180"></i>
+                    </summary>
+                    <p class="mt-3 text-xs text-gray-400 leading-relaxed">
+                        Yes! Turn on "USB Debugging" in your phone's Developer Options and connect via USB (or Wi-Fi). The bot will detect your physical device and run on it automatically. A standalone Android APK is also currently in development!
+                    </p>
+                </details>
+
+                <details class="group p-5 rounded-2xl bg-card border border-border [&_summary::-webkit-details-marker]:hidden cursor-pointer">
+                    <summary class="flex items-center justify-between font-semibold text-white text-sm">
+                        <span>What happens if BlueStacks crashes while I'm away?</span>
+                        <i data-lucide="chevron-down" class="w-4 h-4 text-gray-400 transition-transform group-open:rotate-180"></i>
+                    </summary>
+                    <p class="mt-3 text-xs text-gray-400 leading-relaxed">
+                        The built-in BlueStacks Watchdog detects the process exit, relaunches BlueStacks automatically, waits for the Android OS to finish booting, reopens Quiz & Earn, and resumes solving and claiming seamlessly.
+                    </p>
+                </details>
+            </div>
+        </section>
+
+        <!-- Final Download Banner -->
+        <section class="py-20 px-6 max-w-4xl mx-auto text-center">
+            <div class="p-10 rounded-3xl bg-card border border-border glow-purple">
+                <h3 class="text-2xl sm:text-3xl font-bold text-white mb-4">Ready to start earning AFK?</h3>
+                <p class="text-gray-400 text-sm max-w-md mx-auto mb-8">
+                    Download the latest release today. Free, open-source, and constantly updated.
+                </p>
+                <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
+                    <a href="QuizEarnBot_v2.6_Portable.zip" class="inline-flex items-center gap-2 px-7 py-3.5 rounded-xl bg-white text-black font-bold text-sm hover:bg-gray-100 transition shadow-lg active:scale-95">
+                        <i data-lucide="download" class="w-4 h-4"></i> Download Portable (.zip)
+                    </a>
+                    <a href="https://github.com/THESHMIL0/QuizEarnBot" target="_blank" class="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl bg-surface border border-border hover:border-gray-500 text-white font-semibold text-sm transition active:scale-95">
+                        <i data-lucide="star" class="w-4 h-4 text-amber-400"></i> Star on GitHub
+                    </a>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="border-t border-border/60 py-10 px-6 text-center text-xs text-gray-500 relative z-10">
+        <div class="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+            <p>&copy; 2026 Quiz & Earn Tools. Open-source automation utility.</p>
+            <div class="flex items-center gap-6 font-mono text-[11px]">
+                <a href="version.json" class="hover:text-emerald-400 transition">version.json</a>
+                <a href="https://github.com/THESHMIL0/QuizEarnBot" class="hover:text-emerald-400 transition">GitHub Repo</a>
+                <a href="HOW_TO_RUN.txt" class="hover:text-emerald-400 transition">Documentation</a>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Initialize Lucide Icons & Dynamic Live Version Sync -->
+    <script>
+        lucide.createIcons();
+
+        // Dynamically fetch version.json to ensure the website is ALWAYS in sync with the latest release
+        fetch('version.json')
+            .then(res => res.json())
+            .then(data => {
+                if (data && data.version) {
+                    const ver = 'v' + data.version;
+                    const zipFile = 'QuizEarnBot_' + ver + '_Portable.zip';
+
+                    const navBadge = document.getElementById('nav-badge');
+                    if (navBadge) navBadge.textContent = ver + ' Live';
+
+                    const heroText = document.getElementById('hero-version-text');
+                    if (heroText) heroText.textContent = ver + ' Available';
+
+                    const releaseDate = document.getElementById('release-date');
+                    if (releaseDate && data.release_date) releaseDate.textContent = 'Released: ' + data.release_date;
+
+                    const changelog = document.getElementById('release-changelog');
+                    if (changelog && data.changelog) changelog.textContent = data.changelog;
+
+                    const previewLocal = document.getElementById('preview-local-ver');
+                    if (previewLocal) previewLocal.textContent = ver;
+                    const previewRemote = document.getElementById('preview-remote-ver');
+                    if (previewRemote) previewRemote.textContent = ver;
+
+                    const btnZip = document.getElementById('btn-download-zip');
+                    if (btnZip) btnZip.href = zipFile;
+                }
+            })
+            .catch(err => {
+                console.log('Using static release fallback:', err);
+            });
+    </script>
+</body>
+</html>
