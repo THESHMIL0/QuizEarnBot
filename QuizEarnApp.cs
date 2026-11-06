@@ -23,8 +23,8 @@ using Microsoft.Win32;
 [assembly: AssemblyCopyright("Copyright © 2026 Quiz & Earn Tools")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
-[assembly: AssemblyVersion("2.5.0.0")]
-[assembly: AssemblyFileVersion("2.5.0.0")]
+[assembly: AssemblyVersion("2.6.0.0")]
+[assembly: AssemblyFileVersion("2.6.0.0")]
 
 public class QuizEarnApp : Form
 {
@@ -169,8 +169,8 @@ public class QuizEarnApp : Form
     private List<string> claimsHistory = new List<string>();
 
     // App Version & Cloud Auto-Updater State
-    private const string APP_VERSION = "2.5";
-    private const int APP_VERSION_CODE = 250;
+    private const string APP_VERSION = "2.6";
+    private const int APP_VERSION_CODE = 260;
     private bool autoRecoverBlueStacks = true;
     private string updateFeedUrl = "https://raw.githubusercontent.com/THESHMIL0/QuizEarnBot/main/version.json";
     private string remoteVersion = "";
@@ -3264,29 +3264,57 @@ public class QuizEarnApp : Form
 
                 string cardContent = string.Join(" | ", texts);
 
-                bool isComplete = cardContent.IndexOf("All milestones completed", StringComparison.OrdinalIgnoreCase) >= 0;
+                // Parse task progress if present (e.g. "6/7 tasks" or "6 / 7 tasks")
+                int tasksDone = -1;
+                int tasksTotal = -1;
+                Match mTasks = Regex.Match(cardContent, @"(\d+)\s*/\s*(\d+)\s*tasks", RegexOptions.IgnoreCase);
+                if (mTasks.Success)
+                {
+                    tasksDone = int.Parse(mTasks.Groups[1].Value);
+                    tasksTotal = int.Parse(mTasks.Groups[2].Value);
+                }
+
+                bool isMilestonesText = cardContent.IndexOf("All milestones completed", StringComparison.OrdinalIgnoreCase) >= 0;
                 bool isCooldown = Regex.IsMatch(cardContent, @"Unlocks\s*in\s*(?:\d+h|\d+m|[1-9]\d*s)", RegexOptions.IgnoreCase);
                 bool isReady = Regex.IsMatch(cardContent, @"(?:Use\s*app\s*for|Claim|Open\s*App)", RegexOptions.IgnoreCase);
 
-                if (isComplete)
+                // Truly 100% finished: all tasks including bonus are completed (e.g. 7/7 tasks)
+                if (tasksDone >= 0 && tasksTotal > 0 && tasksDone >= tasksTotal)
                 {
+                    Log(string.Format("[Claimer] '{0}' is 100% completed ({1}/{2} tasks). Skipping.", cleanTitle, tasksDone, tasksTotal));
                     if (skippedApps != null) { skippedApps.Add(rawTitle); skippedApps.Add(cleanTitle); }
                     continue;
                 }
 
+                // If on cooldown on the card itself (e.g. "Unlocks in 4h")
                 if (isCooldown)
                 {
                     if (skippedApps != null) { skippedApps.Add(rawTitle); skippedApps.Add(cleanTitle); }
                     continue;
                 }
 
+                // CASE A: Standard ready offer (milestone ready to use or claim)
                 if (isReady)
                 {
                     int tapX = 450;
                     int tapY = ty1 + 75;
                     clickedTitle = cleanTitle;
                     if (skippedApps != null) { skippedApps.Add(rawTitle); skippedApps.Add(cleanTitle); }
-                    Log(string.Format("[ðŸŽ Claimer] Found ready offer '{0}'! Opening card at ({1}, {2})...", cleanTitle, tapX, tapY));
+                    Log(string.Format("[ðŸ’Ž Claimer] Found ready offer '{0}'! Opening card at ({1}, {2})...", cleanTitle, tapX, tapY));
+                    AdbTap(tapX, tapY);
+                    return true;
+                }
+
+                // CASE B: "All milestones completed!" but tasks remain (e.g. 6/7 tasks) or unverified bonus!
+                // The Bonus is pending inside the detail view - must open to check if claimable or on cooldown!
+                if (isMilestonesText && (tasksDone < tasksTotal || tasksDone < 0))
+                {
+                    int tapX = 450;
+                    int tapY = ty1 + 75;
+                    clickedTitle = cleanTitle;
+                    if (skippedApps != null) { skippedApps.Add(rawTitle); skippedApps.Add(cleanTitle); }
+                    string taskInfo = (tasksDone >= 0 && tasksTotal > 0) ? string.Format(" ({0}/{1} tasks)", tasksDone, tasksTotal) : "";
+                    Log(string.Format("[ðŸŽ Bonus Verifier] '{0}'{1} has pending Bonus! Opening card to verify...", cleanTitle, taskInfo));
                     AdbTap(tapX, tapY);
                     return true;
                 }
@@ -3513,19 +3541,29 @@ public class QuizEarnApp : Form
                 if (scrollAttempts < 3)
                 {
                     scrollAttempts++;
-                    Log(string.Format("[💎 Claimer] Scrolling down to inspect BONUS REWARDS & lower milestones ({0}/3)...", scrollAttempts));
-                    RunAdb("shell input swipe 450 1100 450 500 300");
+                    Log(string.Format("[ðŸ’Ž Claimer] Scrolling down to inspect BONUS REWARDS & lower milestones ({0}/3)...", scrollAttempts));
+                    RunAdb("shell input swipe 450 1100 450 400 350");
                     Thread.Sleep(1500);
                     continue; // Re-dump XML in the new scrolled position
                 }
 
                 // 4. Check if the app's remaining milestone or bonus is on cooldown
-                Match cdMatch = Regex.Match(xml, @"(?:Unlocks\s*in|After)\s*([0-9hm\s]+)", RegexOptions.IgnoreCase);
+                string cdStr = "";
+                Match cdMatch = Regex.Match(xml, @"text=""Unlocks\s*in\s*""[^>]*>\s*<node[^>]*text=""([0-9hm\s]+)""", RegexOptions.IgnoreCase);
                 if (cdMatch.Success)
                 {
-                    string cdStr = cdMatch.Groups[1].Value.Trim();
-                    string displayTitle = string.IsNullOrEmpty(appTitle) ? targetTitle : appTitle;
-                    Log(string.Format("[🎁 Bonus] '{0}' is on cooldown ({1}). Skipping for this cycle.", displayTitle, cdStr));
+                    cdStr = cdMatch.Groups[1].Value.Trim();
+                }
+                else
+                {
+                    Match cdMatch2 = Regex.Match(xml, @"(?:Unlocks\s*in|After)\s*([0-9hm\s]+)", RegexOptions.IgnoreCase);
+                    if (cdMatch2.Success) cdStr = cdMatch2.Groups[1].Value.Trim();
+                }
+
+                string displayTitle = string.IsNullOrEmpty(appTitle) ? targetTitle : appTitle;
+                if (!string.IsNullOrEmpty(cdStr))
+                {
+                    Log(string.Format("[ðŸŽ Bonus Verified] '{0}' Bonus is locked on cooldown: Unlocks in {1}. Verified not missed!", displayTitle, cdStr));
                     if (cooldownBonusApps != null)
                     {
                         if (!string.IsNullOrEmpty(targetTitle)) cooldownBonusApps.Add(targetTitle);
@@ -3534,8 +3572,14 @@ public class QuizEarnApp : Form
                 }
                 else
                 {
-                    string displayTitle = string.IsNullOrEmpty(appTitle) ? targetTitle : appTitle;
-                    Log(string.Format("[💎 Claimer] No more active milestones or bonus tasks for '{0}'. Returning to offers list...", displayTitle));
+                    if (xml.Contains("All milestones completed") || xml.Contains("Bonus claimed") || xml.Contains("Completed"))
+                    {
+                        Log(string.Format("[âœ… Verified] '{0}' Bonus & all milestones have been verified and processed.", displayTitle));
+                    }
+                    else
+                    {
+                        Log(string.Format("[ðŸ’Ž Claimer] Verified '{0}': No active or claimable bonus found right now. Returning to offers list...", displayTitle));
+                    }
                 }
 
                 break;
