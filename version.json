@@ -1,8 +1,8 @@
 ﻿{
-    "changelog":  "Fix Firefox loop lock with robust X=105 title card selector, HTML decode normalization, multi-page scroll scan, and Home Super Offer card tap.",
-    "version":  "2.4",
+    "changelog":  "Auto-launch BlueStacks on crash/disconnect, automated watchdog recovery to Quiz \u0026 Earn, Google Play Store redirect guard, and Preferences toggle switch.",
+    "version":  "2.5",
     "mandatory":  false,
     "download_url":  "https://raw.githubusercontent.com/THESHMIL0/QuizEarnBot/main/QuizEarnBot.exe",
-    "version_code":  240,
-    "release_date":  "2026-11-05"
+    "version_code":  250,
+    "release_date":  "2026-11-06"
 }

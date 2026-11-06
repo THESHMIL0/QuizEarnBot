@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -13,6 +13,7 @@ using System.Windows.Forms;
 using System.Runtime.InteropServices;
 using System.Net.Sockets;
 using System.Reflection;
+using Microsoft.Win32;
 
 [assembly: AssemblyTitle("Quiz & Earn Automation Suite")]
 [assembly: AssemblyDescription("Automation utility and reward assistant for Quiz & Earn on BlueStacks.")]
@@ -22,8 +23,8 @@ using System.Reflection;
 [assembly: AssemblyCopyright("Copyright © 2026 Quiz & Earn Tools")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
-[assembly: AssemblyVersion("2.1.0.0")]
-[assembly: AssemblyFileVersion("2.1.0.0")]
+[assembly: AssemblyVersion("2.5.0.0")]
+[assembly: AssemblyFileVersion("2.5.0.0")]
 
 public class QuizEarnApp : Form
 {
@@ -168,8 +169,9 @@ public class QuizEarnApp : Form
     private List<string> claimsHistory = new List<string>();
 
     // App Version & Cloud Auto-Updater State
-    private const string APP_VERSION = "2.4";
-    private const int APP_VERSION_CODE = 240;
+    private const string APP_VERSION = "2.5";
+    private const int APP_VERSION_CODE = 250;
+    private bool autoRecoverBlueStacks = true;
     private string updateFeedUrl = "https://raw.githubusercontent.com/THESHMIL0/QuizEarnBot/main/version.json";
     private string remoteVersion = "";
     private int remoteVersionCode = 0;
@@ -197,6 +199,7 @@ public class QuizEarnApp : Form
     private DarkToggleSwitch chkSettingsAlwaysOnTop;
     private DarkToggleSwitch chkSettingsAutoMute;
     private DarkToggleSwitch chkSettingsTurbo;
+    private DarkToggleSwitch chkSettingsAutoRecoverBst;
 
     // Data View UI Elements
     private Label lblDataCoinsVal;
@@ -981,7 +984,7 @@ public class QuizEarnApp : Form
         Panel pnlPrefsCard = new Panel();
         pnlPrefsCard.BackColor = Color.FromArgb(6, 6, 6);
         pnlPrefsCard.Location = new Point(20, 178);
-        pnlPrefsCard.Size = new Size(504, 175);
+        pnlPrefsCard.Size = new Size(504, 210);
         pnlPrefsCard.Paint += delegate(object s, PaintEventArgs pe) {
             ControlPaint.DrawBorder(pe.Graphics, pnlPrefsCard.ClientRectangle, Color.FromArgb(22, 22, 26), ButtonBorderStyle.Solid);
         };
@@ -1020,10 +1023,17 @@ public class QuizEarnApp : Form
             this.TopMost = chkSettingsAlwaysOnTop.Checked;
         });
 
+        chkSettingsAutoRecoverBst = new DarkToggleSwitch();
+        chkSettingsAutoRecoverBst.Checked = autoRecoverBlueStacks;
+        CreateToggleRow(pnlPrefsCard, "Auto-launch BlueStacks on crash / disconnect", chkSettingsAutoRecoverBst, 162, () => {
+            autoRecoverBlueStacks = chkSettingsAutoRecoverBst.Checked;
+            SaveStatsToFile();
+        });
+
         // Card 3: About Standalone
         Panel pnlAboutCard = new Panel();
         pnlAboutCard.BackColor = Color.FromArgb(4, 4, 4);
-        pnlAboutCard.Location = new Point(20, 368);
+        pnlAboutCard.Location = new Point(20, 400);
         pnlAboutCard.Size = new Size(504, 115);
         pnlAboutCard.Paint += delegate(object s, PaintEventArgs pe) {
             ControlPaint.DrawBorder(pe.Graphics, pnlAboutCard.ClientRectangle, Color.FromArgb(20, 20, 24), ButtonBorderStyle.Solid);
@@ -1199,7 +1209,14 @@ public class QuizEarnApp : Form
         new Thread(new ThreadStart(delegate {
             try
             {
-                EnsureConnected();
+                if (autoRecoverBlueStacks && !IsBlueStacksProcessRunning())
+                {
+                    EnsureBlueStacksAliveAndReady("Restart App");
+                }
+                else
+                {
+                    EnsureConnected();
+                }
                 RunAdb("shell am force-stop com.quiz.earn.money.game");
                 RunAdb("shell am force-stop com.rayole.cashmafia2");
                 Thread.Sleep(800);
@@ -1442,6 +1459,9 @@ public class QuizEarnApp : Form
                 Match mAutoUp = Regex.Match(json, @"""autoCheckUpdates"":\s*(true|false)", RegexOptions.IgnoreCase);
                 if (mAutoUp.Success) autoCheckUpdates = bool.Parse(mAutoUp.Groups[1].Value);
 
+                Match mBst = Regex.Match(json, @"""autoRecoverBlueStacks"":\s*(true|false)", RegexOptions.IgnoreCase);
+                if (mBst.Success) autoRecoverBlueStacks = bool.Parse(mBst.Groups[1].Value);
+
                 Match mFeed = Regex.Match(json, @"""updateFeedUrl"":\s*""([^""]+)""");
                 if (mFeed.Success && !string.IsNullOrEmpty(mFeed.Groups[1].Value))
                 {
@@ -1500,8 +1520,9 @@ public class QuizEarnApp : Form
                 "  \"todayOffersClaimed\": {9},\n" +
                 "  \"totalOffersClaimed\": {10},\n" +
                 "  \"autoCheckUpdates\": {11},\n" +
-                "  \"updateFeedUrl\": \"{12}\",\n" +
-                "  \"claimsHistory\": [{13}]\n" +
+                "  \"autoRecoverBlueStacks\": {12},\n" +
+                "  \"updateFeedUrl\": \"{13}\",\n" +
+                "  \"claimsHistory\": [{14}]\n" +
                 "}}",
                 DateTime.Now.ToString("yyyy-MM-dd"),
                 todaySolved,
@@ -1515,6 +1536,7 @@ public class QuizEarnApp : Form
                 todayOffersClaimed,
                 totalOffersClaimed,
                 autoCheckUpdates.ToString().ToLower(),
+                autoRecoverBlueStacks.ToString().ToLower(),
                 updateFeedUrl.Replace("\\", "\\\\").Replace("\"", "\\\""),
                 histJson.ToString()
             );
@@ -1571,6 +1593,7 @@ public class QuizEarnApp : Form
         if (chkSettingsAutoMute != null && chkAutoMute != null) chkSettingsAutoMute.Checked = chkAutoMute.Checked;
         if (chkSettingsTurbo != null && chkTurboSpeed != null) chkSettingsTurbo.Checked = chkTurboSpeed.Checked;
         if (chkSettingsAlwaysOnTop != null) chkSettingsAlwaysOnTop.Checked = this.TopMost;
+        if (chkSettingsAutoRecoverBst != null) chkSettingsAutoRecoverBst.Checked = autoRecoverBlueStacks;
 
         SetActiveNavButton(btnNavSettings);
     }
@@ -2459,6 +2482,213 @@ public class QuizEarnApp : Form
         return false;
     }
 
+    private bool IsBlueStacksProcessRunning()
+    {
+        try
+        {
+            Process[] procs = Process.GetProcessesByName("HD-Player");
+            return procs != null && procs.Length > 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private string DetectBlueStacks(out string instanceArg)
+    {
+        instanceArg = "";
+        string bstExe = "";
+
+        // 1. Check standard 64-bit and 32-bit Program Files
+        string[] candidates = new string[] {
+            @"C:\Program Files\BlueStacks_nxt\HD-Player.exe",
+            @"C:\Program Files (x86)\BlueStacks_nxt\HD-Player.exe",
+            @"C:\Program Files\BlueStacks\HD-Player.exe",
+            @"C:\Program Files (x86)\BlueStacks\HD-Player.exe"
+        };
+        foreach (string c in candidates)
+        {
+            if (File.Exists(c)) { bstExe = c; break; }
+        }
+
+        // 2. Registry fallback
+        if (string.IsNullOrEmpty(bstExe))
+        {
+            try
+            {
+                using (RegistryKey rk = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\BlueStacks_nxt"))
+                {
+                    if (rk != null)
+                    {
+                        object dir = rk.GetValue("InstallDir");
+                        if (dir != null)
+                        {
+                            string p = Path.Combine(dir.ToString(), "HD-Player.exe");
+                            if (File.Exists(p)) bstExe = p;
+                        }
+                    }
+                }
+            }
+            catch {}
+        }
+
+        // 3. Detect instance name from bluestacks.conf
+        string[] confCandidates = new string[]
+        {
+            @"C:\ProgramData\BlueStacks_nxt\bluestacks.conf",
+            @"D:\ProgramData\BlueStacks_nxt\bluestacks.conf",
+            @"E:\ProgramData\BlueStacks_nxt\bluestacks.conf",
+            @"C:\ProgramData\BlueStacks\bluestacks.conf"
+        };
+
+        foreach (string confPath in confCandidates)
+        {
+            if (File.Exists(confPath))
+            {
+                try
+                {
+                    string conf = File.ReadAllText(confPath);
+                    string portNum = "5555";
+                    if (!string.IsNullOrEmpty(adbPort) && adbPort.Contains(":"))
+                    {
+                        string[] pp = adbPort.Split(':');
+                        if (pp.Length == 2) portNum = pp[1].Trim();
+                    }
+
+                    Match m = Regex.Match(conf, @"bst\.instance\.([^.]+)\.status\.adb_port=""" + portNum + @"""");
+                    if (m.Success)
+                    {
+                        instanceArg = "--instance " + m.Groups[1].Value.Trim();
+                        break;
+                    }
+                    else
+                    {
+                        Match m5555 = Regex.Match(conf, @"bst\.instance\.([^.]+)\.status\.adb_port=""5555""");
+                        if (m5555.Success)
+                        {
+                            instanceArg = "--instance " + m5555.Groups[1].Value.Trim();
+                            break;
+                        }
+                        else
+                        {
+                            Match mAny = Regex.Match(conf, @"bst\.instance\.([^.]+)\.display_name");
+                            if (mAny.Success)
+                            {
+                                instanceArg = "--instance " + mAny.Groups[1].Value.Trim();
+                                break;
+                            }
+                        }
+                    }
+                }
+                catch {}
+            }
+        }
+
+        return bstExe;
+    }
+
+    private bool EnsureBlueStacksAliveAndReady(string callerContext)
+    {
+        if (!autoRecoverBlueStacks) return false;
+
+        bool bstRunning = IsBlueStacksProcessRunning();
+        bool adbAlive = false;
+
+        if (bstRunning)
+        {
+            try
+            {
+                string state = RunAdb("get-state").Trim();
+                if (state.Contains("device"))
+                {
+                    adbAlive = true;
+                }
+            }
+            catch {}
+        }
+
+        if (bstRunning && adbAlive)
+        {
+            return true;
+        }
+
+        Log(string.Format("[ðŸ›¡ï¸ Watchdog] BlueStacks crash/closure detected during {0}! Initializing recovery...", callerContext));
+
+        if (!bstRunning)
+        {
+            string bstArgs;
+            string bstExe = DetectBlueStacks(out bstArgs);
+            if (string.IsNullOrEmpty(bstExe) || !File.Exists(bstExe))
+            {
+                Log("[ðŸ›¡ï¸ Watchdog] Could not find BlueStacks executable (HD-Player.exe) to auto-launch.");
+                return false;
+            }
+
+            Log(string.Format("[ðŸ›¡ï¸ Watchdog] Auto-launching BlueStacks ({0} {1})...", Path.GetFileName(bstExe), bstArgs));
+            try
+            {
+                ProcessStartInfo psi = new ProcessStartInfo();
+                psi.FileName = bstExe;
+                psi.Arguments = bstArgs;
+                psi.UseShellExecute = true;
+                Process.Start(psi);
+            }
+            catch (Exception ex)
+            {
+                Log("[ðŸ›¡ï¸ Watchdog] Error launching BlueStacks: " + ex.Message);
+                return false;
+            }
+        }
+        else
+        {
+            Log("[ðŸ›¡ï¸ Watchdog] BlueStacks process is running but ADB connection dropped. Waiting for ADB recovery...");
+        }
+
+        // Wait for Android OS to boot: sys.boot_completed == 1
+        Log("[ðŸ›¡ï¸ Watchdog] Waiting for BlueStacks Android OS to finish booting (up to 90s)...");
+        int waitSeconds = 0;
+        bool bootCompleted = false;
+
+        while (waitSeconds < 90)
+        {
+            Thread.Sleep(3000);
+            waitSeconds += 3;
+
+            RunAdb("connect 127.0.0.1:5555");
+
+            string bootProp = RunAdb("shell getprop sys.boot_completed").Trim();
+            if (bootProp == "1")
+            {
+                bootCompleted = true;
+                break;
+            }
+
+            if (waitSeconds % 15 == 0)
+            {
+                Log(string.Format("[ðŸ›¡ï¸ Watchdog] Still booting Android OS... ({0}s elapsed)", waitSeconds));
+            }
+        }
+
+        if (!bootCompleted)
+        {
+            Log("[ðŸ›¡ï¸ Watchdog] Android boot timeout (90s exceeded). Could not complete BlueStacks recovery.");
+            return false;
+        }
+
+        Log("[ðŸ›¡ï¸ Watchdog] BlueStacks Android OS boot completed! Stabilizing services (4s)...");
+        Thread.Sleep(4000);
+
+        EnsureConnected();
+
+        Log("[ðŸ›¡ï¸ Watchdog] Relaunching Quiz & Earn to resume automation...");
+        RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
+        Thread.Sleep(3500);
+
+        Log(string.Format("[ðŸ›¡ï¸ Watchdog] Recovery successful! Resuming {0}...", callerContext));
+        return true;
+    }
+
     private string GetCurrentFocus()
     {
         string dump = RunAdb("shell \"dumpsys activity activities | grep -E 'topResumedActivity|mResumedActivity'\"");
@@ -2611,6 +2841,10 @@ public class QuizEarnApp : Form
                 // Every 15 seconds: ensure app is active and send non-intrusive micro-swipe
                 if (keepAliveCounter % 15 == 0)
                 {
+                    if (autoRecoverBlueStacks && !IsBlueStacksProcessRunning())
+                    {
+                        EnsureBlueStacksAliveAndReady("Usage Booster Loop");
+                    }
                     string curFocus = GetCurrentFocus();
                     if (!string.IsNullOrEmpty(boostTargetPackage) && !string.IsNullOrEmpty(curFocus) && 
                         !curFocus.Contains(boostTargetPackage) && !curFocus.Contains("com.quiz.earn.money.game"))
@@ -3193,6 +3427,21 @@ public class QuizEarnApp : Form
                     DismissAppDialogs();
 
                         string targetPkg = ExtractPackageName(GetCurrentFocus());
+                        if (targetPkg == "com.android.vending" || targetPkg.Contains("vending") || targetPkg.Contains("google.android.finsky"))
+                        {
+                            Log("[Claimer] Google Play Store opened instead of installed offer app (requires Google login or app install). Closing and skipping app...");
+                            AdbKey(4);
+                            Thread.Sleep(600);
+                            RunAdb("shell am force-stop com.android.vending");
+                            RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
+                            Thread.Sleep(1500);
+                            if (!string.IsNullOrEmpty(appTitle))
+                            {
+                                cycleCompletedApps.Add(appTitle);
+                            }
+                            break;
+                        }
+
                         if ((string.IsNullOrEmpty(targetPkg) || targetPkg == "com.quiz.earn.money.game") && !string.IsNullOrEmpty(offerPkg))
                         {
                             Log(string.Format("[Claimer] Target app did not launch on button tap. Direct launching '{0}'...", offerPkg));
@@ -3211,6 +3460,11 @@ public class QuizEarnApp : Form
                         int keepAlive = 0;
                         while (isAutoOffering && remaining > 0)
                         {
+                            if (autoRecoverBlueStacks && !IsBlueStacksProcessRunning())
+                            {
+                                EnsureBlueStacksAliveAndReady(string.Format("Offer App Usage ({0})", targetPkg));
+                                break;
+                            }
                             int rm = remaining / 60;
                             int rs = remaining % 60;
                             string pkgShort = string.IsNullOrEmpty(targetPkg) ? "Offer App" : targetPkg;
@@ -3318,9 +3572,17 @@ public class QuizEarnApp : Form
             HashSet<string> cycleCompletedApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             HashSet<string> cooldownBonusApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             string lastOpenedTitle = "";
+            int consecutiveEmptyDumps = 0;
 
             while (isAutoOffering)
             {
+                if (autoRecoverBlueStacks && !IsBlueStacksProcessRunning())
+                {
+                    EnsureBlueStacksAliveAndReady("Auto-Offer Claimer Loop");
+                    Thread.Sleep(2000);
+                    continue;
+                }
+
                 string curFocus = GetCurrentFocus();
                 if (!curFocus.Contains("com.quiz.earn.money.game"))
                 {
@@ -3331,9 +3593,17 @@ public class QuizEarnApp : Form
                 string xml = DumpAndReadXml("/sdcard/offer_flow.xml");
                 if (string.IsNullOrEmpty(xml))
                 {
+                    consecutiveEmptyDumps++;
+                    if (consecutiveEmptyDumps >= 3 && autoRecoverBlueStacks && !IsBlueStacksProcessRunning())
+                    {
+                        EnsureBlueStacksAliveAndReady("Auto-Offer XML Dump Failure");
+                        consecutiveEmptyDumps = 0;
+                        continue;
+                    }
                     Thread.Sleep(1000);
                     continue;
                 }
+                consecutiveEmptyDumps = 0;
 
                 // SCREEN A: Are we inside an app detail page? (Look for REWARDS or Remove Wrong App)
                 if (xml.Contains("REWARDS") || xml.Contains("Remove Wrong App") || xml.Contains("Usage Progress") || xml.Contains("Initial Install Reward"))
@@ -3546,6 +3816,11 @@ public class QuizEarnApp : Form
         {
             if (!EnsureConnected())
             {
+                if (autoRecoverBlueStacks && !IsBlueStacksProcessRunning())
+                {
+                    Log("[ðŸ›¡ï¸ Watchdog] BlueStacks not running. Auto-launching BlueStacks before starting claimer...");
+                    EnsureBlueStacksAliveAndReady("Auto-Offer Claimer Startup");
+                }
                 Log("[💎 Claimer] ADB not connected yet! Turn on ADB in emulator/phone first.");
                 return;
             }
@@ -3878,6 +4153,12 @@ public class QuizEarnApp : Form
 
     private void RecoverFromFreeze()
     {
+        if (autoRecoverBlueStacks && (!IsBlueStacksProcessRunning() || !EnsureConnected()))
+        {
+            EnsureBlueStacksAliveAndReady("Quiz Solver Freeze Recovery");
+            return;
+        }
+
         Log("[Watchdog] Checking app status for recovery...");
         if (CheckAndEscapeForeignApp()) return;
 
@@ -3902,7 +4183,15 @@ public class QuizEarnApp : Form
         {
             if (!EnsureConnected())
             {
-                Log("[ADB] No active device detected yet. Waiting for ADB to come online (turn on ADB in emulator/phone)...");
+                if (autoRecoverBlueStacks && !IsBlueStacksProcessRunning())
+                {
+                    Log("[ðŸ›¡ï¸ Watchdog] BlueStacks not running on bot start. Launching automatically...");
+                    EnsureBlueStacksAliveAndReady("Quiz Solver Startup");
+                }
+
+                if (!EnsureConnected())
+                {
+                    Log("[ADB] No active device detected yet. Waiting for ADB to come online (turn on ADB in emulator/phone)...");
                 int waitSec = 0;
                 while (isRunning && !EnsureConnected() && waitSec < 45)
                 {
@@ -3917,6 +4206,7 @@ public class QuizEarnApp : Form
                     return;
                 }
             }
+        }
 
             Log(string.Format("[ADB] Connected to device on {0}!", adbPort));
             UpdateScreenResolution();
@@ -3948,6 +4238,12 @@ public class QuizEarnApp : Form
                 }
 
                 string focus = GetCurrentFocus();
+                if (string.IsNullOrEmpty(focus) && autoRecoverBlueStacks && !IsBlueStacksProcessRunning())
+                {
+                    EnsureBlueStacksAliveAndReady("Quiz Solver Loop");
+                    lastProgressTime = DateTime.Now;
+                    continue;
+                }
                 if (CheckAndEscapeForeignApp())
                 {
                     lastProgressTime = DateTime.Now;
