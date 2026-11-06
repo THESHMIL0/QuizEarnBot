@@ -39,7 +39,13 @@ jobs:
       - name: Build Android APK
         working-directory: ./android
         run: |
-          gradle assembleDebug --stacktrace
+          gradle assembleDebug --stacktrace 2>&1 | tee ../gradle_output.log
+
+      - name: Print Error If Failed
+        if: failure()
+        run: |
+          echo "==================== BUILD ERROR ===================="
+          tail -n 100 gradle_output.log
 
       - name: Stage APK to Root
         run: |
