@@ -39,11 +39,11 @@ jobs:
       - name: Build Android APK
         working-directory: ./android
         run: |
-          gradle assembleDebug --stacktrace 2>&1 | tee ../gradle_build.log
+          gradle assembleDebug --stacktrace
 
       - name: Stage APK to Root
         run: |
-          cp android/app/build/outputs/apk/debug/app-debug.apk QuizEarnBot.apk
+          find android/ -name "*.apk" -exec cp {} ./QuizEarnBot.apk \;
           ls -lh QuizEarnBot.apk
 
       - name: Upload APK Artifact
@@ -60,8 +60,3 @@ jobs:
           git add QuizEarnBot.apk
           git commit -m "Auto-publish QuizEarnBot.apk for direct web download [skip ci]" || echo "No changes to commit"
           git push origin main || echo "Push failed or already up to date"
-
-      - name: Show Build Log On Failure
-        if: failure()
-        run: |
-          cat gradle_build.log | tail -n 80
