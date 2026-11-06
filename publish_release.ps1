@@ -79,7 +79,7 @@ Write-Host "  -> Portable ZIP created: $((Get-Item $ZipPath).Length) bytes" -For
 Write-Host "[4/4] Pushing update live to GitHub..." -ForegroundColor Yellow
 $git = "C:\Users\THESHMIL\AppData\Local\Programs\Git\cmd\git.exe"
 if (Test-Path $git) {
-    & $git add version.json QuizEarnBot.exe "QuizEarnBot_v$($NewVersion)_Portable.zip" QuizEarnApp.cs README.md app.ico logo.png app.manifest .gitignore 2>$null
+    & $git add version.json QuizEarnBot.exe "QuizEarnBot_v$($NewVersion)_Portable.zip" QuizEarnApp.cs README.md index.html app.ico logo.png app.manifest .gitignore 2>$null
     $commitMsg = "Release v$($NewVersion) - $($Changelog)"
     & $git commit -m "$commitMsg" 2>$null
     & $git push origin main
