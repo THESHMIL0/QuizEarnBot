@@ -1,0 +1,57 @@
+name: Build Android Mobile APK
+
+on:
+  push:
+    paths:
+      - 'android/**'
+      - '.github/workflows/build_apk.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Quiz & Earn Mobile APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Grant Execute Permission to Gradlew
+        run: chmod +x android/gradlew || true
+
+      - name: Build Debug APK
+        working-directory: ./android
+        run: |
+          if [ ! -f "gradlew" ]; then
+            gradle wrapper
+          fi
+          ./gradlew assembleDebug --stacktrace
+
+      - name: Locate and Stage APK
+        run: |
+          mkdir -p release_apk
+          find android/app/build/outputs/apk/ -name "*.apk" -exec cp {} release_apk/QuizEarnBot.apk \;
+          ls -la release_apk/
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuizEarnBot-Mobile-APK
+          path: release_apk/QuizEarnBot.apk
+
+      - name: Release APK Asset
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: release_apk/QuizEarnBot.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
