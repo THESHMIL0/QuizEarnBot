@@ -228,3 +228,4 @@ class QuizEarnAccessibilityService : AccessibilityService() {
         isRunning = false
     }
 }
+

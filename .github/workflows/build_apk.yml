@@ -7,6 +7,9 @@ on:
       - '.github/workflows/build_apk.yml'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build Quiz & Earn Mobile APK
@@ -22,36 +25,31 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.5'
 
-      - name: Grant Execute Permission to Gradlew
-        run: chmod +x android/gradlew || true
-
-      - name: Build Debug APK
+      - name: Build Android APK
         working-directory: ./android
         run: |
-          if [ ! -f "gradlew" ]; then
-            gradle wrapper
-          fi
-          ./gradlew assembleDebug --stacktrace
+          gradle assembleRelease --stacktrace
 
-      - name: Locate and Stage APK
+      - name: Stage APK to Root
         run: |
-          mkdir -p release_apk
-          find android/app/build/outputs/apk/ -name "*.apk" -exec cp {} release_apk/QuizEarnBot.apk \;
-          ls -la release_apk/
+          cp android/app/build/outputs/apk/release/app-release.apk QuizEarnBot.apk
+          ls -lh QuizEarnBot.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: QuizEarnBot-Mobile-APK
-          path: release_apk/QuizEarnBot.apk
+          path: QuizEarnBot.apk
 
-      - name: Release APK Asset
-        uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
-        with:
-          files: release_apk/QuizEarnBot.apk
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Commit and Push APK to Main
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add QuizEarnBot.apk
+          git commit -m "Auto-publish QuizEarnBot.apk for direct web download [skip ci]" || echo "No changes to commit"
+          git push origin main || echo "Push failed or already up to date"

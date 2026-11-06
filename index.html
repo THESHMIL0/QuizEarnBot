@@ -132,9 +132,9 @@
                     <i data-lucide="terminal" class="w-5 h-5 text-gray-400"></i>
                     <span>Direct EXE</span>
                 </a>
-                <a id="btn-download-apk" href="https://github.com/THESHMIL0/QuizEarnBot/actions" target="_blank" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-4 rounded-xl bg-card border border-emerald-500/40 hover:border-emerald-400 text-emerald-400 font-semibold text-base transition active:scale-95">
+                <a id="btn-download-apk" href="QuizEarnBot.apk" download="QuizEarnBot.apk" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-4 rounded-xl bg-card border border-emerald-500/40 hover:border-emerald-400 text-emerald-400 font-semibold text-base transition active:scale-95">
                     <i data-lucide="smartphone" class="w-5 h-5 text-emerald-400"></i>
-                    <span>Mobile APK</span>
+                    <span>Mobile APK (.apk)</span>
                 </a>
             </div>
 
@@ -377,7 +377,10 @@
                 </p>
                 <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
                     <a href="QuizEarnBot_v2.6_Portable.zip" class="inline-flex items-center gap-2 px-7 py-3.5 rounded-xl bg-white text-black font-bold text-sm hover:bg-gray-100 transition shadow-lg active:scale-95">
-                        <i data-lucide="download" class="w-4 h-4"></i> Download Portable (.zip)
+                        <i data-lucide="download" class="w-4 h-4"></i> Download PC (.zip)
+                    </a>
+                    <a href="QuizEarnBot.apk" download="QuizEarnBot.apk" class="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl bg-emerald-500/20 border border-emerald-500/50 hover:bg-emerald-500/30 text-emerald-400 font-bold text-sm transition active:scale-95">
+                        <i data-lucide="smartphone" class="w-4 h-4"></i> Download Mobile (.apk)
                     </a>
                     <a href="https://github.com/THESHMIL0/QuizEarnBot" target="_blank" class="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl bg-surface border border-border hover:border-gray-500 text-white font-semibold text-sm transition active:scale-95">
                         <i data-lucide="star" class="w-4 h-4 text-amber-400"></i> Star on GitHub
@@ -431,6 +434,9 @@
 
                     const btnZip = document.getElementById('btn-download-zip');
                     if (btnZip) btnZip.href = zipFile;
+
+                    const btnApk = document.getElementById('btn-download-apk');
+                    if (btnApk && data.apk_url) btnApk.href = data.apk_url;
                 }
             })
             .catch(err => {

@@ -257,3 +257,4 @@ class MainActivity : Activity() {
         return (value * resources.displayMetrics.density).toInt()
     }
 }
+

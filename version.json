@@ -1,8 +1,9 @@
-﻿{
-    "changelog":  "Bonus Reward Verifier: Never falsely skip pending 6/7 tasks cards, open \u0026 verify bonus rewards, claim unlocked bonuses, and track cooldowns.",
+{
+    "changelog":  "Bonus Reward Verifier: Never falsely skip pending 6/7 tasks cards, open & verify bonus rewards, claim unlocked bonuses, and track cooldowns.",
     "version":  "2.6",
     "mandatory":  false,
     "download_url":  "https://raw.githubusercontent.com/THESHMIL0/QuizEarnBot/main/QuizEarnBot.exe",
+    "apk_url":  "QuizEarnBot.apk",
     "version_code":  260,
     "release_date":  "2026-11-06"
 }
