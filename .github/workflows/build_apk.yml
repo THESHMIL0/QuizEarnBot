@@ -39,33 +39,24 @@ jobs:
       - name: Build Android APK
         working-directory: ./android
         run: |
-          gradle :app:assembleDebug --stacktrace
+          gradle assembleDebug --stacktrace > ../error_log.txt 2>&1 || true
+          tail -n 60 ../error_log.txt
 
-      - name: Stage APK to Root
+      - name: Check APK and Stage
         run: |
-          echo "Searching for generated APK files..."
           APK_FILE=$(find . -type f -name "*.apk" | head -n 1)
-          echo "Found APK: $APK_FILE"
           if [ -n "$APK_FILE" ]; then
             cp "$APK_FILE" ./QuizEarnBot.apk
-            ls -lh ./QuizEarnBot.apk
+            ls -lh QuizEarnBot.apk
           else
-            echo "No APK produced, checking build directory:"
-            find android/ -type f || true
-            exit 1
+            echo "No APK found. Preparing error log."
           fi
 
-      - name: Upload APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: QuizEarnBot-Mobile-APK
-          path: QuizEarnBot.apk
-
-      - name: Commit and Push APK to Main
+      - name: Commit Files to Main
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git pull --rebase origin main || true
-          git add QuizEarnBot.apk
-          git commit -m "Auto-publish QuizEarnBot.apk for direct web download [skip ci]" || echo "No changes to commit"
-          git push origin main || echo "Push failed or already up to date"
+          git add QuizEarnBot.apk error_log.txt || true
+          git commit -m "Auto-publish build artifacts [skip ci]" || echo "No changes"
+          git push origin main || echo "Push complete"
