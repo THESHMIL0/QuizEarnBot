@@ -39,7 +39,7 @@ jobs:
       - name: Build Android APK
         working-directory: ./android
         run: |
-          gradle assembleDebug --stacktrace
+          gradle assembleDebug --stacktrace 2>&1 | tee ../build_error.log
 
       - name: Copy Generated APK
         run: |
@@ -64,4 +64,17 @@ jobs:
           git pull --rebase origin main || true
           git add QuizEarnBot.apk
           git commit -m "Publish QuizEarnBot.apk for 1-click web download [skip ci]" || echo "No changes"
+          git push origin main || echo "Push failed"
+
+      - name: Commit Error Log On Failure
+        if: failure()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}
+          git pull --rebase origin main || true
+          git add build_error.log || true
+          git commit -m "Save build_error.log for diagnosis [skip ci]" || echo "No changes"
           git push origin main || echo "Push failed"
