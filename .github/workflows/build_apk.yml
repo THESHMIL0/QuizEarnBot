@@ -36,32 +36,28 @@ jobs:
         with:
           gradle-version: '8.5'
 
-      - name: Build Android APK
+      - name: Run Build and Capture Logs
         working-directory: ./android
         run: |
-          gradle assembleDebug --stacktrace
+          gradle assembleDebug --stacktrace > ../build_error_details.txt 2>&1 || true
+          cat ../build_error_details.txt | tail -n 80
 
-      - name: Stage APK to Root
+      - name: Publish Log or APK
         run: |
-          echo "Finding APKs..."
-          find . -type f -name "*.apk"
-          cp android/app/build/outputs/apk/debug/app-debug.apk ./QuizEarnBot.apk || find . -type f -name "*.apk" -exec cp {} ./QuizEarnBot.apk \;
-          ls -lh QuizEarnBot.apk
+          echo "### Gradle Log Summary" >> $GITHUB_STEP_SUMMARY
+          echo '```text' >> $GITHUB_STEP_SUMMARY
+          tail -n 60 build_error_details.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
 
-      - name: Upload APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: QuizEarnBot-Mobile-APK
-          path: QuizEarnBot.apk
+          APK_FILE=$(find . -type f -name "*.apk" | head -n 1)
+          if [ -n "$APK_FILE" ]; then
+            cp "$APK_FILE" ./QuizEarnBot.apk
+          fi
 
-      - name: Commit and Push APK to Main
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
           git pull --rebase origin main || true
-          git add QuizEarnBot.apk
-          git commit -m "Auto-publish QuizEarnBot.apk for direct web download [skip ci]" || echo "No changes"
+          git add build_error_details.txt QuizEarnBot.apk || true
+          git commit -m "Auto-publish build artifacts [skip ci]" || echo "No changes"
           git push origin main || echo "Push complete"
