@@ -39,7 +39,7 @@ jobs:
       - name: Build Android APK
         working-directory: ./android
         run: |
-          gradle :app:assembleDebug --stacktrace 2>&1 | tee ../build_details.txt
+          gradle assembleDebug --stacktrace 2>&1 | tee ../build_details.txt
 
       - name: Copy Generated APK
         run: |
