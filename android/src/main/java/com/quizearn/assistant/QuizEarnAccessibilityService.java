@@ -50,7 +50,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 } catch (Exception e) {
                     Log.e(TAG, "Error in solveScreen", e);
                 }
-                loopHandler.postDelayed(this, 300);
+                loopHandler.postDelayed(this, 200);
             }
         }
     };
@@ -115,7 +115,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     public void onAccessibilityEvent(AccessibilityEvent event) {
         if (!isRunning || event == null) return;
         long now = System.currentTimeMillis();
-        if (now - lastTapTime > 600) {
+        if (now - lastTapTime > 250) {
             solveScreen();
         }
     }
@@ -124,7 +124,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         if (!isRunning) return;
 
         long now = System.currentTimeMillis();
-        if (now - lastTapTime < 800) {
+        if (now - lastTapTime < 350) {
             return;
         }
 
@@ -160,10 +160,35 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
             if (allNodes.isEmpty()) return;
 
-            // 1. Active Ad Detection & Reward-Safe Dismissal
-            boolean isAd = false;
-            boolean rewardGranted = false;
+            int screenWidth = getResources().getDisplayMetrics().widthPixels;
 
+            // 1. INSTANT SKIP ARROW CHECK (Tapped the fraction of a second it appears!)
+            for (NodeItem item : allNodes) {
+                if (isSkipElement(item, screenWidth)) {
+                    Log.i(TAG, "⚡ INSTANT SKIP ARROW TAP: text='" + item.text + "', desc='" + item.contentDesc + "', id='" + item.resId + "' at " + item.rect);
+                    tapNode(item);
+                    lastTapTime = now;
+                    lastProgressTime = now;
+                    currentStatus = "Skipping Ad...";
+                    return;
+                }
+            }
+
+            // 2. INSTANT CLOSE BUTTON CHECK (Tapped immediately when visible!)
+            for (NodeItem item : allNodes) {
+                if (isCloseElement(item)) {
+                    Log.i(TAG, "⚡ INSTANT CLOSE BUTTON TAP: text='" + item.text + "', desc='" + item.contentDesc + "', id='" + item.resId + "' at " + item.rect);
+                    tapNode(item);
+                    lastTapTime = now;
+                    lastProgressTime = now;
+                    currentStatus = "Closing Ad...";
+                    adStartTime = 0;
+                    return;
+                }
+            }
+
+            // 3. Active Ad Detection & Fallbacks
+            boolean isAd = false;
             if (pkg.contains("gms.ads") || pkg.contains("admob")) {
                 isAd = true;
             } else {
@@ -184,12 +209,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                         id.contains("close-or-skip-button") ||
                         t.contains("moloco") || t.contains("liftoff")) {
                         isAd = true;
-                    }
-
-                    if (t.contains("reward granted") || d.contains("reward granted") || 
-                        t.contains("reward credited") || t.contains("reward in 0") || 
-                        t.contains("video ends in 0") || t.contains("you can close")) {
-                        rewardGranted = true;
+                        break;
                     }
                 }
             }
@@ -197,59 +217,18 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             if (isAd) {
                 if (adStartTime == 0) adStartTime = now;
                 long adElapsed = (now - adStartTime) / 1000;
+                currentStatus = "Ad Playing (" + adElapsed + "s)...";
 
-                // PHASE 1: REWARD PROTECTION (0 - 15 seconds)
-                // Rewarded video ads MUST play for at least 15s to credit the gem!
-                if (!rewardGranted && adElapsed < 15) {
-                    currentStatus = "Watching Ad (" + (15 - adElapsed) + "s)...";
-                    return;
-                }
-
-                // PHASE 2: ACTIVE CLOSE HUNT (15+ seconds or reward granted)
-                currentStatus = "Closing Ad (" + adElapsed + "s)...";
-
-                // A. Look for genuine Close / Skip / Dismiss buttons
-                for (NodeItem item : allNodes) {
-                    String t = item.text.toLowerCase();
-                    String d = item.contentDesc.toLowerCase();
-                    String id = item.resId.toLowerCase();
-
-                    boolean isClose = false;
-                    if (id.contains("close") || id.contains("skip") || id.contains("dismiss")) {
-                        isClose = true;
-                    }
-                    if (d.contains("close") || d.contains("skip") || d.contains("dismiss")) {
-                        isClose = true;
-                    }
-                    if (t.contains("close") || t.contains("skip") || t.contains("dismiss") || 
-                        t.equals("✕") || t.equals("✖") || t.equals("x") || 
-                        t.contains("no thanks") || t.contains("not now") || t.contains("reward granted")) {
-                        if (!numPattern.matcher(item.text).matches()) {
-                            isClose = true;
-                        }
-                    }
-
-                    if (isClose) {
-                        Log.i(TAG, "Found genuine Ad Close button after " + adElapsed + "s: text='" + item.text + "', id='" + item.resId + "' at " + item.rect);
-                        tapNode(item);
-                        lastTapTime = now;
-                        lastProgressTime = now;
-                        adStartTime = 0;
-                        return;
-                    }
-                }
-
-                // B. Endcard Probing (only after 20+ seconds)
-                if (adElapsed >= 20 && adElapsed % 3 == 0) {
-                    int screenWidth = getResources().getDisplayMetrics().widthPixels;
+                // Endcard Corner Probe (after 16s)
+                if (adElapsed >= 16 && adElapsed % 2 == 0) {
                     int tapX = (screenWidth > 0) ? (screenWidth - 85) : 995;
                     Log.i(TAG, "Ad active for " + adElapsed + "s. Probing top-right corner at (" + tapX + ", 195)...");
                     tapCoordinates(tapX, 195);
                     lastTapTime = now;
                 }
 
-                // C. Safety Back Key (only after 32+ seconds)
-                if (adElapsed >= 32) {
+                // Safety Back Key (after 26s if still stuck on ad screen)
+                if (adElapsed >= 26) {
                     Log.i(TAG, "Ad active for " + adElapsed + "s. Pressing Back to return to Quiz...");
                     performGlobalAction(GLOBAL_ACTION_BACK);
                     lastTapTime = now;
@@ -498,6 +477,72 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
     private void tapNode(final NodeItem item) {
         tapCoordinates(item.rect.centerX(), item.rect.centerY());
+    }
+
+    private boolean isSkipElement(NodeItem item, int screenWidth) {
+        String t = item.text.toLowerCase();
+        String d = item.contentDesc.toLowerCase();
+        String id = item.resId.toLowerCase();
+
+        if (numPattern.matcher(item.text).matches()) {
+            return false;
+        }
+
+        if (t.contains("skip") || d.contains("skip")) {
+            return true;
+        }
+
+        if (t.contains(">>") || t.contains("\u203A\u203A") || t.contains("\u00BB") || 
+            t.contains(">|") || t.contains("\u25B6\u25B6") || 
+            t.equals(">") || t.equals("\u203A") || t.equals("\u2192") || 
+            d.contains(">>") || d.contains("arrow") || d.contains("fast forward") || d.contains("next")) {
+            return true;
+        }
+
+        if (id.contains("skip") || id.contains("next") || id.contains("forward") || id.contains("close-or-skip")) {
+            return true;
+        }
+
+        int cx = item.rect.centerX();
+        int cy = item.rect.centerY();
+        int w = item.rect.width();
+        int h = item.rect.height();
+
+        if (cy > 0 && cy < 350 && w >= 25 && w <= 260 && h >= 25 && h <= 260) {
+            if (cx > (screenWidth - 250) || cx < 250) {
+                if (id.contains("button") || id.contains("btn") || id.contains("arrow") || id.contains("icon")) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private boolean isCloseElement(NodeItem item) {
+        String t = item.text.toLowerCase();
+        String d = item.contentDesc.toLowerCase();
+        String id = item.resId.toLowerCase();
+
+        if (numPattern.matcher(item.text).matches()) {
+            return false;
+        }
+
+        if (id.contains("close") || id.contains("dismiss") || id.contains("tt_video_ad_close") || id.contains("iv_close") || id.contains("btn_close")) {
+            return true;
+        }
+
+        if (d.contains("close") || d.contains("dismiss")) {
+            return true;
+        }
+
+        if (t.contains("close") || t.contains("dismiss") || 
+            t.equals("\u2715") || t.equals("\u2716") || t.equalsIgnoreCase("x") || 
+            t.contains("no thanks") || t.contains("not now") || t.contains("reward granted")) {
+            return true;
+        }
+
+        return false;
     }
 
     private static class NodeItem {

@@ -49,7 +49,7 @@ $javaFiles = @(
     "$androidDir\src\main\java\com\quizearn\assistant\FloatingOverlayService.java",
     "$androidDir\src\main\java\com\quizearn\assistant\QuizEarnAccessibilityService.java"
 )
-& $javac -cp $androidJar -d $classesDir -source 17 -target 17 @javaFiles
+& $javac -encoding UTF-8 -cp $androidJar -d $classesDir -source 17 -target 17 @javaFiles
 
 Write-Host ">>> [5/7] Converting bytecode to classes.dex with D8..."
 $allClassFiles = (Get-ChildItem -Path $classesDir -Recurse -Filter "*.class").FullName
