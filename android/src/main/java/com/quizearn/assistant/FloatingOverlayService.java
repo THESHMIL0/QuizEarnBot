@@ -150,6 +150,9 @@ public class FloatingOverlayService extends Service {
                 if (QuizEarnAccessibilityService.isRunning) {
                     QuizEarnAccessibilityService.stopSolving();
                 } else {
+                    if (QuizEarnAccessibilityService.currentStatus.contains("25 GEMS")) {
+                        QuizEarnAccessibilityService.solvedCount = 0;
+                    }
                     QuizEarnAccessibilityService.startSolving();
                 }
                 updateUiState();
@@ -217,6 +220,17 @@ public class FloatingOverlayService extends Service {
             statusText.setTextColor(Color.parseColor("#EF4444"));
             btnToggle.setEnabled(false);
             btnToggle.setText("OFF");
+        } else if (status.contains("25 GEMS")) {
+            statusText.setText("🎉 25 GEMS HIT! CLAIM OFFER");
+            statusText.setTextColor(Color.parseColor("#F59E0B"));
+            btnToggle.setText("START");
+            btnToggle.setEnabled(true);
+
+            GradientDrawable btnBg = new GradientDrawable();
+            btnBg.setColor(Color.parseColor("#10B981"));
+            btnBg.setCornerRadius(dp(16));
+            btnToggle.setBackground(btnBg);
+            btnToggle.setTextColor(Color.BLACK);
         } else if (running) {
             statusText.setText(status.toUpperCase() + " (" + count + ")");
             statusText.setTextColor(Color.parseColor("#10B981"));

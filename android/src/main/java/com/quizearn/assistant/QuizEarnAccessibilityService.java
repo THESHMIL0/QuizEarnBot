@@ -64,10 +64,12 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
     public static void stopSolving() {
         isRunning = false;
-        currentStatus = "Standby";
         Log.i(TAG, "stopSolving called.");
         if (instance != null) {
             instance.loopHandler.removeCallbacks(instance.solveLoopRunnable);
+        }
+        if (!currentStatus.contains("25 GEMS")) {
+            currentStatus = "Standby";
         }
     }
 
@@ -107,6 +109,60 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             collectAllNodes(root, allNodes);
 
             if (allNodes.isEmpty()) return;
+
+            // 0. Check for 25 Gems Milestone (Stop bot for 1,000 Coins Super Offer)
+            boolean hasCollectGem = false;
+            for (NodeItem item : allNodes) {
+                String t = item.text.trim().toLowerCase();
+                if (t.equals("collect gem") || t.equals("collect reward") || t.equals("collect coins")) {
+                    hasCollectGem = true;
+                    break;
+                }
+            }
+
+            boolean is25Gems = false;
+            for (int i = 0; i < allNodes.size(); i++) {
+                String t = allNodes.get(i).text.toLowerCase().trim();
+                if (t.contains("25/25") || t.contains("25 / 25")) {
+                    is25Gems = true;
+                    break;
+                }
+                if (t.contains("super offer unlocked") || t.contains("super task unlocked")) {
+                    is25Gems = true;
+                    break;
+                }
+                // Check split nodes: "25" then "/" then "25" on the same row
+                if (t.equals("25")) {
+                    for (int j = i + 1; j < Math.min(i + 5, allNodes.size()); j++) {
+                        String tj = allNodes.get(j).text.trim();
+                        if (tj.equals("/")) {
+                            for (int k = j + 1; k < Math.min(j + 5, allNodes.size()); k++) {
+                                String tk = allNodes.get(k).text.trim();
+                                if (tk.equals("25")) {
+                                    int diffY = Math.abs(allNodes.get(i).rect.centerY() - allNodes.get(k).rect.centerY());
+                                    if (diffY < 80) {
+                                        is25Gems = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if (is25Gems) break;
+            }
+
+            if (solvedCount >= 25) {
+                is25Gems = true;
+            }
+
+            // If 25 gems reached and no pending Collect Gem popup: PAUSE BOT!
+            if (is25Gems && !hasCollectGem) {
+                Log.i(TAG, "25 GEMS TARGET REACHED! Milestone achieved. Pausing bot for Super Offer claim.");
+                currentStatus = "25 GEMS HIT! (1000 Coins)";
+                stopSolving();
+                return;
+            }
 
             // 1. Check for "Collect Gem", "Claim", or Reward collection buttons
             for (NodeItem item : allNodes) {
