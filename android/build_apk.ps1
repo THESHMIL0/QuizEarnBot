@@ -1,4 +1,4 @@
-# Quick 1-Click Android APK Build & Sign Script for Quiz & Earn Bot
+# Clean Release Android APK Build & Sign Script for Quiz Math Assistant
 $ErrorActionPreference = "Stop"
 
 $sdk = "C:\Users\THESHMIL\Android\Sdk"
@@ -8,7 +8,7 @@ $d8 = "$buildTools\d8.bat"
 $zipalign = "$buildTools\zipalign.exe"
 $apksigner = "$buildTools\apksigner.bat"
 $androidJar = "$sdk\platforms\android-34\android.jar"
-$keystore = "$env:USERPROFILE\.android\debug.keystore"
+$keystore = "C:\Users\THESHMIL\Desktop\Quiz_Earn_Bot\android\release.jks"
 
 $jdk = "C:\Program Files\Microsoft\jdk-17.0.21.21-hotspot\bin"
 $javac = "$jdk\javac.exe"
@@ -44,10 +44,10 @@ Write-Host ">>> [3/7] Linking manifest & generating R.java..."
 
 Write-Host ">>> [4/7] Compiling Java sources with JDK 17..."
 $javaFiles = @(
-    "$genDir\com\quizearn\bot\R.java",
-    "$androidDir\src\main\java\com\quizearn\bot\MainActivity.java",
-    "$androidDir\src\main\java\com\quizearn\bot\FloatingOverlayService.java",
-    "$androidDir\src\main\java\com\quizearn\bot\QuizEarnAccessibilityService.java"
+    "$genDir\com\quizearn\assistant\R.java",
+    "$androidDir\src\main\java\com\quizearn\assistant\MainActivity.java",
+    "$androidDir\src\main\java\com\quizearn\assistant\FloatingOverlayService.java",
+    "$androidDir\src\main\java\com\quizearn\assistant\QuizEarnAccessibilityService.java"
 )
 & $javac -cp $androidJar -d $classesDir -source 17 -target 17 @javaFiles
 
@@ -61,8 +61,8 @@ Push-Location $dexDir
 Pop-Location
 & $zipalign 4 $unalignedApk $alignedApk
 
-Write-Host ">>> [7/7] Signing APK with v2/v3 debug signature..."
-& cmd /c "`"$apksigner`" sign --ks `"$keystore`" --ks-pass pass:android --key-pass pass:android --ks-key-alias androiddebugkey --out `"$finalApk`" `"$alignedApk`""
+Write-Host ">>> [7/7] Signing APK with Release Certificate (v1, v2, v3 schemes)..."
+& cmd /c "`"$apksigner`" sign --ks `"$keystore`" --ks-pass pass:QuizEarn2026Safe --key-pass pass:QuizEarn2026Safe --ks-key-alias quizassistant --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true --out `"$finalApk`" `"$alignedApk`""
 
-Write-Host "`n>>> [SUCCESS] QuizEarnBot.apk built successfully!"
+Write-Host "`n>>> [SUCCESS] Release APK built and signed successfully!"
 Get-Item $finalApk | Select-Object Name, Length, LastWriteTime, FullName | Format-List

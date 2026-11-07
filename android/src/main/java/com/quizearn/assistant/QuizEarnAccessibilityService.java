@@ -1,4 +1,4 @@
-package com.quizearn.bot;
+package com.quizearn.assistant;
 
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.GestureDescription;
@@ -14,7 +14,7 @@ import java.util.regex.Pattern;
 
 public class QuizEarnAccessibilityService extends AccessibilityService {
 
-    public static final String TAG = "QuizEarnService";
+    public static final String TAG = "QuizEarnAssistant";
     public static final String TARGET_PACKAGE = "com.quiz.earn.money.game";
 
     public static volatile boolean isRunning = false;
@@ -32,7 +32,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         super.onServiceConnected();
         instance = this;
         isServiceActive = true;
-        Log.i(TAG, "QuizEarn Math Solver connected.");
+        Log.i(TAG, "Quiz Math Assistant connected.");
     }
 
     @Override

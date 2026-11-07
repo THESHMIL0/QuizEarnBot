@@ -1,4 +1,4 @@
-package com.quizearn.bot;
+package com.quizearn.assistant;
 
 import android.app.Activity;
 import android.content.Intent;
@@ -40,14 +40,14 @@ public class MainActivity extends Activity {
         root.setGravity(Gravity.CENTER_HORIZONTAL);
 
         TextView title = new TextView(this);
-        title.setText("Quiz & Earn Bot");
+        title.setText("Quiz Math Assistant");
         title.setTextColor(Color.WHITE);
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f);
         title.setTypeface(null, Typeface.BOLD);
         title.setGravity(Gravity.CENTER);
 
         TextView subtitle = new TextView(this);
-        subtitle.setText("Autonomous Mobile Engine • No PC • No Root");
+        subtitle.setText("Instant Math Solver • Floating HUD");
         subtitle.setTextColor(Color.parseColor("#10B981"));
         subtitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f);
         subtitle.setPadding(0, dp(4), 0, dp(30));
@@ -56,7 +56,7 @@ public class MainActivity extends Activity {
         root.addView(title);
         root.addView(subtitle);
 
-        LinearLayout cardOverlay = createCard("1. FLOATING OVERLAY PERMISSION", "Required to display the floating control widget on top of Quiz & Earn.");
+        LinearLayout cardOverlay = createCard("1. FLOATING OVERLAY PERMISSION", "Required to display the floating HUD on top of the game screen.");
         txtOverlayStatus = createStatusBadge("Checking...");
         btnOverlay = createActionButton("GRANT OVERLAY PERMISSION", new View.OnClickListener() {
             @Override
@@ -71,7 +71,7 @@ public class MainActivity extends Activity {
         cardOverlay.addView(btnOverlay);
         root.addView(cardOverlay);
 
-        LinearLayout cardAccess = createCard("2. ACCESSIBILITY SERVICE", "Allows the bot to read math questions and tap the correct answers automatically.");
+        LinearLayout cardAccess = createCard("2. ACCESSIBILITY SERVICE", "Allows the assistant to detect math questions and tap the answer.");
         txtAccessStatus = createStatusBadge("Checking...");
         btnAccess = createActionButton("ENABLE ACCESSIBILITY", new View.OnClickListener() {
             @Override
@@ -85,7 +85,7 @@ public class MainActivity extends Activity {
         root.addView(cardAccess);
 
         btnLaunch = new Button(this);
-        btnLaunch.setText("LAUNCH FLOATING BOT");
+        btnLaunch.setText("LAUNCH FLOATING HUD");
         btnLaunch.setTextColor(Color.BLACK);
         btnLaunch.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f);
         btnLaunch.setTypeface(null, Typeface.BOLD);
@@ -110,7 +110,7 @@ public class MainActivity extends Activity {
         root.addView(launchContainer);
 
         TextView infoText = new TextView(this);
-        infoText.setText("How it works:\n1. Enable both permissions above.\n2. Tap 'Launch Floating Bot'.\n3. Open Quiz & Earn and tap START on the floating bubble.\n4. The bot will automatically solve quizzes and claim rewards AFK.");
+        infoText.setText("Quick Guide:\n1. Enable both permissions above.\n2. Tap 'Launch Floating HUD'.\n3. Open Quiz & Earn and tap START on the floating bubble.\n4. Questions will solve instantly on screen.");
         infoText.setTextColor(Color.parseColor("#9CA3AF"));
         infoText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
         infoText.setLineSpacing(dp(4), 1f);
@@ -148,12 +148,12 @@ public class MainActivity extends Activity {
         }
 
         if (hasAccess) {
-            txtAccessStatus.setText("✓ Accessibility Service Running");
+            txtAccessStatus.setText("✓ Accessibility Service Active");
             txtAccessStatus.setTextColor(Color.parseColor("#10B981"));
             btnAccess.setEnabled(false);
             btnAccess.setText("ENABLED");
         } else {
-            txtAccessStatus.setText("✕ Accessibility Service Not Active");
+            txtAccessStatus.setText("✕ Accessibility Service Disabled");
             txtAccessStatus.setTextColor(Color.parseColor("#EF4444"));
             btnAccess.setEnabled(true);
             btnAccess.setText("ENABLE ACCESSIBILITY");
@@ -241,4 +241,3 @@ public class MainActivity extends Activity {
         return (int) (value * getResources().getDisplayMetrics().density);
     }
 }
-

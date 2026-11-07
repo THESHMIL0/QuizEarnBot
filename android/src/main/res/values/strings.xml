@@ -1,5 +1,4 @@
 <resources>
-    <string name="app_name">Quiz &amp; Earn Bot</string>
-    <string name="accessibility_service_desc">Autonomous automation engine for Quiz &amp; Earn. Solves math questions, verifies bonuses, and tracks rewards with no PC or root required.</string>
+    <string name="app_name">Quiz Math Assistant</string>
+    <string name="accessibility_service_desc">Calculates math quiz problems and taps the corresponding answer button on screen.</string>
 </resources>
-

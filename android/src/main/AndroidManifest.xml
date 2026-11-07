@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.quizearn.bot"
+    package="com.quizearn.assistant"
     android:versionCode="1"
     android:versionName="1.0">
 
@@ -8,13 +8,10 @@
         android:minSdkVersion="24"
         android:targetSdkVersion="34" />
 
-    <!-- Permissions for Overlay, Accessibility, and Network -->
+    <!-- Pure Local Permissions (Zero Internet / Zero Network Access) -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <queries>
         <package android:name="com.quiz.earn.money.game" />
@@ -23,12 +20,12 @@
     <application
         android:allowBackup="true"
         android:icon="@drawable/app_icon"
-        android:label="Quiz &amp; Earn Bot"
+        android:label="@string/app_name"
         android:roundIcon="@drawable/app_icon"
         android:supportsRtl="true"
         android:theme="@style/Theme.QuizEarnOLED">
 
-        <!-- Main Dashboard & Permission Onboarding Activity -->
+        <!-- Main Dashboard & Permission Setup Activity -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -48,10 +45,10 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Floating HUD Overlay for Math Quiz Assistant" />
+                android:value="Floating HUD Overlay for Math Assistant" />
         </service>
 
-        <!-- Autonomous Accessibility Service (No PC / No Root Engine) -->
+        <!-- Accessibility Math Solver Service -->
         <service
             android:name=".QuizEarnAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"

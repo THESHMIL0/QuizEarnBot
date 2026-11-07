@@ -1,4 +1,4 @@
-package com.quizearn.bot;
+package com.quizearn.assistant;
 
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -60,11 +60,11 @@ public class FloatingOverlayService extends Service {
     }
 
     private void startForegroundServiceNotification() {
-        String channelId = "quiz_earn_overlay_channel";
+        String channelId = "quiz_math_overlay_channel";
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
                 channelId,
-                "Quiz & Earn Overlay",
+                "Quiz Math Overlay",
                 NotificationManager.IMPORTANCE_LOW
             );
             NotificationManager manager = getSystemService(NotificationManager.class);
@@ -78,8 +78,8 @@ public class FloatingOverlayService extends Service {
             : new Notification.Builder(this);
 
         Notification notification = builder
-            .setContentTitle("Quiz & Earn Mobile Bot")
-            .setContentText("Floating overlay is active.")
+            .setContentTitle("Quiz Math Assistant")
+            .setContentText("Floating HUD is active.")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .build();
 
@@ -190,11 +190,11 @@ public class FloatingOverlayService extends Service {
         int count = QuizEarnAccessibilityService.solvedCount;
 
         if (!serviceOk) {
-            statusText.setText("SERVICE OFF");
+            statusText.setText("OFF");
             statusText.setTextColor(Color.parseColor("#EF4444"));
             btnToggle.setEnabled(false);
         } else if (running) {
-            statusText.setText("RUNNING (" + count + ")");
+            statusText.setText("SOLVING (" + count + ")");
             statusText.setTextColor(Color.parseColor("#10B981"));
             btnToggle.setText("PAUSE");
             btnToggle.setEnabled(true);
@@ -220,4 +220,3 @@ public class FloatingOverlayService extends Service {
         }
     }
 }
-
