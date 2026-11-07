@@ -1,11 +1,13 @@
 # Personal runtime data & logs
 quizearn_stats.json
 *.log
-*.xml
 apply_update.bat
 QuizEarnBot_update.exe
+
+# Android build cache
+android/build/
+*.idsig
 
 # Temporary & editor files
 .vscode/
 scratch/
-

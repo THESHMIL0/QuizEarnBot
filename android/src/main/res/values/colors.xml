@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="oled_black">#000000</color>
+    <color name="oled_surface">#08080A</color>
+    <color name="oled_card">#111115</color>
+    <color name="oled_border">#1F1F26</color>
+    <color name="neon_emerald">#10B981</color>
+    <color name="neon_teal">#14B8A6</color>
+    <color name="neon_purple">#8B5CF6</color>
+    <color name="text_white">#FFFFFF</color>
+    <color name="text_muted">#9CA3AF</color>
+</resources>
+
