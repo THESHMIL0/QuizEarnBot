@@ -48,6 +48,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     public static void startSolving() {
         isRunning = true;
         currentStatus = "Scanning...";
+        Log.i(TAG, "startSolving called! instance = " + instance);
         if (instance != null) {
             instance.loopHandler.removeCallbacks(instance.solveLoopRunnable);
             instance.loopHandler.post(instance.solveLoopRunnable);
@@ -57,6 +58,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     public static void stopSolving() {
         isRunning = false;
         currentStatus = "Standby";
+        Log.i(TAG, "stopSolving called.");
         if (instance != null) {
             instance.loopHandler.removeCallbacks(instance.solveLoopRunnable);
         }
@@ -67,7 +69,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         super.onServiceConnected();
         instance = this;
         isServiceActive = true;
-        Log.i(TAG, "Quiz Math Assistant connected.");
+        Log.i(TAG, "Quiz Math Assistant connected successfully.");
     }
 
     @Override
@@ -114,8 +116,10 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                         } else continue;
 
                         String ansStr = String.valueOf(ans);
+                        Log.i(TAG, "Math Quiz Detected: " + n1 + " " + op + " " + n2 + " = " + ansStr);
                         for (NodeItem opt : allNodes) {
                             if (opt.node != item.node && opt.text.trim().equals(ansStr)) {
+                                Log.i(TAG, "Tapping answer button: " + ansStr + " at " + opt.rect);
                                 tapNode(opt);
                                 solvedCount++;
                                 lastTapTime = System.currentTimeMillis();
@@ -131,7 +135,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             NodeItem targetNode = null;
             for (NodeItem item : allNodes) {
                 if (numPattern.matcher(item.text).matches()) {
-                    if (item.rect.centerY() > 100 && item.rect.centerY() < 480) {
+                    if (item.rect.centerY() > 100 && item.rect.centerY() < 550) {
                         targetNode = item;
                         break;
                     }
@@ -140,10 +144,11 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
             if (targetNode != null) {
                 String targetStr = targetNode.text.trim();
-                currentStatus = "Target: " + targetStr;
+                Log.i(TAG, "Target Number Detected: " + targetStr + " at " + targetNode.rect);
 
                 for (NodeItem opt : allNodes) {
                     if (opt.node != targetNode.node && opt.rect.centerY() >= 450 && opt.text.trim().equals(targetStr)) {
+                        Log.i(TAG, "Tapping matching button: " + targetStr + " at " + opt.rect);
                         tapNode(opt);
                         solvedCount++;
                         lastTapTime = System.currentTimeMillis();
@@ -151,6 +156,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                         return;
                     }
                 }
+            } else {
+                currentStatus = "Scanning...";
             }
 
         } finally {
@@ -187,6 +194,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         while (curr != null) {
             if (curr.isClickable()) {
                 if (curr.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    Log.i(TAG, "Native accessibility click performed successfully.");
                     return;
                 }
             }
@@ -197,6 +205,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         int cx = item.rect.centerX();
         int cy = item.rect.centerY();
         if (cx > 0 && cy > 0) {
+            Log.i(TAG, "Dispatching gesture tap at (" + cx + ", " + cy + ")...");
             Path path = new Path();
             path.moveTo(cx, cy);
             GestureDescription stroke = new GestureDescription.Builder()

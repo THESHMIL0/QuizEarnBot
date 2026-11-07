@@ -13,6 +13,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -24,11 +25,14 @@ import android.widget.TextView;
 
 public class FloatingOverlayService extends Service {
 
+    public static final String TAG = "QuizEarnAssistant";
+
     private WindowManager windowManager;
     private LinearLayout floatView;
     private WindowManager.LayoutParams params;
 
     private TextView statusText;
+    private TextView dragHandle;
     private Button btnToggle;
     private Button btnClose;
 
@@ -115,17 +119,24 @@ public class FloatingOverlayService extends Service {
         bg.setCornerRadius(dp(24));
         container.setBackground(bg);
 
+        // Dedicated drag grip
+        dragHandle = new TextView(this);
+        dragHandle.setText("⠿");
+        dragHandle.setTextColor(Color.parseColor("#9CA3AF"));
+        dragHandle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f);
+        dragHandle.setPadding(dp(2), 0, dp(6), 0);
+
         statusText = new TextView(this);
         statusText.setText("STANDBY");
         statusText.setTextColor(Color.WHITE);
-        statusText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f);
-        statusText.setPadding(dp(4), 0, dp(10), 0);
+        statusText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
+        statusText.setPadding(0, 0, dp(8), 0);
 
         btnToggle = new Button(this);
         btnToggle.setText("START");
         btnToggle.setTextColor(Color.BLACK);
         btnToggle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
-        btnToggle.setPadding(dp(12), dp(4), dp(12), dp(4));
+        btnToggle.setPadding(dp(14), dp(4), dp(14), dp(4));
 
         GradientDrawable btnBg = new GradientDrawable();
         btnBg.setColor(Color.parseColor("#10B981"));
@@ -135,6 +146,7 @@ public class FloatingOverlayService extends Service {
         btnToggle.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                Log.i(TAG, "START/PAUSE BUTTON CLICKED! Current state: " + QuizEarnAccessibilityService.isRunning);
                 if (QuizEarnAccessibilityService.isRunning) {
                     QuizEarnAccessibilityService.stopSolving();
                 } else {
@@ -149,20 +161,23 @@ public class FloatingOverlayService extends Service {
         btnClose.setTextColor(Color.parseColor("#9CA3AF"));
         btnClose.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
         btnClose.setBackground(null);
-        btnClose.setPadding(dp(6), 0, dp(2), 0);
+        btnClose.setPadding(dp(8), 0, dp(2), 0);
         btnClose.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                Log.i(TAG, "CLOSE BUTTON CLICKED");
                 QuizEarnAccessibilityService.stopSolving();
                 stopSelf();
             }
         });
 
+        container.addView(dragHandle);
         container.addView(statusText);
         container.addView(btnToggle);
         container.addView(btnClose);
 
-        container.setOnTouchListener(new View.OnTouchListener() {
+        // Drag listener attached ONLY to dragHandle and statusText (NOT container!)
+        View.OnTouchListener dragListener = new View.OnTouchListener() {
             @Override
             public boolean onTouch(View v, MotionEvent event) {
                 if (params == null) return false;
@@ -181,7 +196,10 @@ public class FloatingOverlayService extends Service {
                 }
                 return false;
             }
-        });
+        };
+
+        dragHandle.setOnTouchListener(dragListener);
+        statusText.setOnTouchListener(dragListener);
 
         floatView = container;
         windowManager.addView(floatView, params);
@@ -195,19 +213,32 @@ public class FloatingOverlayService extends Service {
         String status = QuizEarnAccessibilityService.currentStatus;
 
         if (!serviceOk) {
-            statusText.setText("ACCESSIBILITY OFF");
+            statusText.setText("SERVICE OFF");
             statusText.setTextColor(Color.parseColor("#EF4444"));
             btnToggle.setEnabled(false);
+            btnToggle.setText("OFF");
         } else if (running) {
             statusText.setText(status.toUpperCase() + " (" + count + ")");
             statusText.setTextColor(Color.parseColor("#10B981"));
             btnToggle.setText("PAUSE");
             btnToggle.setEnabled(true);
+
+            GradientDrawable btnBg = new GradientDrawable();
+            btnBg.setColor(Color.parseColor("#EF4444"));
+            btnBg.setCornerRadius(dp(16));
+            btnToggle.setBackground(btnBg);
+            btnToggle.setTextColor(Color.WHITE);
         } else {
             statusText.setText("STANDBY (" + count + ")");
             statusText.setTextColor(Color.parseColor("#9CA3AF"));
             btnToggle.setText("START");
             btnToggle.setEnabled(true);
+
+            GradientDrawable btnBg = new GradientDrawable();
+            btnBg.setColor(Color.parseColor("#10B981"));
+            btnBg.setCornerRadius(dp(16));
+            btnToggle.setBackground(btnBg);
+            btnToggle.setTextColor(Color.BLACK);
         }
     }
 
