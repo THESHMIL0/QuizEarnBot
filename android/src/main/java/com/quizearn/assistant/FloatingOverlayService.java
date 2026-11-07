@@ -8,6 +8,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
+import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Handler;
@@ -20,6 +21,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -28,18 +30,33 @@ public class FloatingOverlayService extends Service {
     public static final String TAG = "QuizEarnAssistant";
 
     private WindowManager windowManager;
-    private LinearLayout floatView;
+    private FrameLayout floatView;
     private WindowManager.LayoutParams params;
 
-    private TextView statusText;
-    private TextView dragHandle;
-    private Button btnToggle;
-    private Button btnClose;
+    // Dual-Mode UI components
+    private boolean isExpanded = false;
+    private LinearLayout ballView;
+    private LinearLayout menuView;
 
+    // Mini Ball components
+    private TextView ballIcon;
+    private TextView ballGemBadge;
+
+    // Mod Menu components
+    private TextView menuGemText;
+    private TextView menuStatusText;
+    private Button btnToggle;
+    private Button btnRestart;
+    private Button btnMinimize;
+    private Button btnClose;
+    private Button btnMinBottom;
+
+    // Drag tracking
     private int initialX = 0;
     private int initialY = 0;
     private float initialTouchX = 0f;
     private float initialTouchY = 0f;
+    private boolean isDragMoved = false;
 
     private final Handler uiHandler = new Handler(Looper.getMainLooper());
     private final Runnable refreshRunnable = new Runnable() {
@@ -104,7 +121,7 @@ public class FloatingOverlayService extends Service {
 
         Notification notification = builder
             .setContentTitle("Quiz Math Assistant")
-            .setContentText("Floating HUD is active.")
+            .setContentText("Mod Menu Floating HUD is active.")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .build();
 
@@ -126,97 +143,180 @@ public class FloatingOverlayService extends Service {
             PixelFormat.TRANSLUCENT
         );
         params.gravity = Gravity.TOP | Gravity.START;
-        params.x = 40;
-        params.y = 200;
+        params.x = 30;
+        params.y = dp(280);
 
-        LinearLayout container = new LinearLayout(this);
-        container.setOrientation(LinearLayout.HORIZONTAL);
-        container.setPadding(dp(12), dp(8), dp(12), dp(8));
-        container.setGravity(Gravity.CENTER_VERTICAL);
+        // Root container holds both Ball view and Menu Card
+        floatView = new FrameLayout(this);
 
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(Color.parseColor("#08080A"));
-        bg.setStroke(dp(1), Color.parseColor("#1F1F26"));
-        bg.setCornerRadius(dp(24));
-        container.setBackground(bg);
+        buildBallView();
+        buildMenuView();
 
-        // Dedicated drag grip
-        dragHandle = new TextView(this);
-        dragHandle.setText("⠿");
-        dragHandle.setTextColor(Color.parseColor("#9CA3AF"));
-        dragHandle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f);
-        dragHandle.setPadding(dp(2), 0, dp(6), 0);
+        floatView.addView(ballView);
+        floatView.addView(menuView);
 
-        statusText = new TextView(this);
-        statusText.setText("STANDBY");
-        statusText.setTextColor(Color.WHITE);
-        statusText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
-        statusText.setPadding(0, 0, dp(8), 0);
+        // Start in collapsed ball mode by default
+        isExpanded = false;
+        ballView.setVisibility(View.VISIBLE);
+        menuView.setVisibility(View.GONE);
 
-        btnToggle = new Button(this);
-        btnToggle.setText("START");
-        btnToggle.setTextColor(Color.BLACK);
-        btnToggle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
-        btnToggle.setPadding(dp(14), dp(4), dp(14), dp(4));
+        windowManager.addView(floatView, params);
+        updateUiState();
+    }
 
-        GradientDrawable btnBg = new GradientDrawable();
-        btnBg.setColor(Color.parseColor("#10B981"));
-        btnBg.setCornerRadius(dp(16));
-        btnToggle.setBackground(btnBg);
+    // ==========================================
+    // 1. MINI FLOATING BALL (COLLAPSED MOD ICON)
+    // ==========================================
+    private void buildBallView() {
+        ballView = new LinearLayout(this);
+        ballView.setOrientation(LinearLayout.VERTICAL);
+        ballView.setGravity(Gravity.CENTER);
+        int ballSize = dp(54);
+        ballView.setLayoutParams(new FrameLayout.LayoutParams(ballSize, ballSize));
 
-        btnToggle.setOnClickListener(new View.OnClickListener() {
+        // Circular styling with glowing emerald border
+        GradientDrawable ballBg = new GradientDrawable();
+        ballBg.setShape(GradientDrawable.OVAL);
+        ballBg.setColor(Color.parseColor("#090D16"));
+        ballBg.setStroke(dp(2), Color.parseColor("#10B981"));
+        ballView.setBackground(ballBg);
+
+        // Mod icon
+        ballIcon = new TextView(this);
+        ballIcon.setText("⚡");
+        ballIcon.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f);
+        ballIcon.setTextColor(Color.parseColor("#10B981"));
+        ballIcon.setGravity(Gravity.CENTER);
+
+        // Mini gem / status badge
+        ballGemBadge = new TextView(this);
+        ballGemBadge.setText("💎 0");
+        ballGemBadge.setTextSize(TypedValue.COMPLEX_UNIT_SP, 8.5f);
+        ballGemBadge.setTypeface(Typeface.DEFAULT_BOLD);
+        ballGemBadge.setTextColor(Color.WHITE);
+        ballGemBadge.setGravity(Gravity.CENTER);
+
+        ballView.addView(ballIcon);
+        ballView.addView(ballGemBadge);
+
+        // Drag & Click detector on the ball
+        ballView.setOnTouchListener(new View.OnTouchListener() {
+            @Override
+            public boolean onTouch(View v, MotionEvent event) {
+                if (params == null) return false;
+                switch (event.getAction()) {
+                    case MotionEvent.ACTION_DOWN:
+                        initialX = params.x;
+                        initialY = params.y;
+                        initialTouchX = event.getRawX();
+                        initialTouchY = event.getRawY();
+                        isDragMoved = false;
+                        return true;
+
+                    case MotionEvent.ACTION_MOVE:
+                        float dx = event.getRawX() - initialTouchX;
+                        float dy = event.getRawY() - initialTouchY;
+                        if (Math.abs(dx) > dp(6) || Math.abs(dy) > dp(6)) {
+                            isDragMoved = true;
+                            params.x = initialX + (int) dx;
+                            params.y = initialY + (int) dy;
+                            windowManager.updateViewLayout(floatView, params);
+                        }
+                        return true;
+
+                    case MotionEvent.ACTION_UP:
+                        if (!isDragMoved) {
+                            // Tap detected: expand into full mod menu!
+                            expandMenu();
+                        }
+                        return true;
+                }
+                return false;
+            }
+        });
+    }
+
+    // ==========================================
+    // 2. EXPANDED MOD MENU CARD
+    // ==========================================
+    private void buildMenuView() {
+        menuView = new LinearLayout(this);
+        menuView.setOrientation(LinearLayout.VERTICAL);
+        menuView.setPadding(dp(14), dp(12), dp(14), dp(12));
+        int menuWidth = dp(260);
+        menuView.setLayoutParams(new FrameLayout.LayoutParams(menuWidth, FrameLayout.LayoutParams.WRAP_CONTENT));
+
+        // Modern game mod menu card aesthetic
+        GradientDrawable menuBg = new GradientDrawable();
+        menuBg.setShape(GradientDrawable.RECTANGLE);
+        menuBg.setColor(Color.parseColor("#0A0E17"));
+        menuBg.setStroke(dp(2), Color.parseColor("#10B981"));
+        menuBg.setCornerRadius(dp(18));
+        menuView.setBackground(menuBg);
+
+        // --- HEADER BAR ---
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView tvTitle = new TextView(this);
+        tvTitle.setText("⚡ QUIZ EARN MOD");
+        tvTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f);
+        tvTitle.setTypeface(Typeface.DEFAULT_BOLD);
+        tvTitle.setTextColor(Color.WHITE);
+        LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f);
+        tvTitle.setLayoutParams(titleLp);
+
+        // Minimize [─] button
+        btnMinimize = new Button(this);
+        btnMinimize.setText("─");
+        btnMinimize.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
+        btnMinimize.setTypeface(Typeface.DEFAULT_BOLD);
+        btnMinimize.setTextColor(Color.parseColor("#94A3B8"));
+        btnMinimize.setPadding(dp(8), 0, dp(8), 0);
+        GradientDrawable minBg = new GradientDrawable();
+        minBg.setColor(Color.parseColor("#1E293B"));
+        minBg.setCornerRadius(dp(8));
+        btnMinimize.setBackground(minBg);
+        LinearLayout.LayoutParams minLp = new LinearLayout.LayoutParams(dp(30), dp(28));
+        minLp.setMargins(0, 0, dp(6), 0);
+        btnMinimize.setLayoutParams(minLp);
+
+        btnMinimize.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                Log.i(TAG, "START/PAUSE BUTTON CLICKED! Current state: " + QuizEarnAccessibilityService.isRunning);
-                if (QuizEarnAccessibilityService.isRunning) {
-                    QuizEarnAccessibilityService.stopSolving();
-                } else {
-                    if (QuizEarnAccessibilityService.currentStatus.contains("25 GEMS")) {
-                        QuizEarnAccessibilityService.currentStatus = "Scanning...";
-                    }
-                    QuizEarnAccessibilityService.startSolving();
-                }
-                updateUiState();
+                collapseMenu();
             }
         });
 
+        // Close [✕] button
         btnClose = new Button(this);
         btnClose.setText("✕");
-        btnClose.setTextColor(Color.parseColor("#9CA3AF"));
-        btnClose.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
-        btnClose.setBackground(null);
-        btnClose.setPadding(dp(8), 0, dp(2), 0);
+        btnClose.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
+        btnClose.setTextColor(Color.parseColor("#EF4444"));
+        btnClose.setPadding(0, 0, 0, 0);
+        GradientDrawable closeBg = new GradientDrawable();
+        closeBg.setColor(Color.parseColor("#1E293B"));
+        closeBg.setCornerRadius(dp(8));
+        btnClose.setBackground(closeBg);
+        LinearLayout.LayoutParams closeLp = new LinearLayout.LayoutParams(dp(28), dp(28));
+        btnClose.setLayoutParams(closeLp);
+
         btnClose.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                Log.i(TAG, "CLOSE BUTTON CLICKED");
+                Log.i(TAG, "CLOSE BUTTON CLICKED - Stopping overlay service");
                 QuizEarnAccessibilityService.stopSolving();
                 stopSelf();
             }
         });
 
-        Button btnRestart = new Button(this);
-        btnRestart.setText("⟳");
-        btnRestart.setTextColor(Color.parseColor("#38BDF8"));
-        btnRestart.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f);
-        btnRestart.setBackground(null);
-        btnRestart.setPadding(dp(4), 0, dp(4), 0);
-        btnRestart.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                Log.i(TAG, "HUD RESTART APP CLICKED");
-                QuizEarnAccessibilityService.restartQuizApp();
-            }
-        });
+        header.addView(tvTitle);
+        header.addView(btnMinimize);
+        header.addView(btnClose);
 
-        container.addView(dragHandle);
-        container.addView(statusText);
-        container.addView(btnRestart);
-        container.addView(btnToggle);
-        container.addView(btnClose);
-
-        // Drag listener attached ONLY to dragHandle and statusText (NOT container!)
-        View.OnTouchListener dragListener = new View.OnTouchListener() {
+        // Allow dragging the whole menu by its header
+        header.setOnTouchListener(new View.OnTouchListener() {
             @Override
             public boolean onTouch(View v, MotionEvent event) {
                 if (params == null) return false;
@@ -235,14 +335,146 @@ public class FloatingOverlayService extends Service {
                 }
                 return false;
             }
-        };
+        });
 
-        dragHandle.setOnTouchListener(dragListener);
-        statusText.setOnTouchListener(dragListener);
+        // --- DIVIDER ---
+        View divider = new View(this);
+        divider.setBackgroundColor(Color.parseColor("#1E293B"));
+        LinearLayout.LayoutParams divLp = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(1));
+        divLp.setMargins(0, dp(8), 0, dp(10));
+        divider.setLayoutParams(divLp);
 
-        floatView = container;
-        windowManager.addView(floatView, params);
-        updateUiState();
+        // --- STATS CARD ---
+        LinearLayout statsCard = new LinearLayout(this);
+        statsCard.setOrientation(LinearLayout.VERTICAL);
+        statsCard.setPadding(dp(10), dp(8), dp(10), dp(8));
+        GradientDrawable statsBg = new GradientDrawable();
+        statsBg.setColor(Color.parseColor("#030712"));
+        statsBg.setCornerRadius(dp(12));
+        statsCard.setBackground(statsBg);
+
+        menuGemText = new TextView(this);
+        menuGemText.setText("💎 GEMS: 0 / 25");
+        menuGemText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f);
+        menuGemText.setTypeface(Typeface.DEFAULT_BOLD);
+        menuGemText.setTextColor(Color.parseColor("#38BDF8"));
+
+        menuStatusText = new TextView(this);
+        menuStatusText.setText("● STANDBY");
+        menuStatusText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
+        menuStatusText.setTextColor(Color.parseColor("#9CA3AF"));
+        menuStatusText.setPadding(0, dp(3), 0, 0);
+
+        statsCard.addView(menuGemText);
+        statsCard.addView(menuStatusText);
+
+        // --- PRIMARY TOGGLE (START / PAUSE) ---
+        btnToggle = new Button(this);
+        btnToggle.setText("▶ START BOT");
+        btnToggle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f);
+        btnToggle.setTypeface(Typeface.DEFAULT_BOLD);
+        btnToggle.setTextColor(Color.BLACK);
+        LinearLayout.LayoutParams toggleLp = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(38));
+        toggleLp.setMargins(0, dp(10), 0, dp(8));
+        btnToggle.setLayoutParams(toggleLp);
+
+        GradientDrawable toggleBg = new GradientDrawable();
+        toggleBg.setColor(Color.parseColor("#10B981"));
+        toggleBg.setCornerRadius(dp(12));
+        btnToggle.setBackground(toggleBg);
+
+        btnToggle.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                Log.i(TAG, "START/PAUSE BUTTON CLICKED! Current state: " + QuizEarnAccessibilityService.isRunning);
+                if (QuizEarnAccessibilityService.isRunning) {
+                    QuizEarnAccessibilityService.stopSolving();
+                } else {
+                    if (QuizEarnAccessibilityService.currentStatus.contains("25 GEMS")) {
+                        QuizEarnAccessibilityService.currentStatus = "Scanning...";
+                    }
+                    QuizEarnAccessibilityService.startSolving();
+                }
+                updateUiState();
+            }
+        });
+
+        // --- SECONDARY ACTION ROW (RESTART APP & MINIMIZE) ---
+        LinearLayout bottomRow = new LinearLayout(this);
+        bottomRow.setOrientation(LinearLayout.HORIZONTAL);
+
+        btnRestart = new Button(this);
+        btnRestart.setText("⟳ Restart App");
+        btnRestart.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f);
+        btnRestart.setTypeface(Typeface.DEFAULT_BOLD);
+        btnRestart.setTextColor(Color.parseColor("#38BDF8"));
+        GradientDrawable rstBg = new GradientDrawable();
+        rstBg.setColor(Color.parseColor("#1E293B"));
+        rstBg.setCornerRadius(dp(10));
+        btnRestart.setBackground(rstBg);
+        LinearLayout.LayoutParams rstLp = new LinearLayout.LayoutParams(0, dp(34), 1.0f);
+        rstLp.setMargins(0, 0, dp(6), 0);
+        btnRestart.setLayoutParams(rstLp);
+
+        btnRestart.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                Log.i(TAG, "RESTART APP CLICKED");
+                QuizEarnAccessibilityService.restartQuizApp();
+            }
+        });
+
+        btnMinBottom = new Button(this);
+        btnMinBottom.setText("▼ Minimize");
+        btnMinBottom.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f);
+        btnMinBottom.setTypeface(Typeface.DEFAULT_BOLD);
+        btnMinBottom.setTextColor(Color.parseColor("#94A3B8"));
+        GradientDrawable minBtmBg = new GradientDrawable();
+        minBtmBg.setColor(Color.parseColor("#1E293B"));
+        minBtmBg.setCornerRadius(dp(10));
+        btnMinBottom.setBackground(minBtmBg);
+        LinearLayout.LayoutParams minBtmLp = new LinearLayout.LayoutParams(0, dp(34), 1.0f);
+        btnMinBottom.setLayoutParams(minBtmLp);
+
+        btnMinBottom.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                collapseMenu();
+            }
+        });
+
+        bottomRow.addView(btnRestart);
+        bottomRow.addView(btnMinBottom);
+
+        // Assemble the Mod Menu Card
+        menuView.addView(header);
+        menuView.addView(divider);
+        menuView.addView(statsCard);
+        menuView.addView(btnToggle);
+        menuView.addView(bottomRow);
+    }
+
+    public void expandMenu() {
+        isExpanded = true;
+        ballView.setVisibility(View.GONE);
+        menuView.setVisibility(View.VISIBLE);
+
+        // Clamp screen boundaries so the expanded card is never clipped off-screen
+        int screenWidth = getResources().getDisplayMetrics().widthPixels;
+        int menuWidth = dp(260);
+        if (params.x + menuWidth > screenWidth - dp(10)) {
+            params.x = Math.max(dp(10), screenWidth - menuWidth - dp(10));
+        }
+        windowManager.updateViewLayout(floatView, params);
+    }
+
+    public void collapseMenu() {
+        isExpanded = false;
+        menuView.setVisibility(View.GONE);
+        ballView.setVisibility(View.VISIBLE);
+        windowManager.updateViewLayout(floatView, params);
     }
 
     private void updateUiState() {
@@ -252,46 +484,65 @@ public class FloatingOverlayService extends Service {
         int gems = QuizEarnAccessibilityService.liveGems;
         String status = QuizEarnAccessibilityService.currentStatus;
 
-        String gemTag = (gems >= 0) ? ("💎 " + gems + "/25") : ("#" + count);
+        String gemDisplay = (gems >= 0) ? (gems + "/25") : ("#" + count);
 
-        if (!serviceOk) {
-            statusText.setText("SERVICE OFF");
-            statusText.setTextColor(Color.parseColor("#EF4444"));
-            btnToggle.setEnabled(false);
-            btnToggle.setText("OFF");
-        } else if (status.contains("25 GEMS") && gems >= 25) {
-            statusText.setText("🎉 25/25 GEMS! CLAIM OFFER");
-            statusText.setTextColor(Color.parseColor("#F59E0B"));
-            btnToggle.setText("START");
-            btnToggle.setEnabled(true);
+        // Update Mini Ball badge
+        if (ballGemBadge != null) {
+            ballGemBadge.setText("💎 " + gemDisplay);
+            if (running) {
+                ballGemBadge.setTextColor(Color.parseColor("#10B981"));
+                ballIcon.setTextColor(Color.parseColor("#10B981"));
+            } else {
+                ballGemBadge.setTextColor(Color.parseColor("#94A3B8"));
+                ballIcon.setTextColor(Color.parseColor("#F59E0B"));
+            }
+        }
 
-            GradientDrawable btnBg = new GradientDrawable();
-            btnBg.setColor(Color.parseColor("#10B981"));
-            btnBg.setCornerRadius(dp(16));
-            btnToggle.setBackground(btnBg);
-            btnToggle.setTextColor(Color.BLACK);
-        } else if (running) {
-            statusText.setText(gemTag + " • " + status.toUpperCase());
-            statusText.setTextColor(Color.parseColor("#10B981"));
-            btnToggle.setText("PAUSE");
-            btnToggle.setEnabled(true);
+        // Update Expanded Menu Card
+        if (menuGemText != null) {
+            menuGemText.setText("💎 GEMS: " + gemDisplay);
+        }
 
-            GradientDrawable btnBg = new GradientDrawable();
-            btnBg.setColor(Color.parseColor("#EF4444"));
-            btnBg.setCornerRadius(dp(16));
-            btnToggle.setBackground(btnBg);
-            btnToggle.setTextColor(Color.WHITE);
-        } else {
-            statusText.setText(gemTag + " • STANDBY");
-            statusText.setTextColor(Color.parseColor("#9CA3AF"));
-            btnToggle.setText("START");
-            btnToggle.setEnabled(true);
+        if (menuStatusText != null && btnToggle != null) {
+            if (!serviceOk) {
+                menuStatusText.setText("● ACCESSIBILITY SERVICE OFF");
+                menuStatusText.setTextColor(Color.parseColor("#EF4444"));
+                btnToggle.setEnabled(false);
+                btnToggle.setText("OFF");
+            } else if (status.contains("25 GEMS") && gems >= 25) {
+                menuStatusText.setText("🎉 25/25 GEMS! CLAIM REWARD");
+                menuStatusText.setTextColor(Color.parseColor("#F59E0B"));
+                btnToggle.setText("▶ START BOT");
+                btnToggle.setEnabled(true);
 
-            GradientDrawable btnBg = new GradientDrawable();
-            btnBg.setColor(Color.parseColor("#10B981"));
-            btnBg.setCornerRadius(dp(16));
-            btnToggle.setBackground(btnBg);
-            btnToggle.setTextColor(Color.BLACK);
+                GradientDrawable btnBg = new GradientDrawable();
+                btnBg.setColor(Color.parseColor("#10B981"));
+                btnBg.setCornerRadius(dp(12));
+                btnToggle.setBackground(btnBg);
+                btnToggle.setTextColor(Color.BLACK);
+            } else if (running) {
+                menuStatusText.setText("● " + status.toUpperCase());
+                menuStatusText.setTextColor(Color.parseColor("#10B981"));
+                btnToggle.setText("⏸ PAUSE BOT");
+                btnToggle.setEnabled(true);
+
+                GradientDrawable btnBg = new GradientDrawable();
+                btnBg.setColor(Color.parseColor("#DC2626"));
+                btnBg.setCornerRadius(dp(12));
+                btnToggle.setBackground(btnBg);
+                btnToggle.setTextColor(Color.WHITE);
+            } else {
+                menuStatusText.setText("● PAUSED / STANDBY");
+                menuStatusText.setTextColor(Color.parseColor("#94A3B8"));
+                btnToggle.setText("▶ START BOT");
+                btnToggle.setEnabled(true);
+
+                GradientDrawable btnBg = new GradientDrawable();
+                btnBg.setColor(Color.parseColor("#10B981"));
+                btnBg.setCornerRadius(dp(12));
+                btnToggle.setBackground(btnBg);
+                btnToggle.setTextColor(Color.BLACK);
+            }
         }
     }
 
