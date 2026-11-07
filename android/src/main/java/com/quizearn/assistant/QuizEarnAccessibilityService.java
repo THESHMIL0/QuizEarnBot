@@ -128,15 +128,6 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             return;
         }
 
-        // Auto-restart if stuck with no ads/questions for > 35 seconds
-        if (lastProgressTime > 0 && now - lastProgressTime > 35000) {
-            Log.w(TAG, "Ad stall or app freeze detected (>35s). Auto-restarting Quiz & Earn...");
-            currentStatus = "Stall: Restarting...";
-            restartQuizApp();
-            lastProgressTime = now;
-            return;
-        }
-
         AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root == null) return;
 
@@ -219,14 +210,24 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
-            // 4. Safe Ad Watching: Never forcefully remove ads with Back key or blind taps!
+            // 4. Safe Ad Watching: Never forcefully remove ads or auto-restart during ads!
             if (isAd) {
+                lastProgressTime = now; // Actively watching ad - NOT a stall!
                 if (adStartTime == 0) adStartTime = now;
                 long adElapsed = (now - adStartTime) / 1000;
                 currentStatus = "Ad Playing (" + adElapsed + "s)...";
                 return;
             } else {
                 adStartTime = 0;
+            }
+
+            // 5. Game Stall Auto-Restart (Only when in game and no ads load after rounds for > 50s)
+            if (pkg.equals("com.quiz.earn.money.game") && lastProgressTime > 0 && now - lastProgressTime > 50000) {
+                Log.w(TAG, "Quiz & Earn stuck without ads (>50s). Auto-restarting...");
+                currentStatus = "Stall: Restarting...";
+                restartQuizApp();
+                lastProgressTime = now;
+                return;
             }
 
             // 3. Check for 25 Gems Milestone (Stop bot for 1,000 Coins Super Offer)
