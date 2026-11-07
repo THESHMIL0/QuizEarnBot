@@ -27,6 +27,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     public static volatile boolean isRunning = false;
     public static volatile boolean isServiceActive = false;
     public static volatile int solvedCount = 0;
+    public static volatile int liveGems = -1;
     public static volatile String currentStatus = "Standby";
 
     public static QuizEarnAccessibilityService instance = null;
@@ -230,9 +231,64 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 return;
             }
 
-            // 3. Check for 25 Gems Milestone (Stop bot for 1,000 Coins Super Offer)
+            // 3. Detect Real Gem Count & 25 Gems Milestone
+            int detectedGems = -1;
+
+            // Pattern A: Match "X/25" in a single node (e.g. "5/25 gems to unlock", "20/25")
+            Pattern slash25Pattern = Pattern.compile("(\\d+)\\s*/\\s*25");
+            for (NodeItem item : allNodes) {
+                Matcher m = slash25Pattern.matcher(item.text);
+                if (m.find()) {
+                    try {
+                        detectedGems = Integer.parseInt(m.group(1));
+                        break;
+                    } catch (Exception ignored) {}
+                }
+            }
+
+            // Pattern B: Match split nodes in Super Offer row: [X] [/] [25]
+            if (detectedGems < 0) {
+                for (int i = 0; i < allNodes.size(); i++) {
+                    if (allNodes.get(i).text.trim().equals("/")) {
+                        if (i > 0 && (i + 1) < allNodes.size()) {
+                            NodeItem prev = allNodes.get(i - 1);
+                            NodeItem next = allNodes.get(i + 1);
+                            if (next.text.trim().equals("25")) {
+                                try {
+                                    int g = Integer.parseInt(prev.text.trim());
+                                    int diffY = Math.abs(prev.rect.centerY() - next.rect.centerY());
+                                    if (diffY < 60) {
+                                        detectedGems = g;
+                                        break;
+                                    }
+                                } catch (Exception ignored) {}
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Pattern C: Top-right header gem badge ([💎] [X] at X > 850, Y < 300)
+            if (detectedGems < 0) {
+                for (NodeItem item : allNodes) {
+                    if (item.rect.centerX() > 850 && item.rect.centerY() > 140 && item.rect.centerY() < 300) {
+                        if (item.text.matches("^\\d{1,3}$")) {
+                            try {
+                                detectedGems = Integer.parseInt(item.text.trim());
+                                break;
+                            } catch (Exception ignored) {}
+                        }
+                    }
+                }
+            }
+
+            if (detectedGems >= 0) {
+                liveGems = detectedGems;
+            }
+
             boolean hasCollectGem = false;
             for (NodeItem item : allNodes) {
+                if (isForbiddenElement(item)) continue;
                 String t = item.text.trim().toLowerCase();
                 String d = item.contentDesc.trim().toLowerCase();
                 String combined = (t + " " + d).trim();
@@ -243,44 +299,22 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             }
 
             boolean is25Gems = false;
-            for (int i = 0; i < allNodes.size(); i++) {
-                String t = allNodes.get(i).text.toLowerCase().trim();
-                if (t.contains("25/25") || t.contains("25 / 25")) {
-                    is25Gems = true;
-                    break;
-                }
+            // Stop ONLY when verified real gems reached >= 25
+            if (liveGems >= 25) {
+                is25Gems = true;
+            }
+
+            for (NodeItem item : allNodes) {
+                String t = item.text.toLowerCase().trim();
                 if (t.contains("super offer unlocked") || t.contains("super task unlocked")) {
                     is25Gems = true;
                     break;
                 }
-                // Check split nodes: "25" then "/" then "25" on the same row
-                if (t.equals("25")) {
-                    for (int j = i + 1; j < Math.min(i + 5, allNodes.size()); j++) {
-                        String tj = allNodes.get(j).text.trim();
-                        if (tj.equals("/")) {
-                            for (int k = j + 1; k < Math.min(j + 5, allNodes.size()); k++) {
-                                String tk = allNodes.get(k).text.trim();
-                                if (tk.equals("25")) {
-                                    int diffY = Math.abs(allNodes.get(i).rect.centerY() - allNodes.get(k).rect.centerY());
-                                    if (diffY < 80) {
-                                        is25Gems = true;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                if (is25Gems) break;
-            }
-
-            if (solvedCount >= 25) {
-                is25Gems = true;
             }
 
             // If 25 gems reached and no pending Collect Gem popup: PAUSE BOT!
             if (is25Gems && !hasCollectGem) {
-                Log.i(TAG, "25 GEMS TARGET REACHED! Milestone achieved. Pausing bot for Super Offer claim.");
+                Log.i(TAG, "25 GEMS TARGET REACHED! Milestone achieved (" + liveGems + "/25). Pausing bot for Super Offer claim.");
                 currentStatus = "25 GEMS HIT! (1000 Coins)";
                 stopSolving();
                 return;

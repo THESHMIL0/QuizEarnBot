@@ -172,7 +172,7 @@ public class FloatingOverlayService extends Service {
                     QuizEarnAccessibilityService.stopSolving();
                 } else {
                     if (QuizEarnAccessibilityService.currentStatus.contains("25 GEMS")) {
-                        QuizEarnAccessibilityService.solvedCount = 0;
+                        QuizEarnAccessibilityService.currentStatus = "Scanning...";
                     }
                     QuizEarnAccessibilityService.startSolving();
                 }
@@ -249,15 +249,18 @@ public class FloatingOverlayService extends Service {
         boolean running = QuizEarnAccessibilityService.isRunning;
         boolean serviceOk = QuizEarnAccessibilityService.isServiceActive;
         int count = QuizEarnAccessibilityService.solvedCount;
+        int gems = QuizEarnAccessibilityService.liveGems;
         String status = QuizEarnAccessibilityService.currentStatus;
+
+        String gemTag = (gems >= 0) ? ("💎 " + gems + "/25") : ("#" + count);
 
         if (!serviceOk) {
             statusText.setText("SERVICE OFF");
             statusText.setTextColor(Color.parseColor("#EF4444"));
             btnToggle.setEnabled(false);
             btnToggle.setText("OFF");
-        } else if (status.contains("25 GEMS")) {
-            statusText.setText("🎉 25 GEMS HIT! CLAIM OFFER");
+        } else if (status.contains("25 GEMS") && gems >= 25) {
+            statusText.setText("🎉 25/25 GEMS! CLAIM OFFER");
             statusText.setTextColor(Color.parseColor("#F59E0B"));
             btnToggle.setText("START");
             btnToggle.setEnabled(true);
@@ -268,7 +271,7 @@ public class FloatingOverlayService extends Service {
             btnToggle.setBackground(btnBg);
             btnToggle.setTextColor(Color.BLACK);
         } else if (running) {
-            statusText.setText(status.toUpperCase() + " (" + count + ")");
+            statusText.setText(gemTag + " • " + status.toUpperCase());
             statusText.setTextColor(Color.parseColor("#10B981"));
             btnToggle.setText("PAUSE");
             btnToggle.setEnabled(true);
@@ -279,7 +282,7 @@ public class FloatingOverlayService extends Service {
             btnToggle.setBackground(btnBg);
             btnToggle.setTextColor(Color.WHITE);
         } else {
-            statusText.setText("STANDBY (" + count + ")");
+            statusText.setText(gemTag + " • STANDBY");
             statusText.setTextColor(Color.parseColor("#9CA3AF"));
             btnToggle.setText("START");
             btnToggle.setEnabled(true);
