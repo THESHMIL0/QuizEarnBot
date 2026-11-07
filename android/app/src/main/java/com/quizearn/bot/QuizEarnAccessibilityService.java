@@ -231,3 +231,4 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         isRunning = false;
     }
 }
+

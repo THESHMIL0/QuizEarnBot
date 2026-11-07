@@ -35,6 +35,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: '8.5'
+          cache-disabled: true
 
       - name: Build Android APK
         working-directory: ./android
@@ -43,8 +44,6 @@ jobs:
 
       - name: Stage APK to Root
         run: |
-          echo "=== Locate APK files ==="
-          find android/ -name "*.apk"
           find android/ -name "*.apk" -exec cp {} ./QuizEarnBot.apk \;
           ls -lh ./QuizEarnBot.apk
 
@@ -63,5 +62,5 @@ jobs:
           git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}
           git pull --rebase origin main || true
           git add QuizEarnBot.apk
-          git commit -m "Auto-publish QuizEarnBot.apk for direct web download [skip ci]" || echo "No changes"
+          git commit -m "Publish QuizEarnBot.apk for 1-click web download [skip ci]" || echo "No changes"
           git push origin main || echo "Push failed"
