@@ -425,11 +425,6 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         Rect rect = new Rect();
         node.getBoundsInScreen(rect);
 
-        // Filter out status bar area (top 110px where clock & notification popups reside)
-        if (rect.bottom <= 110) {
-            return;
-        }
-
         CharSequence textSeq = node.getText();
         CharSequence descSeq = node.getContentDescription();
         CharSequence idSeq = node.getViewIdResourceName();
@@ -439,6 +434,16 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
         // Effective text falls back to content description
         String effectiveText = !text.isEmpty() ? text : desc;
+
+        // Filter out status bar area (top 110px clock/icons), but NEVER filter out close/skip buttons
+        if (rect.bottom <= 110) {
+            String lower = (text + " " + desc + " " + resId).toLowerCase();
+            if (!lower.contains("close") && !lower.contains("skip") && 
+                !lower.contains("\u2715") && !lower.contains("\u2716") && 
+                !lower.equals("x") && !lower.contains("dismiss")) {
+                return;
+            }
+        }
 
         if ((!effectiveText.isEmpty() || !resId.isEmpty()) && !rect.isEmpty()) {
             list.add(new NodeItem(node, effectiveText, desc, resId, rect));
@@ -476,7 +481,17 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     }
 
     private void tapNode(final NodeItem item) {
-        tapCoordinates(item.rect.centerX(), item.rect.centerY());
+        int cx = item.rect.centerX();
+        int cy = item.rect.centerY();
+        // If close/skip button overlaps status bar (Y < 120), clamp Y so OS doesn't swallow gesture
+        if (cy < 120) {
+            if (item.rect.bottom > 120) {
+                cy = item.rect.bottom - 10;
+            } else {
+                cy = 125;
+            }
+        }
+        tapCoordinates(cx, cy);
     }
 
     private boolean isSkipElement(NodeItem item, int screenWidth) {
@@ -520,11 +535,20 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     }
 
     private boolean isCloseElement(NodeItem item) {
-        String t = item.text.toLowerCase();
-        String d = item.contentDesc.toLowerCase();
-        String id = item.resId.toLowerCase();
+        String t = item.text.toLowerCase().trim();
+        String d = item.contentDesc.toLowerCase().trim();
+        String id = item.resId.toLowerCase().trim();
 
         if (numPattern.matcher(item.text).matches()) {
+            return false;
+        }
+
+        // Top-left Google AdMob / YouTube countdown circle indicator ("Ad 1 of 2", "Ad 2 of 2" labeled "Close Ad")
+        // NEVER treat this as an actual close button! Tapping it prematurely cancels the video and loses the gem!
+        if (t.contains("ad 1 of") || t.contains("ad 2 of") || d.contains("ad 1 of") || d.contains("ad 2 of")) {
+            return false;
+        }
+        if ((t.contains("close ad") || d.contains("close ad")) && item.rect.centerX() < 350) {
             return false;
         }
 
@@ -533,12 +557,21 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         }
 
         if (d.contains("close") || d.contains("dismiss")) {
+            if (d.contains("close ad") && item.rect.centerX() < 350) {
+                return false;
+            }
             return true;
         }
 
-        if (t.contains("close") || t.contains("dismiss") || 
-            t.equals("\u2715") || t.equals("\u2716") || t.equalsIgnoreCase("x") || 
+        if (t.equals("\u2715") || t.equals("\u2716") || t.equalsIgnoreCase("x") || 
             t.contains("no thanks") || t.contains("not now") || t.contains("reward granted")) {
+            return true;
+        }
+
+        if (t.contains("close") || t.contains("dismiss")) {
+            if (t.contains("close ad") && item.rect.centerX() < 350) {
+                return false;
+            }
             return true;
         }
 

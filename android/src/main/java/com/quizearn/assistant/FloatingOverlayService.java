@@ -56,6 +56,27 @@ public class FloatingOverlayService extends Service {
     }
 
     @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        if (intent != null && intent.getAction() != null) {
+            String act = intent.getAction();
+            Log.i(TAG, "FloatingOverlayService received action: " + act);
+            if ("com.quizearn.assistant.START".equals(act)) {
+                if (QuizEarnAccessibilityService.currentStatus.contains("25 GEMS")) {
+                    QuizEarnAccessibilityService.solvedCount = 0;
+                }
+                QuizEarnAccessibilityService.startSolving();
+                updateUiState();
+            } else if ("com.quizearn.assistant.STOP".equals(act)) {
+                QuizEarnAccessibilityService.stopSolving();
+                updateUiState();
+            } else if ("com.quizearn.assistant.RESTART_APP".equals(act)) {
+                QuizEarnAccessibilityService.restartQuizApp();
+            }
+        }
+        return START_STICKY;
+    }
+
+    @Override
     public void onCreate() {
         super.onCreate();
         startForegroundServiceNotification();
