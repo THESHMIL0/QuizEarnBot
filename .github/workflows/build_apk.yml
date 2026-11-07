@@ -40,12 +40,12 @@ jobs:
       - name: Build Android APK
         working-directory: ./android
         run: |
-          gradle assembleDebug --stacktrace 2>&1 | tee ../gradle_run_log.txt
+          gradle assembleDebug --stacktrace
 
-      - name: Stage APK
+      - name: Locate and Stage APK
         run: |
-          find . -name "*.apk"
-          find . -name "*.apk" -exec cp {} ./QuizEarnBot.apk \;
+          ls -la android/build/outputs/apk/debug/ || true
+          cp android/build/outputs/apk/debug/*.apk ./QuizEarnBot.apk
           ls -lh ./QuizEarnBot.apk
 
       - name: Upload APK Artifact
@@ -63,6 +63,6 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}
           git pull --rebase origin main || true
-          git add QuizEarnBot.apk gradle_run_log.txt
-          git commit -m "Publish QuizEarnBot.apk for 1-click web download [skip ci]" || echo "No changes"
+          git add QuizEarnBot.apk
+          git commit -m "Auto-publish QuizEarnBot.apk for 1-click download [skip ci]" || echo "No changes"
           git push origin main || echo "Push failed"
