@@ -31,6 +31,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
     private final Handler loopHandler = new Handler(Looper.getMainLooper());
     private long lastTapTime = 0;
+    private long adStartTime = 0;
 
     // Real math operations (excluding simple '/' which represents progress fractions like 0/25)
     private final Pattern mathPattern = Pattern.compile("(\\d+)\\s*([\\+\\-\\×\\*]|÷)\\s*(\\d+)");
@@ -94,7 +95,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         if (!isRunning) return;
 
         long now = System.currentTimeMillis();
-        if (now - lastTapTime < 900) {
+        if (now - lastTapTime < 800) {
             return;
         }
 
@@ -107,7 +108,74 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
             if (allNodes.isEmpty()) return;
 
-            // CASE 1: Number Matching / Captcha Quiz (Duplicate 3-6 digit detection)
+            // 1. Check for "Collect Gem", "Claim", or Reward collection buttons
+            for (NodeItem item : allNodes) {
+                String t = item.text.trim().toLowerCase();
+                if (t.equals("collect gem") || t.equals("collect reward") || t.equals("collect coins") || 
+                    t.equals("collect") || t.equals("claim") || t.equals("claim now")) {
+                    Log.i(TAG, "Found Collect/Claim button: " + item.text + " at " + item.rect);
+                    tapNode(item);
+                    lastTapTime = System.currentTimeMillis();
+                    currentStatus = "Collecting Gem...";
+                    adStartTime = 0;
+                    return;
+                }
+            }
+
+            // 2. Check for Ad Close / Skip / Dismiss buttons
+            for (NodeItem item : allNodes) {
+                String t = item.text.trim();
+                if (t.equalsIgnoreCase("Close") || t.equalsIgnoreCase("Close sheet") || 
+                    t.equalsIgnoreCase("Skip") || t.equalsIgnoreCase("Skip Ad") || 
+                    t.equalsIgnoreCase("✕") || t.equalsIgnoreCase("✖") || 
+                    t.equalsIgnoreCase("X") || t.equalsIgnoreCase("No thanks") || 
+                    t.equalsIgnoreCase("Not now") || t.toLowerCase().contains("reward granted")) {
+                    if (!numPattern.matcher(t).matches()) {
+                        Log.i(TAG, "Found Ad Close/Skip button: " + t + " at " + item.rect);
+                        tapNode(item);
+                        lastTapTime = System.currentTimeMillis();
+                        currentStatus = "Closing Ad...";
+                        adStartTime = 0;
+                        return;
+                    }
+                }
+            }
+
+            // 3. Ad Detection & Automated Back Key Dismissal
+            boolean isAd = false;
+            CharSequence pkgSeq = root.getPackageName();
+            String pkg = (pkgSeq != null) ? pkgSeq.toString() : "";
+            if (pkg.contains("vending") || pkg.contains("gms.ads") || pkg.contains("admob")) {
+                isAd = true;
+            } else {
+                for (NodeItem item : allNodes) {
+                    if (item.text.startsWith("Ad ") || item.text.contains("seconds after") || 
+                        item.text.contains("will be taken to the website")) {
+                        isAd = true;
+                        break;
+                    }
+                }
+            }
+
+            if (isAd) {
+                if (adStartTime == 0) adStartTime = now;
+                long adElapsed = (now - adStartTime) / 1000;
+                currentStatus = "Ad Playing (" + adElapsed + "s)...";
+
+                // After ad has run for 5+ seconds, send Back key to close it
+                if (adElapsed >= 5) {
+                    Log.i(TAG, "Ad active for " + adElapsed + "s. Pressing Back to return to Quiz...");
+                    performGlobalAction(GLOBAL_ACTION_BACK);
+                    lastTapTime = System.currentTimeMillis();
+                    adStartTime = 0;
+                    return;
+                }
+                return;
+            } else {
+                adStartTime = 0;
+            }
+
+            // 4. Number Matching / Captcha Quiz (Duplicate 3-6 digit detection)
             Map<String, List<NodeItem>> numGroups = new HashMap<>();
             for (NodeItem item : allNodes) {
                 if (numPattern.matcher(item.text).matches()) {
@@ -146,9 +214,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
-            // CASE 2: Math Quiz (e.g. 12 + 5 = ?)
+            // 5. Math Quiz (e.g. 12 + 5 = ?)
             for (NodeItem item : allNodes) {
-                // Ignore progress fractions like "0 / 25" or "/ 25"
                 if (item.text.contains("/25") || item.text.contains("/ 25") || item.text.contains("/50") || item.text.contains("/2")) {
                     continue;
                 }
@@ -187,17 +254,6 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                             }
                         }
                     } catch (Exception ignored) {}
-                }
-            }
-
-            // CASE 3: Auto-Enter Quiz if user started bot from Home Screen
-            for (NodeItem item : allNodes) {
-                if ("Claim".equalsIgnoreCase(item.text) || "Claim Now".equalsIgnoreCase(item.text)) {
-                    Log.i(TAG, "Found Claim button on home screen! Entering quiz at " + item.rect);
-                    tapNode(item);
-                    lastTapTime = System.currentTimeMillis();
-                    currentStatus = "Entering Quiz...";
-                    return;
                 }
             }
 
