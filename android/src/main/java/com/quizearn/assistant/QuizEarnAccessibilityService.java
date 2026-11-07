@@ -4,6 +4,8 @@ import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.GestureDescription;
 import android.graphics.Path;
 import android.graphics.Rect;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
@@ -15,7 +17,6 @@ import java.util.regex.Pattern;
 public class QuizEarnAccessibilityService extends AccessibilityService {
 
     public static final String TAG = "QuizEarnAssistant";
-    public static final String TARGET_PACKAGE = "com.quiz.earn.money.game";
 
     public static volatile boolean isRunning = false;
     public static volatile boolean isServiceActive = false;
@@ -24,8 +25,42 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
     public static QuizEarnAccessibilityService instance = null;
 
-    private long lastActionTime = 0;
+    private final Handler loopHandler = new Handler(Looper.getMainLooper());
+    private long lastTapTime = 0;
+
     private final Pattern mathPattern = Pattern.compile("(\\d+)\\s*([\\+\\-\\×\\*\\÷\\/])\\s*(\\d+)");
+    private final Pattern numPattern = Pattern.compile("^\\d{3,6}$");
+
+    private final Runnable solveLoopRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (isRunning) {
+                try {
+                    solveScreen();
+                } catch (Exception e) {
+                    Log.e(TAG, "Error in solveScreen", e);
+                }
+                loopHandler.postDelayed(this, 300);
+            }
+        }
+    };
+
+    public static void startSolving() {
+        isRunning = true;
+        currentStatus = "Scanning...";
+        if (instance != null) {
+            instance.loopHandler.removeCallbacks(instance.solveLoopRunnable);
+            instance.loopHandler.post(instance.solveLoopRunnable);
+        }
+    }
+
+    public static void stopSolving() {
+        isRunning = false;
+        currentStatus = "Standby";
+        if (instance != null) {
+            instance.loopHandler.removeCallbacks(instance.solveLoopRunnable);
+        }
+    }
 
     @Override
     public void onServiceConnected() {
@@ -38,120 +73,149 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
         if (!isRunning || event == null) return;
-
-        CharSequence pkgSeq = event.getPackageName();
-        String pkg = (pkgSeq != null) ? pkgSeq.toString() : "";
-
-        if (TARGET_PACKAGE.equals(pkg)) {
-            long now = System.currentTimeMillis();
-            if (now - lastActionTime > 350) {
-                lastActionTime = now;
-                solveScreenQuiz();
-            }
+        long now = System.currentTimeMillis();
+        if (now - lastTapTime > 600) {
+            solveScreen();
         }
     }
 
-    private void solveScreenQuiz() {
+    public synchronized void solveScreen() {
+        if (!isRunning) return;
+
+        long now = System.currentTimeMillis();
+        if (now - lastTapTime < 700) {
+            return;
+        }
+
         AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root == null) return;
 
         try {
-            List<AccessibilityNodeInfo> textNodes = new ArrayList<>();
-            collectTextNodes(root, textNodes);
+            List<NodeItem> allNodes = new ArrayList<>();
+            collectAllNodes(root, allNodes);
 
-            AccessibilityNodeInfo questionNode = null;
-            Integer solvedAnswer = null;
+            if (allNodes.isEmpty()) return;
 
-            for (AccessibilityNodeInfo node : textNodes) {
-                CharSequence textSeq = node.getText();
-                if (textSeq == null) continue;
-                String text = textSeq.toString();
-
-                Matcher matcher = mathPattern.matcher(text);
-                if (matcher.find()) {
+            // 1. Math Quiz solver (e.g. 12 + 5 = ?)
+            for (NodeItem item : allNodes) {
+                Matcher m = mathPattern.matcher(item.text);
+                if (m.find()) {
                     try {
-                        int n1 = Integer.parseInt(matcher.group(1));
-                        String op = matcher.group(2);
-                        int n2 = Integer.parseInt(matcher.group(3));
-
+                        int n1 = Integer.parseInt(m.group(1));
+                        String op = m.group(2);
+                        int n2 = Integer.parseInt(m.group(3));
                         int ans;
-                        if ("+".equals(op) || "plus".equalsIgnoreCase(op)) {
-                            ans = n1 + n2;
-                        } else if ("-".equals(op) || "minus".equalsIgnoreCase(op)) {
-                            ans = n1 - n2;
-                        } else if ("*".equals(op) || "×".equals(op) || "x".equalsIgnoreCase(op)) {
-                            ans = n1 * n2;
-                        } else if ("/".equals(op) || "÷".equals(op)) {
+                        if ("+".equals(op)) ans = n1 + n2;
+                        else if ("-".equals(op)) ans = n1 - n2;
+                        else if ("*".equals(op) || "×".equals(op)) ans = n1 * n2;
+                        else if ("/".equals(op) || "÷".equals(op)) {
                             if (n2 == 0) continue;
                             ans = n1 / n2;
-                        } else {
-                            continue;
-                        }
+                        } else continue;
 
-                        questionNode = node;
-                        solvedAnswer = ans;
-                        break;
+                        String ansStr = String.valueOf(ans);
+                        for (NodeItem opt : allNodes) {
+                            if (opt.node != item.node && opt.text.trim().equals(ansStr)) {
+                                tapNode(opt);
+                                solvedCount++;
+                                lastTapTime = System.currentTimeMillis();
+                                currentStatus = "Solved #" + solvedCount + " (" + ansStr + ")";
+                                return;
+                            }
+                        }
                     } catch (Exception ignored) {}
                 }
             }
 
-            if (questionNode != null && solvedAnswer != null) {
-                String ansStr = String.valueOf(solvedAnswer);
-                currentStatus = "Solved: " + ansStr;
-
-                for (AccessibilityNodeInfo node : textNodes) {
-                    CharSequence textSeq = node.getText();
-                    if (textSeq == null) continue;
-                    String text = textSeq.toString().trim();
-
-                    if (ansStr.equals(text)) {
-                        if (clickNodeOrParent(node)) {
-                            solvedCount++;
-                            currentStatus = "Solved #" + solvedCount + " (" + ansStr + ")";
-                            return;
-                        }
+            // 2. Number Matching / Captcha Quiz (e.g. target 1035 & 4 option buttons below)
+            NodeItem targetNode = null;
+            for (NodeItem item : allNodes) {
+                if (numPattern.matcher(item.text).matches()) {
+                    if (item.rect.centerY() > 100 && item.rect.centerY() < 480) {
+                        targetNode = item;
+                        break;
                     }
                 }
             }
+
+            if (targetNode != null) {
+                String targetStr = targetNode.text.trim();
+                currentStatus = "Target: " + targetStr;
+
+                for (NodeItem opt : allNodes) {
+                    if (opt.node != targetNode.node && opt.rect.centerY() >= 450 && opt.text.trim().equals(targetStr)) {
+                        tapNode(opt);
+                        solvedCount++;
+                        lastTapTime = System.currentTimeMillis();
+                        currentStatus = "Solved #" + solvedCount + " (" + targetStr + ")";
+                        return;
+                    }
+                }
+            }
+
         } finally {
             root.recycle();
         }
     }
 
-    private void collectTextNodes(AccessibilityNodeInfo node, List<AccessibilityNodeInfo> list) {
-        if (node.getText() != null && node.getText().length() > 0) {
-            list.add(node);
+    private void collectAllNodes(AccessibilityNodeInfo node, List<NodeItem> list) {
+        if (node == null) return;
+
+        CharSequence textSeq = node.getText();
+        CharSequence descSeq = node.getContentDescription();
+        String text = (textSeq != null && textSeq.length() > 0) ? textSeq.toString()
+                    : ((descSeq != null && descSeq.length() > 0) ? descSeq.toString() : "");
+
+        Rect rect = new Rect();
+        node.getBoundsInScreen(rect);
+
+        if (!text.isEmpty() && !rect.isEmpty()) {
+            list.add(new NodeItem(node, text.trim(), rect));
         }
+
         for (int i = 0; i < node.getChildCount(); i++) {
             AccessibilityNodeInfo child = node.getChild(i);
             if (child != null) {
-                collectTextNodes(child, list);
+                collectAllNodes(child, list);
             }
         }
     }
 
-    private boolean clickNodeOrParent(AccessibilityNodeInfo node) {
-        AccessibilityNodeInfo curr = node;
+    private void tapNode(NodeItem item) {
+        // A. Native node or parent click action
+        AccessibilityNodeInfo curr = item.node;
         while (curr != null) {
             if (curr.isClickable()) {
-                return curr.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                if (curr.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    return;
+                }
             }
             curr = curr.getParent();
         }
 
-        Rect rect = new Rect();
-        node.getBoundsInScreen(rect);
-        if (!rect.isEmpty()) {
+        // B. Universal Gesture Tap at center coordinates
+        int cx = item.rect.centerX();
+        int cy = item.rect.centerY();
+        if (cx > 0 && cy > 0) {
             Path path = new Path();
-            path.moveTo(rect.centerX(), rect.centerY());
+            path.moveTo(cx, cy);
             GestureDescription stroke = new GestureDescription.Builder()
                 .addStroke(new GestureDescription.StrokeDescription(path, 0L, 50L))
                 .build();
             dispatchGesture(stroke, null, null);
-            return true;
         }
+    }
 
-        return false;
+    private static class NodeItem {
+        final AccessibilityNodeInfo node;
+        final String text;
+        final Rect rect;
+
+        NodeItem(AccessibilityNodeInfo node, String text, Rect rect) {
+            this.node = node;
+            this.text = text;
+            this.rect = rect;
+        }
     }
 
     @Override
@@ -160,8 +224,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     @Override
     public void onDestroy() {
         super.onDestroy();
+        stopSolving();
         instance = null;
         isServiceActive = false;
-        isRunning = false;
     }
 }

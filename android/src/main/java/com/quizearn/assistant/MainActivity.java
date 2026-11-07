@@ -171,9 +171,13 @@ public class MainActivity extends Activity {
             startService(intent);
         }
 
-        Intent launchIntent = getPackageManager().getLaunchIntentForPackage(QuizEarnAccessibilityService.TARGET_PACKAGE);
-        if (launchIntent != null) {
-            startActivity(launchIntent);
+        String[] targets = new String[]{"com.quiz.earn.money.game", "com.rayole.cashmafia2"};
+        for (String pkg : targets) {
+            Intent launchIntent = getPackageManager().getLaunchIntentForPackage(pkg);
+            if (launchIntent != null) {
+                startActivity(launchIntent);
+                break;
+            }
         }
     }
 
@@ -241,3 +245,4 @@ public class MainActivity extends Activity {
         return (int) (value * getResources().getDisplayMetrics().density);
     }
 }
+

@@ -42,7 +42,7 @@ public class FloatingOverlayService extends Service {
         @Override
         public void run() {
             updateUiState();
-            uiHandler.postDelayed(this, 500);
+            uiHandler.postDelayed(this, 300);
         }
     };
 
@@ -135,7 +135,11 @@ public class FloatingOverlayService extends Service {
         btnToggle.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                QuizEarnAccessibilityService.isRunning = !QuizEarnAccessibilityService.isRunning;
+                if (QuizEarnAccessibilityService.isRunning) {
+                    QuizEarnAccessibilityService.stopSolving();
+                } else {
+                    QuizEarnAccessibilityService.startSolving();
+                }
                 updateUiState();
             }
         });
@@ -149,7 +153,7 @@ public class FloatingOverlayService extends Service {
         btnClose.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                QuizEarnAccessibilityService.isRunning = false;
+                QuizEarnAccessibilityService.stopSolving();
                 stopSelf();
             }
         });
@@ -188,13 +192,14 @@ public class FloatingOverlayService extends Service {
         boolean running = QuizEarnAccessibilityService.isRunning;
         boolean serviceOk = QuizEarnAccessibilityService.isServiceActive;
         int count = QuizEarnAccessibilityService.solvedCount;
+        String status = QuizEarnAccessibilityService.currentStatus;
 
         if (!serviceOk) {
-            statusText.setText("OFF");
+            statusText.setText("ACCESSIBILITY OFF");
             statusText.setTextColor(Color.parseColor("#EF4444"));
             btnToggle.setEnabled(false);
         } else if (running) {
-            statusText.setText("SOLVING (" + count + ")");
+            statusText.setText(status.toUpperCase() + " (" + count + ")");
             statusText.setTextColor(Color.parseColor("#10B981"));
             btnToggle.setText("PAUSE");
             btnToggle.setEnabled(true);
