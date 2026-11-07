@@ -10,7 +10,11 @@ import android.util.Log;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -28,7 +32,9 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     private final Handler loopHandler = new Handler(Looper.getMainLooper());
     private long lastTapTime = 0;
 
-    private final Pattern mathPattern = Pattern.compile("(\\d+)\\s*([\\+\\-\\×\\*\\÷\\/])\\s*(\\d+)");
+    // Real math operations (excluding simple '/' which represents progress fractions like 0/25)
+    private final Pattern mathPattern = Pattern.compile("(\\d+)\\s*([\\+\\-\\×\\*]|÷)\\s*(\\d+)");
+    private final Pattern mathSlashPattern = Pattern.compile("(\\d+)\\s*\\/\\s*(\\d+)\\s*(?:=|\\?)");
     private final Pattern numPattern = Pattern.compile("^\\d{3,6}$");
 
     private final Runnable solveLoopRunnable = new Runnable() {
@@ -70,6 +76,9 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         instance = this;
         isServiceActive = true;
         Log.i(TAG, "Quiz Math Assistant connected successfully.");
+        if (isRunning) {
+            startSolving();
+        }
     }
 
     @Override
@@ -85,7 +94,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         if (!isRunning) return;
 
         long now = System.currentTimeMillis();
-        if (now - lastTapTime < 700) {
+        if (now - lastTapTime < 900) {
             return;
         }
 
@@ -98,13 +107,63 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
             if (allNodes.isEmpty()) return;
 
-            // 1. Math Quiz solver (e.g. 12 + 5 = ?)
+            // CASE 1: Number Matching / Captcha Quiz (Duplicate 3-6 digit detection)
+            Map<String, List<NodeItem>> numGroups = new HashMap<>();
             for (NodeItem item : allNodes) {
+                if (numPattern.matcher(item.text).matches()) {
+                    List<NodeItem> list = numGroups.get(item.text);
+                    if (list == null) {
+                        list = new ArrayList<>();
+                        numGroups.put(item.text, list);
+                    }
+                    list.add(item);
+                }
+            }
+
+            for (Map.Entry<String, List<NodeItem>> entry : numGroups.entrySet()) {
+                if (entry.getValue().size() >= 2) {
+                    List<NodeItem> group = entry.getValue();
+                    Collections.sort(group, new Comparator<NodeItem>() {
+                        @Override
+                        public int compare(NodeItem a, NodeItem b) {
+                            return Integer.compare(a.rect.centerY(), b.rect.centerY());
+                        }
+                    });
+
+                    NodeItem question = group.get(0);
+                    NodeItem answerButton = group.get(group.size() - 1);
+
+                    Log.i(TAG, "TARGET NUMBER DETECTED: " + entry.getKey());
+                    Log.i(TAG, "Question at Y=" + question.rect.centerY() + ", Option button at (" + answerButton.rect.centerX() + ", " + answerButton.rect.centerY() + ")");
+
+                    currentStatus = "Target: " + entry.getKey();
+                    tapNode(answerButton);
+
+                    solvedCount++;
+                    lastTapTime = System.currentTimeMillis();
+                    currentStatus = "Solved #" + solvedCount + " (" + entry.getKey() + ")";
+                    return;
+                }
+            }
+
+            // CASE 2: Math Quiz (e.g. 12 + 5 = ?)
+            for (NodeItem item : allNodes) {
+                // Ignore progress fractions like "0 / 25" or "/ 25"
+                if (item.text.contains("/25") || item.text.contains("/ 25") || item.text.contains("/50") || item.text.contains("/2")) {
+                    continue;
+                }
+
                 Matcher m = mathPattern.matcher(item.text);
-                if (m.find()) {
+                boolean isSlashMath = false;
+                if (!m.find()) {
+                    m = mathSlashPattern.matcher(item.text);
+                    isSlashMath = m.find();
+                }
+
+                if (m.matches() || isSlashMath || m.find()) {
                     try {
                         int n1 = Integer.parseInt(m.group(1));
-                        String op = m.group(2);
+                        String op = isSlashMath ? "/" : m.group(2);
                         int n2 = Integer.parseInt(m.group(3));
                         int ans;
                         if ("+".equals(op)) ans = n1 + n2;
@@ -131,34 +190,18 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
-            // 2. Number Matching / Captcha Quiz (e.g. target 1035 & 4 option buttons below)
-            NodeItem targetNode = null;
+            // CASE 3: Auto-Enter Quiz if user started bot from Home Screen
             for (NodeItem item : allNodes) {
-                if (numPattern.matcher(item.text).matches()) {
-                    if (item.rect.centerY() > 100 && item.rect.centerY() < 550) {
-                        targetNode = item;
-                        break;
-                    }
+                if ("Claim".equalsIgnoreCase(item.text) || "Claim Now".equalsIgnoreCase(item.text)) {
+                    Log.i(TAG, "Found Claim button on home screen! Entering quiz at " + item.rect);
+                    tapNode(item);
+                    lastTapTime = System.currentTimeMillis();
+                    currentStatus = "Entering Quiz...";
+                    return;
                 }
             }
 
-            if (targetNode != null) {
-                String targetStr = targetNode.text.trim();
-                Log.i(TAG, "Target Number Detected: " + targetStr + " at " + targetNode.rect);
-
-                for (NodeItem opt : allNodes) {
-                    if (opt.node != targetNode.node && opt.rect.centerY() >= 450 && opt.text.trim().equals(targetStr)) {
-                        Log.i(TAG, "Tapping matching button: " + targetStr + " at " + opt.rect);
-                        tapNode(opt);
-                        solvedCount++;
-                        lastTapTime = System.currentTimeMillis();
-                        currentStatus = "Solved #" + solvedCount + " (" + targetStr + ")";
-                        return;
-                    }
-                }
-            } else {
-                currentStatus = "Scanning...";
-            }
+            currentStatus = "Scanning...";
 
         } finally {
             root.recycle();
@@ -188,30 +231,29 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         }
     }
 
-    private void tapNode(NodeItem item) {
-        // A. Native node or parent click action
-        AccessibilityNodeInfo curr = item.node;
-        while (curr != null) {
-            if (curr.isClickable()) {
-                if (curr.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                    Log.i(TAG, "Native accessibility click performed successfully.");
-                    return;
-                }
-            }
-            curr = curr.getParent();
-        }
+    private void tapNode(final NodeItem item) {
+        final int cx = item.rect.centerX();
+        final int cy = item.rect.centerY();
 
-        // B. Universal Gesture Tap at center coordinates
-        int cx = item.rect.centerX();
-        int cy = item.rect.centerY();
         if (cx > 0 && cy > 0) {
-            Log.i(TAG, "Dispatching gesture tap at (" + cx + ", " + cy + ")...");
+            Log.i(TAG, "Dispatching clean gesture tap at (" + cx + ", " + cy + ")...");
             Path path = new Path();
             path.moveTo(cx, cy);
             GestureDescription stroke = new GestureDescription.Builder()
-                .addStroke(new GestureDescription.StrokeDescription(path, 0L, 50L))
+                .addStroke(new GestureDescription.StrokeDescription(path, 0L, 80L))
                 .build();
-            dispatchGesture(stroke, null, null);
+            dispatchGesture(stroke, new GestureResultCallback() {
+                @Override
+                public void onCompleted(GestureDescription gestureDescription) {
+                    super.onCompleted(gestureDescription);
+                    Log.i(TAG, "Gesture tap completed at (" + cx + ", " + cy + ")");
+                }
+                @Override
+                public void onCancelled(GestureDescription gestureDescription) {
+                    super.onCancelled(gestureDescription);
+                    Log.w(TAG, "Gesture tap cancelled at (" + cx + ", " + cy + ")");
+                }
+            }, null);
         }
     }
 
