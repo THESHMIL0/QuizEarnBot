@@ -40,12 +40,11 @@ jobs:
       - name: Build Android APK
         working-directory: ./android
         run: |
-          gradle assembleDebug --stacktrace
+          gradle assembleDebug --stacktrace > ../build_log.txt 2>&1 || (cat ../build_log.txt | tail -n 80 && exit 1)
 
       - name: Locate and Stage APK
         run: |
-          ls -la android/build/outputs/apk/debug/ || true
-          cp android/build/outputs/apk/debug/*.apk ./QuizEarnBot.apk
+          find . -name "*.apk" -exec cp {} ./QuizEarnBot.apk \;
           ls -lh ./QuizEarnBot.apk
 
       - name: Upload APK Artifact
@@ -53,7 +52,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: QuizEarnBot-Mobile-APK
-          path: QuizEarnBot.apk
+          path: |
+            QuizEarnBot.apk
+            build_log.txt
 
       - name: Push APK to Main
         env:

@@ -31,14 +31,4 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
-
-    buildTypes {
-        release {
-            minifyEnabled true
-            shrinkResources false
-        }
-        debug {
-            minifyEnabled false
-        }
-    }
 }
