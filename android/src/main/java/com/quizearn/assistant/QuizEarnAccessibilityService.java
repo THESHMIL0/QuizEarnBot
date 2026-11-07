@@ -105,16 +105,120 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         if (root == null) return;
 
         try {
+            CharSequence pkgSeq = root.getPackageName();
+            String pkg = (pkgSeq != null) ? pkgSeq.toString() : "";
+
+            // 0. Auto-Dismiss Google Play Store redirect
+            if (pkg.contains("vending")) {
+                Log.i(TAG, "Play Store opened by ad! Pressing Back immediately to return...");
+                performGlobalAction(GLOBAL_ACTION_BACK);
+                lastTapTime = System.currentTimeMillis();
+                currentStatus = "Returning from Store...";
+                adStartTime = 0;
+                return;
+            }
+
             List<NodeItem> allNodes = new ArrayList<>();
             collectAllNodes(root, allNodes);
 
             if (allNodes.isEmpty()) return;
 
-            // 0. Check for 25 Gems Milestone (Stop bot for 1,000 Coins Super Offer)
+            // 1. Check for Ad Close / Skip / Dismiss buttons across Text, Content Description, and Resource ID
+            for (NodeItem item : allNodes) {
+                String t = item.text.toLowerCase();
+                String d = item.contentDesc.toLowerCase();
+                String id = item.resId.toLowerCase();
+
+                boolean isClose = false;
+
+                // Resource ID match (e.g. close-or-skip-button, btn_close, close_button, skip_button, dismiss)
+                if (id.contains("close") || id.contains("skip") || id.contains("dismiss")) {
+                    isClose = true;
+                }
+
+                // Content description match (e.g. "close button", "close", "skip", "dismiss")
+                if (d.contains("close") || d.contains("skip") || d.contains("dismiss")) {
+                    isClose = true;
+                }
+
+                // Text match (e.g. "close", "skip", "dismiss", "✕", "✖", "x", "no thanks", "not now", "reward granted")
+                if (t.contains("close") || t.contains("skip") || t.contains("dismiss") || 
+                    t.equals("✕") || t.equals("✖") || t.equals("x") || 
+                    t.contains("no thanks") || t.contains("not now") || t.contains("reward granted")) {
+                    if (!numPattern.matcher(item.text).matches()) {
+                        isClose = true;
+                    }
+                }
+
+                if (isClose) {
+                    Log.i(TAG, "FOUND AD CLOSE BUTTON: text='" + item.text + "', desc='" + item.contentDesc + "', resId='" + item.resId + "' at " + item.rect);
+                    tapNode(item);
+                    lastTapTime = System.currentTimeMillis();
+                    currentStatus = "Closing Ad...";
+                    adStartTime = 0;
+                    return;
+                }
+            }
+
+            // 2. Active Ad Detection & Multi-Stage Auto-Dismissal (Moloco, Liftoff, Unity, AppLovin, AdMob, etc.)
+            boolean isAd = false;
+            if (pkg.contains("gms.ads") || pkg.contains("admob")) {
+                isAd = true;
+            } else {
+                for (NodeItem item : allNodes) {
+                    String t = item.text.toLowerCase();
+                    String d = item.contentDesc.toLowerCase();
+                    String id = item.resId.toLowerCase();
+
+                    if (t.startsWith("ad ") || t.contains("seconds after") || 
+                        t.contains("will be taken to the website") || t.contains("install now") ||
+                        t.contains("play store") || t.contains("advertisement") ||
+                        t.contains("reward in") || t.contains("video ends in") ||
+                        d.contains("liftoff") || d.contains("privacy") || d.contains("ad") ||
+                        id.contains("adjs") || id.contains("moloco") || id.contains("endcard") ||
+                        id.contains("watermark") || id.contains("advert") || id.contains("unity3d") ||
+                        id.contains("applovin") || id.contains("mbridge") || id.contains("tt_") ||
+                        t.contains("moloco") || t.contains("liftoff")) {
+                        isAd = true;
+                        break;
+                    }
+                }
+            }
+
+            if (isAd) {
+                if (adStartTime == 0) adStartTime = now;
+                long adElapsed = (now - adStartTime) / 1000;
+                currentStatus = "Ad Playing (" + adElapsed + "s)...";
+
+                // After 3s: probe top-right corner where close buttons universally sit (e.g. 993, 197)
+                if (adElapsed >= 3 && adElapsed % 2 == 1) {
+                    int screenWidth = getResources().getDisplayMetrics().widthPixels;
+                    int tapX = (screenWidth > 0) ? (screenWidth - 85) : 995;
+                    Log.i(TAG, "Ad active for " + adElapsed + "s. Probing top-right close position at (" + tapX + ", 195)...");
+                    tapCoordinates(tapX, 195);
+                    lastTapTime = System.currentTimeMillis();
+                }
+
+                // After 5s: send Back key to close ad and return to quiz
+                if (adElapsed >= 5) {
+                    Log.i(TAG, "Ad active for " + adElapsed + "s. Pressing Back to return to Quiz...");
+                    performGlobalAction(GLOBAL_ACTION_BACK);
+                    lastTapTime = System.currentTimeMillis();
+                    adStartTime = 0;
+                    return;
+                }
+                return;
+            } else {
+                adStartTime = 0;
+            }
+
+            // 3. Check for 25 Gems Milestone (Stop bot for 1,000 Coins Super Offer)
             boolean hasCollectGem = false;
             for (NodeItem item : allNodes) {
                 String t = item.text.trim().toLowerCase();
-                if (t.equals("collect gem") || t.equals("collect reward") || t.equals("collect coins")) {
+                String d = item.contentDesc.trim().toLowerCase();
+                String combined = (t + " " + d).trim();
+                if (combined.contains("collect gem") || combined.contains("collect reward") || combined.contains("collect coins")) {
                     hasCollectGem = true;
                     break;
                 }
@@ -164,10 +268,12 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 return;
             }
 
-            // 1. Check for "Collect Gem", "Claim", or Reward collection buttons
+            // 4. Check for "Collect Gem", "Claim", or Reward collection buttons
             for (NodeItem item : allNodes) {
                 String t = item.text.trim().toLowerCase();
-                if (t.equals("collect gem") || t.equals("collect reward") || t.equals("collect coins") || 
+                String d = item.contentDesc.trim().toLowerCase();
+                String combined = (t + " " + d).trim();
+                if (combined.contains("collect gem") || combined.contains("collect reward") || combined.contains("collect coins") || 
                     t.equals("collect") || t.equals("claim") || t.equals("claim now")) {
                     Log.i(TAG, "Found Collect/Claim button: " + item.text + " at " + item.rect);
                     tapNode(item);
@@ -176,59 +282,6 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     adStartTime = 0;
                     return;
                 }
-            }
-
-            // 2. Check for Ad Close / Skip / Dismiss buttons
-            for (NodeItem item : allNodes) {
-                String t = item.text.trim();
-                if (t.equalsIgnoreCase("Close") || t.equalsIgnoreCase("Close sheet") || 
-                    t.equalsIgnoreCase("Skip") || t.equalsIgnoreCase("Skip Ad") || 
-                    t.equalsIgnoreCase("✕") || t.equalsIgnoreCase("✖") || 
-                    t.equalsIgnoreCase("X") || t.equalsIgnoreCase("No thanks") || 
-                    t.equalsIgnoreCase("Not now") || t.toLowerCase().contains("reward granted")) {
-                    if (!numPattern.matcher(t).matches()) {
-                        Log.i(TAG, "Found Ad Close/Skip button: " + t + " at " + item.rect);
-                        tapNode(item);
-                        lastTapTime = System.currentTimeMillis();
-                        currentStatus = "Closing Ad...";
-                        adStartTime = 0;
-                        return;
-                    }
-                }
-            }
-
-            // 3. Ad Detection & Automated Back Key Dismissal
-            boolean isAd = false;
-            CharSequence pkgSeq = root.getPackageName();
-            String pkg = (pkgSeq != null) ? pkgSeq.toString() : "";
-            if (pkg.contains("vending") || pkg.contains("gms.ads") || pkg.contains("admob")) {
-                isAd = true;
-            } else {
-                for (NodeItem item : allNodes) {
-                    if (item.text.startsWith("Ad ") || item.text.contains("seconds after") || 
-                        item.text.contains("will be taken to the website")) {
-                        isAd = true;
-                        break;
-                    }
-                }
-            }
-
-            if (isAd) {
-                if (adStartTime == 0) adStartTime = now;
-                long adElapsed = (now - adStartTime) / 1000;
-                currentStatus = "Ad Playing (" + adElapsed + "s)...";
-
-                // After ad has run for 5+ seconds, send Back key to close it
-                if (adElapsed >= 5) {
-                    Log.i(TAG, "Ad active for " + adElapsed + "s. Pressing Back to return to Quiz...");
-                    performGlobalAction(GLOBAL_ACTION_BACK);
-                    lastTapTime = System.currentTimeMillis();
-                    adStartTime = 0;
-                    return;
-                }
-                return;
-            } else {
-                adStartTime = 0;
             }
 
             // 4. Number Matching / Captcha Quiz (Duplicate 3-6 digit detection)
@@ -325,14 +378,19 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
         CharSequence textSeq = node.getText();
         CharSequence descSeq = node.getContentDescription();
-        String text = (textSeq != null && textSeq.length() > 0) ? textSeq.toString()
-                    : ((descSeq != null && descSeq.length() > 0) ? descSeq.toString() : "");
+        CharSequence idSeq = node.getViewIdResourceName();
+        String text = (textSeq != null) ? textSeq.toString().trim() : "";
+        String desc = (descSeq != null) ? descSeq.toString().trim() : "";
+        String resId = (idSeq != null) ? idSeq.toString().trim() : "";
+
+        // Effective text falls back to content description
+        String effectiveText = !text.isEmpty() ? text : desc;
 
         Rect rect = new Rect();
         node.getBoundsInScreen(rect);
 
-        if (!text.isEmpty() && !rect.isEmpty()) {
-            list.add(new NodeItem(node, text.trim(), rect));
+        if ((!effectiveText.isEmpty() || !resId.isEmpty()) && !rect.isEmpty()) {
+            list.add(new NodeItem(node, effectiveText, desc, resId, rect));
         }
 
         for (int i = 0; i < node.getChildCount(); i++) {
@@ -343,12 +401,9 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         }
     }
 
-    private void tapNode(final NodeItem item) {
-        final int cx = item.rect.centerX();
-        final int cy = item.rect.centerY();
-
+    private void tapCoordinates(final int cx, final int cy) {
         if (cx > 0 && cy > 0) {
-            Log.i(TAG, "Dispatching clean gesture tap at (" + cx + ", " + cy + ")...");
+            Log.i(TAG, "Dispatching gesture tap at (" + cx + ", " + cy + ")...");
             Path path = new Path();
             path.moveTo(cx, cy);
             GestureDescription stroke = new GestureDescription.Builder()
@@ -369,14 +424,22 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         }
     }
 
+    private void tapNode(final NodeItem item) {
+        tapCoordinates(item.rect.centerX(), item.rect.centerY());
+    }
+
     private static class NodeItem {
         final AccessibilityNodeInfo node;
         final String text;
+        final String contentDesc;
+        final String resId;
         final Rect rect;
 
-        NodeItem(AccessibilityNodeInfo node, String text, Rect rect) {
+        NodeItem(AccessibilityNodeInfo node, String text, String contentDesc, String resId, Rect rect) {
             this.node = node;
             this.text = text;
+            this.contentDesc = contentDesc;
+            this.resId = resId;
             this.rect = rect;
         }
     }
