@@ -324,7 +324,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 String d = item.contentDesc.trim().toLowerCase();
                 String combined = (t + " " + d).trim();
                 if (combined.contains("collect gem") || combined.contains("collect reward") || combined.contains("collect coins") || 
-                    t.equals("collect") || t.equals("claim") || t.equals("claim now") || t.equals("quiz")) {
+                    t.equals("collect") || t.equals("claim") || t.equals("claim now")) {
                     Log.i(TAG, "Found Collect/Claim button: " + item.text + " at " + item.rect);
                     tapNode(item);
                     lastTapTime = now;
