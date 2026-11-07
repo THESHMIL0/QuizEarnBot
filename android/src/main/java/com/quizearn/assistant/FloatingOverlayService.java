@@ -174,8 +174,23 @@ public class FloatingOverlayService extends Service {
             }
         });
 
+        Button btnRestart = new Button(this);
+        btnRestart.setText("⟳");
+        btnRestart.setTextColor(Color.parseColor("#38BDF8"));
+        btnRestart.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f);
+        btnRestart.setBackground(null);
+        btnRestart.setPadding(dp(4), 0, dp(4), 0);
+        btnRestart.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                Log.i(TAG, "HUD RESTART APP CLICKED");
+                QuizEarnAccessibilityService.restartQuizApp();
+            }
+        });
+
         container.addView(dragHandle);
         container.addView(statusText);
+        container.addView(btnRestart);
         container.addView(btnToggle);
         container.addView(btnClose);
 

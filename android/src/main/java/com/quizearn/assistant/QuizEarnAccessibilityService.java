@@ -2,6 +2,8 @@ package com.quizearn.assistant;
 
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.GestureDescription;
+import android.content.Context;
+import android.content.Intent;
 import android.graphics.Path;
 import android.graphics.Rect;
 import android.os.Handler;
@@ -32,6 +34,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     private final Handler loopHandler = new Handler(Looper.getMainLooper());
     private long lastTapTime = 0;
     private long adStartTime = 0;
+    private long lastProgressTime = 0;
 
     // Real math operations (excluding simple '/' which represents progress fractions like 0/25)
     private final Pattern mathPattern = Pattern.compile("(\\d+)\\s*([\\+\\-\\×\\*]|÷)\\s*(\\d+)");
@@ -57,8 +60,32 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         currentStatus = "Scanning...";
         Log.i(TAG, "startSolving called! instance = " + instance);
         if (instance != null) {
+            instance.lastProgressTime = System.currentTimeMillis();
+            instance.adStartTime = 0;
             instance.loopHandler.removeCallbacks(instance.solveLoopRunnable);
             instance.loopHandler.post(instance.solveLoopRunnable);
+        }
+    }
+
+    public static void restartQuizApp() {
+        Log.i(TAG, "restartQuizApp called.");
+        Context ctx = (instance != null) ? instance : null;
+        if (ctx != null) {
+            try {
+                Intent intent = ctx.getPackageManager().getLaunchIntentForPackage("com.quiz.earn.money.game");
+                if (intent != null) {
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                    ctx.startActivity(intent);
+                    Log.i(TAG, "Quiz & Earn relaunched cleanly.");
+                    if (instance != null) {
+                        instance.lastProgressTime = System.currentTimeMillis();
+                        instance.adStartTime = 0;
+                    }
+                    currentStatus = "App Restarted";
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to restart Quiz & Earn", e);
+            }
         }
     }
 
@@ -101,6 +128,15 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             return;
         }
 
+        // Auto-restart if stuck with no ads/questions for > 35 seconds
+        if (lastProgressTime > 0 && now - lastProgressTime > 35000) {
+            Log.w(TAG, "Ad stall or app freeze detected (>35s). Auto-restarting Quiz & Earn...");
+            currentStatus = "Stall: Restarting...";
+            restartQuizApp();
+            lastProgressTime = now;
+            return;
+        }
+
         AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root == null) return;
 
@@ -112,7 +148,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             if (pkg.contains("vending")) {
                 Log.i(TAG, "Play Store opened by ad! Pressing Back immediately to return...");
                 performGlobalAction(GLOBAL_ACTION_BACK);
-                lastTapTime = System.currentTimeMillis();
+                lastTapTime = now;
+                lastProgressTime = now;
                 currentStatus = "Returning from Store...";
                 adStartTime = 0;
                 return;
@@ -123,45 +160,10 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
             if (allNodes.isEmpty()) return;
 
-            // 1. Check for Ad Close / Skip / Dismiss buttons across Text, Content Description, and Resource ID
-            for (NodeItem item : allNodes) {
-                String t = item.text.toLowerCase();
-                String d = item.contentDesc.toLowerCase();
-                String id = item.resId.toLowerCase();
-
-                boolean isClose = false;
-
-                // Resource ID match (e.g. close-or-skip-button, btn_close, close_button, skip_button, dismiss)
-                if (id.contains("close") || id.contains("skip") || id.contains("dismiss")) {
-                    isClose = true;
-                }
-
-                // Content description match (e.g. "close button", "close", "skip", "dismiss")
-                if (d.contains("close") || d.contains("skip") || d.contains("dismiss")) {
-                    isClose = true;
-                }
-
-                // Text match (e.g. "close", "skip", "dismiss", "✕", "✖", "x", "no thanks", "not now", "reward granted")
-                if (t.contains("close") || t.contains("skip") || t.contains("dismiss") || 
-                    t.equals("✕") || t.equals("✖") || t.equals("x") || 
-                    t.contains("no thanks") || t.contains("not now") || t.contains("reward granted")) {
-                    if (!numPattern.matcher(item.text).matches()) {
-                        isClose = true;
-                    }
-                }
-
-                if (isClose) {
-                    Log.i(TAG, "FOUND AD CLOSE BUTTON: text='" + item.text + "', desc='" + item.contentDesc + "', resId='" + item.resId + "' at " + item.rect);
-                    tapNode(item);
-                    lastTapTime = System.currentTimeMillis();
-                    currentStatus = "Closing Ad...";
-                    adStartTime = 0;
-                    return;
-                }
-            }
-
-            // 2. Active Ad Detection & Multi-Stage Auto-Dismissal (Moloco, Liftoff, Unity, AppLovin, AdMob, etc.)
+            // 1. Active Ad Detection & Reward-Safe Dismissal
             boolean isAd = false;
+            boolean rewardGranted = false;
+
             if (pkg.contains("gms.ads") || pkg.contains("admob")) {
                 isAd = true;
             } else {
@@ -174,13 +176,20 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                         t.contains("will be taken to the website") || t.contains("install now") ||
                         t.contains("play store") || t.contains("advertisement") ||
                         t.contains("reward in") || t.contains("video ends in") ||
+                        t.contains("reward will be") || t.contains("you can skip in") ||
                         d.contains("liftoff") || d.contains("privacy") || d.contains("ad") ||
                         id.contains("adjs") || id.contains("moloco") || id.contains("endcard") ||
                         id.contains("watermark") || id.contains("advert") || id.contains("unity3d") ||
                         id.contains("applovin") || id.contains("mbridge") || id.contains("tt_") ||
+                        id.contains("close-or-skip-button") ||
                         t.contains("moloco") || t.contains("liftoff")) {
                         isAd = true;
-                        break;
+                    }
+
+                    if (t.contains("reward granted") || d.contains("reward granted") || 
+                        t.contains("reward credited") || t.contains("reward in 0") || 
+                        t.contains("video ends in 0") || t.contains("you can close")) {
+                        rewardGranted = true;
                     }
                 }
             }
@@ -188,22 +197,63 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             if (isAd) {
                 if (adStartTime == 0) adStartTime = now;
                 long adElapsed = (now - adStartTime) / 1000;
-                currentStatus = "Ad Playing (" + adElapsed + "s)...";
 
-                // After 3s: probe top-right corner where close buttons universally sit (e.g. 993, 197)
-                if (adElapsed >= 3 && adElapsed % 2 == 1) {
-                    int screenWidth = getResources().getDisplayMetrics().widthPixels;
-                    int tapX = (screenWidth > 0) ? (screenWidth - 85) : 995;
-                    Log.i(TAG, "Ad active for " + adElapsed + "s. Probing top-right close position at (" + tapX + ", 195)...");
-                    tapCoordinates(tapX, 195);
-                    lastTapTime = System.currentTimeMillis();
+                // PHASE 1: REWARD PROTECTION (0 - 15 seconds)
+                // Rewarded video ads MUST play for at least 15s to credit the gem!
+                if (!rewardGranted && adElapsed < 15) {
+                    currentStatus = "Watching Ad (" + (15 - adElapsed) + "s)...";
+                    return;
                 }
 
-                // After 5s: send Back key to close ad and return to quiz
-                if (adElapsed >= 5) {
+                // PHASE 2: ACTIVE CLOSE HUNT (15+ seconds or reward granted)
+                currentStatus = "Closing Ad (" + adElapsed + "s)...";
+
+                // A. Look for genuine Close / Skip / Dismiss buttons
+                for (NodeItem item : allNodes) {
+                    String t = item.text.toLowerCase();
+                    String d = item.contentDesc.toLowerCase();
+                    String id = item.resId.toLowerCase();
+
+                    boolean isClose = false;
+                    if (id.contains("close") || id.contains("skip") || id.contains("dismiss")) {
+                        isClose = true;
+                    }
+                    if (d.contains("close") || d.contains("skip") || d.contains("dismiss")) {
+                        isClose = true;
+                    }
+                    if (t.contains("close") || t.contains("skip") || t.contains("dismiss") || 
+                        t.equals("✕") || t.equals("✖") || t.equals("x") || 
+                        t.contains("no thanks") || t.contains("not now") || t.contains("reward granted")) {
+                        if (!numPattern.matcher(item.text).matches()) {
+                            isClose = true;
+                        }
+                    }
+
+                    if (isClose) {
+                        Log.i(TAG, "Found genuine Ad Close button after " + adElapsed + "s: text='" + item.text + "', id='" + item.resId + "' at " + item.rect);
+                        tapNode(item);
+                        lastTapTime = now;
+                        lastProgressTime = now;
+                        adStartTime = 0;
+                        return;
+                    }
+                }
+
+                // B. Endcard Probing (only after 20+ seconds)
+                if (adElapsed >= 20 && adElapsed % 3 == 0) {
+                    int screenWidth = getResources().getDisplayMetrics().widthPixels;
+                    int tapX = (screenWidth > 0) ? (screenWidth - 85) : 995;
+                    Log.i(TAG, "Ad active for " + adElapsed + "s. Probing top-right corner at (" + tapX + ", 195)...");
+                    tapCoordinates(tapX, 195);
+                    lastTapTime = now;
+                }
+
+                // C. Safety Back Key (only after 32+ seconds)
+                if (adElapsed >= 32) {
                     Log.i(TAG, "Ad active for " + adElapsed + "s. Pressing Back to return to Quiz...");
                     performGlobalAction(GLOBAL_ACTION_BACK);
-                    lastTapTime = System.currentTimeMillis();
+                    lastTapTime = now;
+                    lastProgressTime = now;
                     adStartTime = 0;
                     return;
                 }
@@ -274,17 +324,18 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 String d = item.contentDesc.trim().toLowerCase();
                 String combined = (t + " " + d).trim();
                 if (combined.contains("collect gem") || combined.contains("collect reward") || combined.contains("collect coins") || 
-                    t.equals("collect") || t.equals("claim") || t.equals("claim now")) {
+                    t.equals("collect") || t.equals("claim") || t.equals("claim now") || t.equals("quiz")) {
                     Log.i(TAG, "Found Collect/Claim button: " + item.text + " at " + item.rect);
                     tapNode(item);
-                    lastTapTime = System.currentTimeMillis();
+                    lastTapTime = now;
+                    lastProgressTime = now;
                     currentStatus = "Collecting Gem...";
                     adStartTime = 0;
                     return;
                 }
             }
 
-            // 4. Number Matching / Captcha Quiz (Duplicate 3-6 digit detection)
+            // 5. Number Matching / Captcha Quiz (Duplicate 3-6 digit detection)
             Map<String, List<NodeItem>> numGroups = new HashMap<>();
             for (NodeItem item : allNodes) {
                 if (numPattern.matcher(item.text).matches()) {
@@ -317,13 +368,14 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     tapNode(answerButton);
 
                     solvedCount++;
-                    lastTapTime = System.currentTimeMillis();
+                    lastTapTime = now;
+                    lastProgressTime = now;
                     currentStatus = "Solved #" + solvedCount + " (" + entry.getKey() + ")";
                     return;
                 }
             }
 
-            // 5. Math Quiz (e.g. 12 + 5 = ?)
+            // 6. Math Quiz (e.g. 12 + 5 = ?)
             for (NodeItem item : allNodes) {
                 if (item.text.contains("/25") || item.text.contains("/ 25") || item.text.contains("/50") || item.text.contains("/2")) {
                     continue;
@@ -357,7 +409,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                                 Log.i(TAG, "Tapping answer button: " + ansStr + " at " + opt.rect);
                                 tapNode(opt);
                                 solvedCount++;
-                                lastTapTime = System.currentTimeMillis();
+                                lastTapTime = now;
+                                lastProgressTime = now;
                                 currentStatus = "Solved #" + solvedCount + " (" + ansStr + ")";
                                 return;
                             }
@@ -376,6 +429,28 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     private void collectAllNodes(AccessibilityNodeInfo node, List<NodeItem> list) {
         if (node == null) return;
 
+        CharSequence pkgSeq = node.getPackageName();
+        String nodePkg = (pkgSeq != null) ? pkgSeq.toString() : "";
+
+        // STRICT NOTIFICATION & FOREIGN APP FILTER
+        if (nodePkg.equals("com.android.systemui") || 
+            nodePkg.equals("com.android.launcher") || 
+            nodePkg.contains("launcher") || 
+            (!nodePkg.isEmpty() && !nodePkg.equals("com.quiz.earn.money.game") && 
+             !nodePkg.contains("gms.ads") && !nodePkg.contains("admob") && 
+             !nodePkg.contains("vending") && !nodePkg.contains("webview") && 
+             !nodePkg.contains("quizearn.assistant"))) {
+            return;
+        }
+
+        Rect rect = new Rect();
+        node.getBoundsInScreen(rect);
+
+        // Filter out status bar area (top 110px where clock & notification popups reside)
+        if (rect.bottom <= 110) {
+            return;
+        }
+
         CharSequence textSeq = node.getText();
         CharSequence descSeq = node.getContentDescription();
         CharSequence idSeq = node.getViewIdResourceName();
@@ -385,9 +460,6 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
         // Effective text falls back to content description
         String effectiveText = !text.isEmpty() ? text : desc;
-
-        Rect rect = new Rect();
-        node.getBoundsInScreen(rect);
 
         if ((!effectiveText.isEmpty() || !resId.isEmpty()) && !rect.isEmpty()) {
             list.add(new NodeItem(node, effectiveText, desc, resId, rect));
