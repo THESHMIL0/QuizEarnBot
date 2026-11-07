@@ -160,12 +160,44 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
             if (allNodes.isEmpty()) return;
 
-            int screenWidth = getResources().getDisplayMetrics().widthPixels;
+            // 1. Detect Ad State & Countdowns (Ad 1 of 2, Ad 2 of 2, etc.)
+            boolean hasAdCountdown = false;
+            boolean isAd = false;
+            if (pkg.contains("gms.ads") || pkg.contains("admob")) {
+                isAd = true;
+            }
 
-            // 1. INSTANT SKIP ARROW CHECK (Tapped the fraction of a second it appears!)
             for (NodeItem item : allNodes) {
-                if (isSkipElement(item, screenWidth)) {
-                    Log.i(TAG, "⚡ INSTANT SKIP ARROW TAP: text='" + item.text + "', desc='" + item.contentDesc + "', id='" + item.resId + "' at " + item.rect);
+                String t = item.text.toLowerCase();
+                String d = item.contentDesc.toLowerCase();
+                String id = item.resId.toLowerCase();
+
+                if (t.contains("ad 1 of") || t.contains("ad 2 of") || t.contains("ad 1 of 3") || 
+                    t.contains("ad 2 of 3") || t.contains("ad 3 of 3") ||
+                    t.contains("reward in") || t.contains("video ends in") || 
+                    t.contains("video will end in") || t.contains("seconds after") || 
+                    d.contains("ad 1 of") || d.contains("ad 2 of") || d.contains("reward in")) {
+                    hasAdCountdown = true;
+                    isAd = true;
+                }
+
+                if (!isAd && (t.startsWith("ad ") || t.contains("seconds after") || 
+                    t.contains("will be taken to the website") || t.contains("install now") ||
+                    t.contains("play store") || t.contains("advertisement") ||
+                    t.contains("reward will be") || t.contains("you can skip in") ||
+                    d.contains("liftoff") || id.contains("adjs") || id.contains("moloco") || 
+                    id.contains("endcard") || id.contains("watermark") || id.contains("advert") || 
+                    id.contains("unity3d") || id.contains("applovin") || id.contains("mbridge") || 
+                    id.contains("tt_") || id.contains("close-or-skip-button") ||
+                    t.contains("moloco") || t.contains("liftoff"))) {
+                    isAd = true;
+                }
+            }
+
+            // 2. OFFICIAL SKIP ARROW CHECK (Tapped as soon as network provides Skip)
+            for (NodeItem item : allNodes) {
+                if (isSkipElement(item)) {
+                    Log.i(TAG, "⚡ OFFICIAL SKIP ARROW TAP: text='" + item.text + "', desc='" + item.contentDesc + "', id='" + item.resId + "' at " + item.rect);
                     tapNode(item);
                     lastTapTime = now;
                     lastProgressTime = now;
@@ -174,10 +206,10 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
-            // 2. INSTANT CLOSE BUTTON CHECK (Tapped immediately when visible!)
+            // 3. OFFICIAL CLOSE BUTTON CHECK (Tapped only when video is completely finished!)
             for (NodeItem item : allNodes) {
-                if (isCloseElement(item)) {
-                    Log.i(TAG, "⚡ INSTANT CLOSE BUTTON TAP: text='" + item.text + "', desc='" + item.contentDesc + "', id='" + item.resId + "' at " + item.rect);
+                if (isCloseElement(item, hasAdCountdown)) {
+                    Log.i(TAG, "⚡ OFFICIAL CLOSE BUTTON TAP: text='" + item.text + "', desc='" + item.contentDesc + "', id='" + item.resId + "' at " + item.rect);
                     tapNode(item);
                     lastTapTime = now;
                     lastProgressTime = now;
@@ -187,55 +219,11 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
-            // 3. Active Ad Detection & Fallbacks
-            boolean isAd = false;
-            if (pkg.contains("gms.ads") || pkg.contains("admob")) {
-                isAd = true;
-            } else {
-                for (NodeItem item : allNodes) {
-                    String t = item.text.toLowerCase();
-                    String d = item.contentDesc.toLowerCase();
-                    String id = item.resId.toLowerCase();
-
-                    if (t.startsWith("ad ") || t.contains("seconds after") || 
-                        t.contains("will be taken to the website") || t.contains("install now") ||
-                        t.contains("play store") || t.contains("advertisement") ||
-                        t.contains("reward in") || t.contains("video ends in") ||
-                        t.contains("reward will be") || t.contains("you can skip in") ||
-                        d.contains("liftoff") || d.contains("privacy") || d.contains("ad") ||
-                        id.contains("adjs") || id.contains("moloco") || id.contains("endcard") ||
-                        id.contains("watermark") || id.contains("advert") || id.contains("unity3d") ||
-                        id.contains("applovin") || id.contains("mbridge") || id.contains("tt_") ||
-                        id.contains("close-or-skip-button") ||
-                        t.contains("moloco") || t.contains("liftoff")) {
-                        isAd = true;
-                        break;
-                    }
-                }
-            }
-
+            // 4. Safe Ad Watching: Never forcefully remove ads with Back key or blind taps!
             if (isAd) {
                 if (adStartTime == 0) adStartTime = now;
                 long adElapsed = (now - adStartTime) / 1000;
                 currentStatus = "Ad Playing (" + adElapsed + "s)...";
-
-                // Endcard Corner Probe (after 16s)
-                if (adElapsed >= 16 && adElapsed % 2 == 0) {
-                    int tapX = (screenWidth > 0) ? (screenWidth - 85) : 995;
-                    Log.i(TAG, "Ad active for " + adElapsed + "s. Probing top-right corner at (" + tapX + ", 195)...");
-                    tapCoordinates(tapX, 195);
-                    lastTapTime = now;
-                }
-
-                // Safety Back Key (after 26s if still stuck on ad screen)
-                if (adElapsed >= 26) {
-                    Log.i(TAG, "Ad active for " + adElapsed + "s. Pressing Back to return to Quiz...");
-                    performGlobalAction(GLOBAL_ACTION_BACK);
-                    lastTapTime = now;
-                    lastProgressTime = now;
-                    adStartTime = 0;
-                    return;
-                }
                 return;
             } else {
                 adStartTime = 0;
@@ -299,6 +287,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
             // 4. Check for "Collect Gem", "Claim", or Reward collection buttons
             for (NodeItem item : allNodes) {
+                if (isForbiddenElement(item)) continue;
                 String t = item.text.trim().toLowerCase();
                 String d = item.contentDesc.trim().toLowerCase();
                 String combined = (t + " " + d).trim();
@@ -494,47 +483,44 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         tapCoordinates(cx, cy);
     }
 
-    private boolean isSkipElement(NodeItem item, int screenWidth) {
-        String t = item.text.toLowerCase();
-        String d = item.contentDesc.toLowerCase();
-        String id = item.resId.toLowerCase();
+    // Global filter to NEVER touch sound/mute, install, privacy, or info buttons
+    private boolean isForbiddenElement(NodeItem item) {
+        String t = item.text.toLowerCase().trim();
+        String d = item.contentDesc.toLowerCase().trim();
+        String id = item.resId.toLowerCase().trim();
+        String combined = (t + " " + d + " " + id);
 
-        if (numPattern.matcher(item.text).matches()) {
-            return false;
-        }
-
-        if (t.contains("skip") || d.contains("skip")) {
+        // Sound / Audio / Mute / Volume / Music
+        if (combined.contains("sound") || combined.contains("mute") || 
+            combined.contains("unmute") || combined.contains("volume") || 
+            combined.contains("audio") || combined.contains("speaker") || 
+            combined.contains("music") || id.contains("sound") || 
+            id.contains("mute") || id.contains("volume") || id.contains("audio")) {
             return true;
         }
 
-        if (t.contains(">>") || t.contains("\u203A\u203A") || t.contains("\u00BB") || 
-            t.contains(">|") || t.contains("\u25B6\u25B6") || 
-            t.equals(">") || t.equals("\u203A") || t.equals("\u2192") || 
-            d.contains(">>") || d.contains("arrow") || d.contains("fast forward") || d.contains("next")) {
+        // Install / Download / CTA
+        if (combined.contains("install") || combined.contains("download") || 
+            combined.contains("get app") || combined.contains("play store") || 
+            id.contains("install") || id.contains("download") || id.contains("cta")) {
             return true;
         }
 
-        if (id.contains("skip") || id.contains("next") || id.contains("forward") || id.contains("close-or-skip")) {
+        // Info / AdChoices / Privacy / Report
+        if (combined.contains("adchoice") || combined.contains("privacy") || 
+            combined.contains("about this ad") || combined.contains("why this ad") ||
+            id.contains("adchoice") || id.contains("privacy") || id.contains("info")) {
             return true;
-        }
-
-        int cx = item.rect.centerX();
-        int cy = item.rect.centerY();
-        int w = item.rect.width();
-        int h = item.rect.height();
-
-        if (cy > 0 && cy < 350 && w >= 25 && w <= 260 && h >= 25 && h <= 260) {
-            if (cx > (screenWidth - 250) || cx < 250) {
-                if (id.contains("button") || id.contains("btn") || id.contains("arrow") || id.contains("icon")) {
-                    return true;
-                }
-            }
         }
 
         return false;
     }
 
-    private boolean isCloseElement(NodeItem item) {
+    private boolean isSkipElement(NodeItem item) {
+        if (isForbiddenElement(item)) {
+            return false;
+        }
+
         String t = item.text.toLowerCase().trim();
         String d = item.contentDesc.toLowerCase().trim();
         String id = item.resId.toLowerCase().trim();
@@ -543,35 +529,85 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             return false;
         }
 
-        // Top-left Google AdMob / YouTube countdown circle indicator ("Ad 1 of 2", "Ad 2 of 2" labeled "Close Ad")
-        // NEVER treat this as an actual close button! Tapping it prematurely cancels the video and loses the gem!
-        if (t.contains("ad 1 of") || t.contains("ad 2 of") || d.contains("ad 1 of") || d.contains("ad 2 of")) {
+        // Explicit skip text or description
+        if (t.contains("skip") || d.contains("skip")) {
+            return true;
+        }
+
+        // Visible skip arrows: >>, ››, », >|, ▶▶
+        if (t.contains(">>") || t.contains("\u203A\u203A") || t.contains("\u00BB") || 
+            t.contains(">|") || t.contains("\u25B6\u25B6") || 
+            d.contains(">>") || d.contains("\u203A\u203A") || d.contains("\u00BB") || 
+            d.contains("fast forward")) {
+            return true;
+        }
+
+        // Only exact skip resource IDs
+        if (id.contains("skip_button") || id.contains("btn_skip") || 
+            id.contains("close-or-skip-button") || id.contains("skip_ad")) {
+            return true;
+        }
+
+        return false;
+    }
+
+    private boolean isCloseElement(NodeItem item, boolean hasAdCountdown) {
+        if (isForbiddenElement(item)) {
+            return false;
+        }
+
+        String t = item.text.toLowerCase().trim();
+        String d = item.contentDesc.toLowerCase().trim();
+        String id = item.resId.toLowerCase().trim();
+
+        if (numPattern.matcher(item.text).matches()) {
+            return false;
+        }
+
+        // Multi-ad countdown indicator ("Ad 1 of 2", "Ad 2 of 2", etc.)
+        // NEVER treat as close button!
+        if (t.contains("ad 1 of") || t.contains("ad 2 of") || t.contains("ad 1 of 3") || 
+            t.contains("ad 2 of 3") || t.contains("ad 3 of 3") ||
+            d.contains("ad 1 of") || d.contains("ad 2 of") || d.contains("ad 1 of 3") || 
+            d.contains("ad 2 of 3") || d.contains("ad 3 of 3")) {
             return false;
         }
         if ((t.contains("close ad") || d.contains("close ad")) && item.rect.centerX() < 350) {
             return false;
         }
 
-        if (id.contains("close") || id.contains("dismiss") || id.contains("tt_video_ad_close") || id.contains("iv_close") || id.contains("btn_close")) {
-            return true;
-        }
-
-        if (d.contains("close") || d.contains("dismiss")) {
-            if (d.contains("close ad") && item.rect.centerX() < 350) {
+        // While an ad countdown is actively showing, DO NOT tap any generic "Close Ad"
+        // so we don't prematurely kill the ad before all videos in the sequence finish.
+        if (hasAdCountdown) {
+            if (t.contains("close ad") || d.contains("close ad")) {
                 return false;
             }
+        }
+
+        // Explicit Close resource IDs
+        if (id.contains("close_button") || id.contains("btn_close") || id.contains("iv_close") || 
+            id.contains("tt_video_ad_close") || id.contains("close_ad_btn")) {
             return true;
         }
 
-        if (t.equals("\u2715") || t.equals("\u2716") || t.equalsIgnoreCase("x") || 
-            t.contains("no thanks") || t.contains("not now") || t.contains("reward granted")) {
+        // Explicit Close text symbols (✕, ✖, ⨯, ×, X)
+        if (t.equals("\u2715") || t.equals("\u2716") || t.equals("\u2A2F") || 
+            t.equals("\u00D7") || t.equalsIgnoreCase("x")) {
             return true;
         }
 
-        if (t.contains("close") || t.contains("dismiss")) {
-            if (t.contains("close ad") && item.rect.centerX() < 350) {
-                return false;
-            }
+        // Content description strictly "close" or "dismiss" or "close button"
+        if (d.equals("close") || d.equals("dismiss") || d.equals("close button") || d.equals("close video")) {
+            return true;
+        }
+
+        // Post-reward claims
+        if (t.contains("reward granted") || t.contains("reward credited") || 
+            t.contains("no thanks") || t.contains("not now")) {
+            return true;
+        }
+
+        if ((t.equals("close") || t.equals("dismiss")) && item.rect.centerX() > 300) {
             return true;
         }
 
