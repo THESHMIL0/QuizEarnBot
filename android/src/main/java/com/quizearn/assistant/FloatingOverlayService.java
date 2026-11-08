@@ -90,7 +90,15 @@ public class FloatingOverlayService extends Service {
                 QuizEarnAccessibilityService.restartQuizApp();
             }
         }
-        return START_STICKY;
+        return START_NOT_STICKY;
+    }
+
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        super.onTaskRemoved(rootIntent);
+        Log.i(TAG, "App cleared from background / recent tasks: stopping overlay service cleanly.");
+        QuizEarnAccessibilityService.stopSolving();
+        stopSelf();
     }
 
     @Override
