@@ -6,8 +6,17 @@ import android.content.Context;
 import android.content.Intent;
 import android.graphics.Path;
 import android.graphics.Rect;
+import android.media.AudioAttributes;
+import android.media.AudioManager;
+import android.media.Ringtone;
+import android.media.RingtoneManager;
+import android.media.ToneGenerator;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
 import android.util.Log;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
@@ -29,6 +38,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     public static volatile int solvedCount = 0;
     public static volatile int liveGems = -1;
     public static volatile String currentStatus = "Standby";
+    private static boolean hasAlerted25Gems = false;
 
     public static QuizEarnAccessibilityService instance = null;
 
@@ -58,6 +68,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
     public static void startSolving() {
         isRunning = true;
+        hasAlerted25Gems = false;
         currentStatus = "Scanning...";
         Log.i(TAG, "startSolving called! instance = " + instance);
         if (instance != null) {
@@ -316,6 +327,10 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             if (is25Gems && !hasCollectGem) {
                 Log.i(TAG, "25 GEMS TARGET REACHED! Milestone achieved (" + liveGems + "/25). Pausing bot for Super Offer claim.");
                 currentStatus = "25 GEMS HIT! (1000 Coins)";
+                if (!hasAlerted25Gems) {
+                    hasAlerted25Gems = true;
+                    play25GemsMilestoneAlert();
+                }
                 stopSolving();
                 return;
             }
@@ -663,6 +678,55 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             this.resId = resId;
             this.rect = rect;
         }
+    }
+
+    private void play25GemsMilestoneAlert() {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    // 1. Triumphant vibration pattern
+                    Vibrator v = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+                    if (v != null && v.hasVibrator()) {
+                        long[] pattern = {0, 350, 150, 350, 150, 600};
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            v.vibrate(VibrationEffect.createWaveform(pattern, -1));
+                        } else {
+                            v.vibrate(pattern, -1);
+                        }
+                    }
+                } catch (Exception ignored) {}
+
+                try {
+                    // 2. Play default notification / alarm ringtone loud
+                    Uri alertUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+                    if (alertUri == null) {
+                        alertUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
+                    }
+                    if (alertUri != null) {
+                        Ringtone r = RingtoneManager.getRingtone(getApplicationContext(), alertUri);
+                        if (r != null) {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                                AudioAttributes aa = new AudioAttributes.Builder()
+                                    .setUsage(AudioAttributes.USAGE_ALARM)
+                                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                                    .build();
+                                r.setAudioAttributes(aa);
+                            }
+                            r.play();
+                        }
+                    }
+                } catch (Exception ignored) {}
+
+                try {
+                    // 3. Play loud ascending tone chime via ToneGenerator as foolproof audible fallback
+                    ToneGenerator tg = new ToneGenerator(AudioManager.STREAM_ALARM, 100);
+                    tg.startTone(ToneGenerator.TONE_PROP_BEEP2, 300);
+                    try { Thread.sleep(350); } catch (InterruptedException ignored) {}
+                    tg.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 600);
+                } catch (Exception ignored) {}
+            }
+        }).start();
     }
 
     @Override

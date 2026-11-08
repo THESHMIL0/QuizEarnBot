@@ -1301,6 +1301,23 @@ public class QuizEarnApp : Form
         try { System.Media.SystemSounds.Beep.Play(); } catch {}
     }
 
+    private void Play25GemsMilestoneAlert()
+    {
+        new Thread(new ThreadStart(delegate {
+            try
+            {
+                SilenceAudio(false);
+                Console.Beep(987, 200);
+                Thread.Sleep(60);
+                Console.Beep(1318, 250);
+                Thread.Sleep(60);
+                Console.Beep(1760, 450);
+                System.Media.SystemSounds.Exclamation.Play();
+            }
+            catch {}
+        })).Start();
+    }
+
     private void BtnToggle_Click(object sender, EventArgs e)
     {
         if (!isRunning)
@@ -4341,7 +4358,7 @@ public class QuizEarnApp : Form
                         }));
                     }
 
-                    PlayTimerNoise();
+                    Play25GemsMilestoneAlert();
 
                     while (isRunning)
                     {
