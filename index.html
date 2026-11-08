@@ -9,7 +9,7 @@
     
     <style>
         :root {
-            --bg: #090A0F;
+            --bg: #08090D;
             --bg-subtle: #0F1218;
             --border: #1E232E;
             --border-hover: #333C4D;
@@ -19,6 +19,7 @@
             --accent: #10B981;
             --accent-hover: #059669;
             --blue: #38BDF8;
+            --container-max: 1260px;
         }
 
         * {
@@ -45,20 +46,20 @@
         }
 
         .container {
-            max-width: 900px;
+            max-width: var(--container-max);
             margin: 0 auto;
-            padding: 0 24px;
+            padding: 0 32px;
         }
 
         /* Header */
         header {
             border-bottom: 1px solid var(--border);
-            padding: 20px 0;
-            background: rgba(9, 10, 15, 0.95);
+            padding: 18px 0;
+            background: rgba(8, 9, 13, 0.95);
             position: sticky;
             top: 0;
             z-index: 50;
-            backdrop-filter: blur(8px);
+            backdrop-filter: blur(10px);
         }
 
         .nav-row {
@@ -87,7 +88,7 @@
 
         .version-tag {
             font-size: 11px;
-            padding: 2px 7px;
+            padding: 2px 8px;
             border-radius: 4px;
             background: var(--bg-subtle);
             border: 1px solid var(--border);
@@ -98,7 +99,7 @@
         .nav-links {
             display: flex;
             align-items: center;
-            gap: 24px;
+            gap: 28px;
             font-size: 14px;
             color: var(--text-muted);
         }
@@ -109,12 +110,26 @@
 
         /* Hero */
         .hero {
-            padding: 64px 0 48px;
+            padding: 64px 0 56px;
             border-bottom: 1px solid var(--border);
         }
 
+        .hero-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 40px;
+            align-items: center;
+        }
+
+        @media (min-width: 960px) {
+            .hero-grid {
+                grid-template-columns: 1.2fr 0.8fr;
+                gap: 56px;
+            }
+        }
+
         .hero h1 {
-            font-size: clamp(32px, 5vw, 46px);
+            font-size: clamp(34px, 4.5vw, 52px);
             font-weight: 800;
             letter-spacing: -0.03em;
             line-height: 1.15;
@@ -124,9 +139,9 @@
         .hero p {
             font-size: 17px;
             color: var(--text-muted);
-            max-width: 640px;
+            max-width: 620px;
             margin-bottom: 32px;
-            line-height: 1.5;
+            line-height: 1.55;
         }
 
         .btn-group {
@@ -140,7 +155,7 @@
             display: inline-flex;
             align-items: center;
             gap: 8px;
-            padding: 11px 20px;
+            padding: 11px 22px;
             border-radius: 8px;
             font-size: 14px;
             font-weight: 600;
@@ -179,49 +194,96 @@
             color: var(--text-dim);
         }
 
+        /* Hero Right Column: Clean Spec Sheet */
+        .hero-spec {
+            background: var(--bg-subtle);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px 26px;
+        }
+
+        .spec-title {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-dim);
+            font-weight: 700;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .spec-rows {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            font-size: 13px;
+        }
+
+        .spec-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .spec-key {
+            color: var(--text-muted);
+        }
+
+        .spec-val {
+            color: var(--text);
+            font-weight: 600;
+            text-align: right;
+        }
+
+        .spec-val.accent {
+            color: var(--accent);
+        }
+
         /* Section layout */
         section {
-            padding: 48px 0;
+            padding: 56px 0;
             border-bottom: 1px solid var(--border);
         }
 
         .section-header {
-            margin-bottom: 28px;
+            margin-bottom: 32px;
         }
 
         .section-header h2 {
-            font-size: 20px;
+            font-size: 22px;
             font-weight: 700;
             letter-spacing: -0.01em;
             margin-bottom: 6px;
         }
 
         .section-header p {
-            font-size: 14px;
+            font-size: 14.5px;
             color: var(--text-muted);
         }
 
-        /* Clean 2-Column Grid (No nested cards) */
+        /* 2-Column Overview (Wide) */
         .columns {
             display: grid;
             grid-template-columns: 1fr;
             gap: 36px;
         }
 
-        @media (min-width: 768px) {
+        @media (min-width: 820px) {
             .columns {
                 grid-template-columns: 1fr 1fr;
-                gap: 48px;
+                gap: 56px;
             }
         }
 
         .col h3 {
-            font-size: 16px;
+            font-size: 17px;
             font-weight: 700;
-            margin-bottom: 14px;
+            margin-bottom: 16px;
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 10px;
             color: var(--text);
         }
 
@@ -235,8 +297,8 @@
         .item-list li {
             font-size: 14px;
             color: var(--text-muted);
-            line-height: 1.5;
-            padding-left: 14px;
+            line-height: 1.55;
+            padding-left: 16px;
             position: relative;
         }
 
@@ -252,48 +314,57 @@
             font-weight: 600;
         }
 
-        /* Step List (Clean table-like style, no heavy boxes) */
-        .step-list {
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
+        /* BlueStacks Steps (3 Columns Desktop) */
+        .steps-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 24px;
         }
 
-        .step-row {
-            display: flex;
-            gap: 20px;
-            align-items: flex-start;
+        @media (min-width: 860px) {
+            .steps-grid {
+                grid-template-columns: repeat(3, 1fr);
+                gap: 28px;
+            }
+        }
+
+        .step-item {
+            background: var(--bg-subtle);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 24px 22px;
         }
 
         .step-index {
-            font-size: 12px;
+            font-size: 11px;
             font-weight: 700;
             color: var(--accent);
-            padding: 4px 8px;
+            padding: 3px 8px;
             border-radius: 4px;
-            background: var(--bg-subtle);
-            border: 1px solid var(--border);
-            min-width: 32px;
-            text-align: center;
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.25);
+            display: inline-block;
+            margin-bottom: 12px;
         }
 
-        .step-content h3 {
-            font-size: 15px;
+        .step-item h3 {
+            font-size: 15.5px;
             font-weight: 700;
-            margin-bottom: 4px;
+            margin-bottom: 8px;
+            color: var(--text);
         }
 
-        .step-content p {
-            font-size: 14px;
+        .step-item p {
+            font-size: 13.5px;
             color: var(--text-muted);
-            line-height: 1.5;
+            line-height: 1.55;
         }
 
         code {
             font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
             font-size: 12.5px;
-            background: var(--bg-subtle);
-            border: 1px solid var(--border);
+            background: rgba(56, 189, 248, 0.08);
+            border: 1px solid rgba(56, 189, 248, 0.25);
             padding: 2px 6px;
             border-radius: 4px;
             color: var(--blue);
@@ -303,13 +374,13 @@
         .notice {
             background: var(--bg-subtle);
             border-left: 3px solid var(--accent);
-            padding: 16px 20px;
+            padding: 18px 24px;
             border-radius: 0 8px 8px 0;
-            margin: 24px 0 0;
+            margin-top: 32px;
         }
 
         .notice-title {
-            font-size: 13.5px;
+            font-size: 14px;
             font-weight: 700;
             color: var(--text);
             margin-bottom: 4px;
@@ -318,22 +389,30 @@
         .notice-desc {
             font-size: 13.5px;
             color: var(--text-muted);
-            line-height: 1.5;
+            line-height: 1.55;
         }
 
-        /* FAQ Clean Accordion */
-        .faq-list {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
+        /* FAQ 2-Column Grid */
+        .faq-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 16px;
+        }
+
+        @media (min-width: 820px) {
+            .faq-grid {
+                grid-template-columns: 1fr 1fr;
+                gap: 18px;
+            }
         }
 
         details {
             border: 1px solid var(--border);
             border-radius: 8px;
-            padding: 14px 18px;
+            padding: 16px 20px;
             background: var(--bg-subtle);
             cursor: pointer;
+            height: fit-content;
         }
 
         details summary {
@@ -343,6 +422,7 @@
             display: flex;
             align-items: center;
             justify-content: space-between;
+            gap: 12px;
         }
 
         details summary::-webkit-details-marker {
@@ -353,6 +433,7 @@
             content: "+";
             font-size: 16px;
             color: var(--text-dim);
+            flex-shrink: 0;
         }
 
         details[open] summary::after {
@@ -363,7 +444,7 @@
             margin-top: 10px;
             font-size: 13.5px;
             color: var(--text-muted);
-            line-height: 1.5;
+            line-height: 1.55;
         }
 
         /* Footer */
@@ -383,7 +464,7 @@
 
         .footer-links {
             display: flex;
-            gap: 20px;
+            gap: 24px;
         }
 
         .footer-links a:hover {
@@ -404,8 +485,8 @@
 
             <nav class="nav-links">
                 <a href="#downloads">Downloads</a>
+                <a href="#details">Platform Overview</a>
                 <a href="#bluestacks">BlueStacks Setup</a>
-                <a href="#details">Features</a>
                 <a href="#faq">FAQ</a>
                 <a href="https://github.com/THESHMIL0/QuizEarnBot" target="_blank">GitHub</a>
             </nav>
@@ -413,32 +494,67 @@
     </header>
 
     <main class="container">
-        <!-- Hero -->
+        <!-- Hero Section (Balanced 2-Column Desktop Grid) -->
         <section class="hero" id="downloads">
-            <h1>Quiz & Earn Automation</h1>
-            <p>
-                Fast, unattended math solving and reward collection. Operates via native Android Accessibility on physical phones or Windows via BlueStacks ADB.
-            </p>
+            <div class="hero-grid">
+                <div>
+                    <h1>Quiz & Earn Automation</h1>
+                    <p>
+                        Fast, unattended math solving and reward collection. Operates via native Android Accessibility on physical phones or Windows via BlueStacks ADB.
+                    </p>
 
-            <div class="btn-group">
-                <a id="btn-download-apk" href="QuizEarnBot.apk" download="QuizEarnBot.apk" class="btn btn-primary">
-                    <img src="app_icon.png" alt="" class="btn-logo">
-                    <span>Download Android APK</span>
-                </a>
-                <a id="btn-download-zip" href="QuizEarnBot_v2.6_Portable.zip" class="btn btn-secondary">
-                    <span>Windows Portable (.zip)</span>
-                </a>
-                <a id="btn-download-exe" href="QuizEarnBot.exe" class="btn btn-secondary">
-                    <span>Direct EXE</span>
-                </a>
-            </div>
+                    <div class="btn-group">
+                        <a id="btn-download-apk" href="QuizEarnBot.apk" download="QuizEarnBot.apk" class="btn btn-primary">
+                            <img src="app_icon.png" alt="" class="btn-logo">
+                            <span>Download Android APK</span>
+                        </a>
+                        <a id="btn-download-zip" href="QuizEarnBot_v2.6_Portable.zip" class="btn btn-secondary">
+                            <span>Windows Portable (.zip)</span>
+                        </a>
+                        <a id="btn-download-exe" href="QuizEarnBot.exe" class="btn btn-secondary">
+                            <span>Direct EXE</span>
+                        </a>
+                    </div>
 
-            <div class="meta-text mono">
-                Version <span id="hero-version-text">2.6</span> • Zero internet permissions • No root required • Open source
+                    <div class="meta-text mono">
+                        Version <span id="hero-version-text">2.6</span> • Zero internet permissions • No root required • Open source
+                    </div>
+                </div>
+
+                <!-- Right Column: Clean Spec Sheet -->
+                <div class="hero-spec mono">
+                    <div class="spec-title">System Specification</div>
+                    <div class="spec-rows">
+                        <div class="spec-row">
+                            <span class="spec-key">Architecture:</span>
+                            <span class="spec-val">Dual-Engine (Android + Windows)</span>
+                        </div>
+                        <div class="spec-row">
+                            <span class="spec-key">Solving Speed:</span>
+                            <span class="spec-val accent">0.05s In-Memory Gestures</span>
+                        </div>
+                        <div class="spec-row">
+                            <span class="spec-key">Milestone Guard:</span>
+                            <span class="spec-val">Auto-Pause on 25 Gems</span>
+                        </div>
+                        <div class="spec-row">
+                            <span class="spec-key">Emulator Target:</span>
+                            <span class="spec-val">BlueStacks 5 (Android 11 / 13)</span>
+                        </div>
+                        <div class="spec-row">
+                            <span class="spec-key">Network Policy:</span>
+                            <span class="spec-val accent">100% Offline (No Internet Req.)</span>
+                        </div>
+                        <div class="spec-row">
+                            <span class="spec-key">Privileges:</span>
+                            <span class="spec-val">Zero Root / Standard User</span>
+                        </div>
+                    </div>
+                </div>
             </div>
         </section>
 
-        <!-- Platform Capabilities -->
+        <!-- Platform Capabilities (Wide 2-Column) -->
         <section id="details">
             <div class="section-header">
                 <h2>Platform Overview</h2>
@@ -481,54 +597,48 @@
             </div>
         </section>
 
-        <!-- BlueStacks Configuration -->
+        <!-- BlueStacks Configuration (3 Horizontal Columns) -->
         <section id="bluestacks">
             <div class="section-header">
                 <h2>BlueStacks 5 Setup Guide</h2>
                 <p>Configure BlueStacks with modern Android and enable ADB for automated operation.</p>
             </div>
 
-            <div class="step-list">
-                <div class="step-row">
-                    <span class="step-index mono">01</span>
-                    <div class="step-content">
-                        <h3>Create Android 11 or Android 13 Instance</h3>
-                        <p>
-                            Open BlueStacks Multi-Instance Manager from your Desktop. Click <strong>+ Instance</strong> &rarr; <strong>Fresh instance</strong>, select <strong>Android 11</strong> or <strong>Android 13</strong>, assign 4 CPU cores and 4 GB RAM, set resolution to Portrait (900x1600), and click Create.
-                        </p>
-                    </div>
+            <div class="steps-grid">
+                <div class="step-item">
+                    <span class="step-index mono">STEP 01</span>
+                    <h3>Create Instance</h3>
+                    <p>
+                        Open BlueStacks Multi-Instance Manager. Click <strong>+ Instance</strong> &rarr; <strong>Fresh instance</strong>, choose <strong>Android 11</strong> or <strong>Android 13</strong>, assign 4 CPU cores and 4 GB RAM, set resolution to Portrait (900x1600), and click Create.
+                    </p>
                 </div>
 
-                <div class="step-row">
-                    <span class="step-index mono">02</span>
-                    <div class="step-content">
-                        <h3>Enable Android Debug Bridge (ADB)</h3>
-                        <p>
-                            Inside BlueStacks, open <strong>Settings (gear icon)</strong> &rarr; select the <strong>Advanced</strong> tab &rarr; toggle <strong>Android Debug Bridge (ADB)</strong> to <strong>ON</strong> &rarr; click <strong>Save changes</strong>. BlueStacks will listen on <code>127.0.0.1:5555</code>.
-                        </p>
-                    </div>
+                <div class="step-item">
+                    <span class="step-index mono">STEP 02</span>
+                    <h3>Enable ADB</h3>
+                    <p>
+                        Open BlueStacks <strong>Settings (gear icon)</strong> &rarr; select the <strong>Advanced</strong> tab &rarr; toggle <strong>Android Debug Bridge (ADB)</strong> to <strong>ON</strong> &rarr; click <strong>Save changes</strong>. BlueStacks will listen on <code>127.0.0.1:5555</code>.
+                    </p>
                 </div>
 
-                <div class="step-row">
-                    <span class="step-index mono">03</span>
-                    <div class="step-content">
-                        <h3>Run the Automation</h3>
-                        <p>
-                            <strong>Option A (Fastest):</strong> Drag and drop <code>QuizEarnBot.apk</code> into BlueStacks, enable Accessibility in Android Settings, and tap the floating icon.<br>
-                            <strong>Option B:</strong> Launch <code>QuizEarnBot.exe</code> on Windows; it connects to BlueStacks automatically and displays <code>READY</code>.
-                        </p>
-                    </div>
+                <div class="step-item">
+                    <span class="step-index mono">STEP 03</span>
+                    <h3>Run the Automation</h3>
+                    <p>
+                        <strong>Option A (Fastest):</strong> Drag and drop <code>QuizEarnBot.apk</code> into BlueStacks, enable Accessibility in Settings, and tap the floating icon.<br><br>
+                        <strong>Option B:</strong> Launch <code>QuizEarnBot.exe</code> on Windows; it auto-connects to BlueStacks with status <code>READY</code>.
+                    </p>
                 </div>
             </div>
         </section>
 
-        <!-- FAQ -->
+        <!-- FAQ (Wide 2-Column Grid) -->
         <section id="faq">
             <div class="section-header">
                 <h2>Frequently Asked Questions</h2>
             </div>
 
-            <div class="faq-list">
+            <div class="faq-grid">
                 <details>
                     <summary>Does the bot stop when it reaches 25 gems?</summary>
                     <p>
