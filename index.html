@@ -51,66 +51,9 @@
             padding: 0 32px;
         }
 
-        /* Header */
-        header {
-            border-bottom: 1px solid var(--border);
-            padding: 18px 0;
-            background: rgba(8, 9, 13, 0.95);
-            position: sticky;
-            top: 0;
-            z-index: 50;
-            backdrop-filter: blur(10px);
-        }
-
-        .nav-row {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-
-        .brand-link {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .brand-logo {
-            width: 32px;
-            height: 32px;
-            border-radius: 8px;
-        }
-
-        .brand-name {
-            font-size: 16px;
-            font-weight: 700;
-            letter-spacing: -0.01em;
-        }
-
-        .version-tag {
-            font-size: 11px;
-            padding: 2px 8px;
-            border-radius: 4px;
-            background: var(--bg-subtle);
-            border: 1px solid var(--border);
-            color: var(--accent);
-            margin-left: 8px;
-        }
-
-        .nav-links {
-            display: flex;
-            align-items: center;
-            gap: 28px;
-            font-size: 14px;
-            color: var(--text-muted);
-        }
-
-        .nav-links a:hover {
-            color: var(--text);
-        }
-
         /* Hero */
         .hero {
-            padding: 64px 0 56px;
+            padding: 72px 0 56px;
             border-bottom: 1px solid var(--border);
         }
 
@@ -473,25 +416,6 @@
     </style>
 </head>
 <body>
-
-    <!-- Header Navigation -->
-    <header>
-        <div class="container nav-row">
-            <a href="#" class="brand-link">
-                <img src="app_icon.png" alt="Quiz & Earn Bot Logo" class="brand-logo">
-                <span class="brand-name">Quiz & Earn Bot</span>
-                <span class="version-tag mono" id="nav-badge">v2.6</span>
-            </a>
-
-            <nav class="nav-links">
-                <a href="#downloads">Downloads</a>
-                <a href="#details">Platform Overview</a>
-                <a href="#bluestacks">BlueStacks Setup</a>
-                <a href="#faq">FAQ</a>
-                <a href="https://github.com/THESHMIL0/QuizEarnBot" target="_blank">GitHub</a>
-            </nav>
-        </div>
-    </header>
 
     <main class="container">
         <!-- Hero Section (Balanced 2-Column Desktop Grid) -->
