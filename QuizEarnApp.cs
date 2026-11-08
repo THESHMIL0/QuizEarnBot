@@ -168,6 +168,7 @@ public class QuizEarnApp : Form
     private int todayOffersClaimed = 0;
     private int totalOffersClaimed = 0;
     private bool hasCountedThis25GemCycle = false;
+    private bool isPending25thGemStop = false;
     private List<string> claimsHistory = new List<string>();
 
     // App Version & Cloud Auto-Updater State
@@ -1335,6 +1336,8 @@ public class QuizEarnApp : Form
     private void StartBot()
     {
         isRunning = true;
+        isPending25thGemStop = false;
+        hasCountedThis25GemCycle = false;
         botStartTime = DateTime.Now;
         lastProgressTime = DateTime.Now;
 
@@ -1360,14 +1363,37 @@ public class QuizEarnApp : Form
     private void StopBot()
     {
         isRunning = false;
+        isPending25thGemStop = false;
+        hasCountedThis25GemCycle = false;
 
-        btnToggle.Text = "[ > ]  START QUIZ & EARN BOT";
-        btnToggle.BackColor = Color.FromArgb(8, 8, 8);
-        btnToggle.ForeColor = Color.FromArgb(150, 150, 155);
-        btnToggle.FlatAppearance.BorderColor = Color.FromArgb(24, 24, 24);
+        if (this.InvokeRequired)
+        {
+            SafeBeginInvoke(new Action(delegate {
+                btnToggle.Text = "[ > ]  START QUIZ & EARN BOT";
+                btnToggle.BackColor = Color.FromArgb(8, 8, 8);
+                btnToggle.ForeColor = Color.FromArgb(150, 150, 155);
+                btnToggle.FlatAppearance.BorderColor = Color.FromArgb(24, 24, 24);
 
-        lblStatus.Text = isAdbConnected ? string.Format("READY (Connected: {0})", adbPort) : "WAITING FOR ADB (Turn on ADB)";
-        lblStatus.ForeColor = isAdbConnected ? Color.FromArgb(135, 135, 140) : Color.FromArgb(95, 95, 100);
+                if (!lblStatus.Text.Contains("25 Gems"))
+                {
+                    lblStatus.Text = isAdbConnected ? string.Format("READY (Connected: {0})", adbPort) : "WAITING FOR ADB (Turn on ADB)";
+                    lblStatus.ForeColor = isAdbConnected ? Color.FromArgb(135, 135, 140) : Color.FromArgb(95, 95, 100);
+                }
+            }));
+        }
+        else
+        {
+            btnToggle.Text = "[ > ]  START QUIZ & EARN BOT";
+            btnToggle.BackColor = Color.FromArgb(8, 8, 8);
+            btnToggle.ForeColor = Color.FromArgb(150, 150, 155);
+            btnToggle.FlatAppearance.BorderColor = Color.FromArgb(24, 24, 24);
+
+            if (!lblStatus.Text.Contains("25 Gems"))
+            {
+                lblStatus.Text = isAdbConnected ? string.Format("READY (Connected: {0})", adbPort) : "WAITING FOR ADB (Turn on ADB)";
+                lblStatus.ForeColor = isAdbConnected ? Color.FromArgb(135, 135, 140) : Color.FromArgb(95, 95, 100);
+            }
+        }
 
         SilenceAudio(false);
         if (IsEmulatorDevice(adbPort))
@@ -4344,15 +4370,30 @@ public class QuizEarnApp : Form
                 }
 
                 // Live Gem Count reading from Quiz screen
-                Match mGemCount = Regex.Match(xml, @"text=""(\d{1,2})""[^>]*bounds=""\[\d+,\d+\]\[\d+,\d+\]""\s*/>\s*<node[^>]*text=""/""[^>]*bounds=""\[\d+,\d+\]\[\d+,\d+\]""\s*/>\s*<node[^>]*text=""25""");
-                if (mGemCount.Success)
+                Match mGemSingle = Regex.Match(xml, @"(?:text|content-desc)=""(\d{1,2})\s*/\s*25");
+                if (mGemSingle.Success)
                 {
-                    currentOfferGems = int.Parse(mGemCount.Groups[1].Value);
+                    currentOfferGems = int.Parse(mGemSingle.Groups[1].Value);
                     UpdateDashboard(lastCaptcha);
+                }
+                else
+                {
+                    Match mGemSplit = Regex.Match(xml, @"text=""(\d{1,2})""[^>]*bounds=""\[\d+,\d+\]\[\d+,\d+\]""\s*/>\s*<node[^>]*text=""/""[^>]*bounds=""\[\d+,\d+\]\[\d+,\d+\]""\s*/>\s*<node[^>]*text=""25""");
+                    if (mGemSplit.Success)
+                    {
+                        currentOfferGems = int.Parse(mGemSplit.Groups[1].Value);
+                        UpdateDashboard(lastCaptcha);
+                    }
                 }
 
                 // CASE 1: 25 GEMS STOPPING AND ALERT (Super Offer Unlocked)
-                if (currentOfferGems >= 25 || xml.Contains("25/25 gems") || xml.Contains("Super Offer Unlocked"))
+                bool is25GemsScreen = currentOfferGems >= 25 || 
+                                      Regex.IsMatch(xml, @"(?:text|content-desc)=""25\s*/\s*25") ||
+                                      Regex.IsMatch(xml, @"text=""25""[^>]*bounds=""\[\d+,\d+\]\[\d+,\d+\]""\s*/>\s*<node[^>]*text=""/""[^>]*bounds=""\[\d+,\d+\]\[\d+,\d+\]""\s*/>\s*<node[^>]*text=""25""") ||
+                                      xml.Contains("Super Offer Unlocked") || 
+                                      xml.Contains("Super Task Unlocked");
+
+                if (is25GemsScreen)
                 {
                     if (!hasCountedThis25GemCycle)
                     {
@@ -4364,31 +4405,22 @@ public class QuizEarnApp : Form
                         UpdateDataDashboard();
                     }
 
-                    Log("[ALERT] 25 GEMS TARGET REACHED! 1,000 Coins Super Offer unlocked. Bot paused for claim.");
+                    Log("[ALERT] 25 GEMS TARGET REACHED! 1,000 Coins Super Offer unlocked. Bot STOPPED automatically.");
+                    Play25GemsMilestoneAlert();
+
                     if (this.InvokeRequired)
                     {
                         SafeBeginInvoke(new Action(delegate {
-                            lblStatus.Text = "STANDBY - 25 Gems Hit!";
-                            lblStatus.ForeColor = Color.FromArgb(155, 155, 160);
+                            lblStatus.Text = "STOPPED - 25 Gems Reached! (Claim Ready)";
+                            lblStatus.ForeColor = Color.FromArgb(76, 175, 80);
                         }));
                     }
 
-                    Play25GemsMilestoneAlert();
-
-                    while (isRunning)
-                    {
-                        Thread.Sleep(3000);
-                        RunAdb("shell uiautomator dump --compressed /sdcard/cur.xml");
-                        string recheckXml = RunAdb("shell cat /sdcard/cur.xml");
-                        if (!recheckXml.Contains("25/25") && !recheckXml.Contains("Super Offer Unlocked"))
-                        {
-                            Log("[Bot] Resuming farming after claim!");
-                            currentOfferGems = 0;
-                            hasCountedThis25GemCycle = false;
-                            break;
-                        }
-                    }
-                    continue;
+                    currentOfferGems = 0;
+                    hasCountedThis25GemCycle = false;
+                    isPending25thGemStop = false;
+                    StopBot();
+                    return;
                 }
 
                 // CASE 2: Daily Streak modals
@@ -4467,7 +4499,7 @@ public class QuizEarnApp : Form
                         AdbTapRef(450, 560);
                     }
 
-                    Match mGemsProg = Regex.Match(xml, @"text=""(\d+)/25\s*gems""");
+                    Match mGemsProg = Regex.Match(xml, @"(?:text|content-desc)=""(\d+)/25");
                     if (mGemsProg.Success)
                     {
                         currentOfferGems = int.Parse(mGemsProg.Groups[1].Value) + 1;
@@ -4480,10 +4512,47 @@ public class QuizEarnApp : Form
                     SaveStatsToFile();
                     UpdateDashboard(lastCaptcha);
 
+                    if (currentOfferGems >= 25)
+                    {
+                        isPending25thGemStop = true;
+                        Log("[MILESTONE] 25th Gem collection started! Watching final ad before stopping bot...");
+                    }
+
                     Thread.Sleep(2000);
                     CloseAdActively();
                     lastProgressTime = DateTime.Now;
                     Thread.Sleep(1000);
+
+                    if (isPending25thGemStop || currentOfferGems >= 25)
+                    {
+                        isPending25thGemStop = false;
+                        if (!hasCountedThis25GemCycle)
+                        {
+                            hasCountedThis25GemCycle = true;
+                            today25GemsCount++;
+                            total25GemsCount++;
+                            AddClaimHistory(string.Format("25 Gems Milestone Hit (Cycle #{0})", total25GemsCount));
+                            SaveStatsToFile();
+                            UpdateDataDashboard();
+                        }
+
+                        Log("[ALERT] 25 GEMS TARGET REACHED! 1,000 Coins Super Offer unlocked. Bot STOPPED automatically.");
+                        Play25GemsMilestoneAlert();
+
+                        if (this.InvokeRequired)
+                        {
+                            SafeBeginInvoke(new Action(delegate {
+                                lblStatus.Text = "STOPPED - 25 Gems Reached! (Claim Ready)";
+                                lblStatus.ForeColor = Color.FromArgb(76, 175, 80);
+                            }));
+                        }
+
+                        currentOfferGems = 0;
+                        hasCountedThis25GemCycle = false;
+                        StopBot();
+                        return;
+                    }
+
                     continue;
                 }
 

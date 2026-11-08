@@ -39,6 +39,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     public static volatile int liveGems = -1;
     public static volatile String currentStatus = "Standby";
     private static boolean hasAlerted25Gems = false;
+    public static volatile boolean isPending25thGemStop = false;
 
     public static QuizEarnAccessibilityService instance = null;
 
@@ -76,6 +77,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     public static void startSolving() {
         isRunning = true;
         hasAlerted25Gems = false;
+        isPending25thGemStop = false;
         currentStatus = "Scanning...";
         Log.i(TAG, "startSolving called! instance = " + instance);
         if (instance != null) {
@@ -114,6 +116,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
     public static void stopSolving() {
         isRunning = false;
+        isPending25thGemStop = false;
         Log.i(TAG, "stopSolving called.");
         if (instance != null) {
             instance.lastSolvedTarget = "";
@@ -333,10 +336,13 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             // 3. Detect Real Gem Count & 25 Gems Milestone
             int detectedGems = -1;
 
-            // Pattern A: Match "X/25" in a single node (e.g. "5/25 gems to unlock", "20/25")
+            // Pattern A: Match "X/25" in a single node (e.g. "5/25 gems to unlock", "20/25", "20/25 💎")
             Pattern slash25Pattern = Pattern.compile("(\\d+)\\s*/\\s*25");
             for (NodeItem item : allNodes) {
                 Matcher m = slash25Pattern.matcher(item.text);
+                if (!m.find() && !item.contentDesc.isEmpty()) {
+                    m = slash25Pattern.matcher(item.contentDesc);
+                }
                 if (m.find()) {
                     try {
                         detectedGems = Integer.parseInt(m.group(1));
@@ -345,32 +351,34 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
-            // Pattern B: Match split nodes in Super Offer row: [X] [/] [25]
+            // Pattern B: Match split nodes in Super Offer row: [X] [/] [25] or [X] [/25]
             if (detectedGems < 0) {
                 for (int i = 0; i < allNodes.size(); i++) {
-                    if (allNodes.get(i).text.trim().equals("/")) {
-                        if (i > 0 && (i + 1) < allNodes.size()) {
+                    String nodeT = allNodes.get(i).text.trim();
+                    if (nodeT.equals("/") || nodeT.equals("/25") || nodeT.equals("/ 25")) {
+                        if (i > 0) {
                             NodeItem prev = allNodes.get(i - 1);
-                            NodeItem next = allNodes.get(i + 1);
-                            if (next.text.trim().equals("25")) {
-                                try {
-                                    int g = Integer.parseInt(prev.text.trim());
-                                    int diffY = Math.abs(prev.rect.centerY() - next.rect.centerY());
-                                    if (diffY < 60) {
-                                        detectedGems = g;
-                                        break;
-                                    }
-                                } catch (Exception ignored) {}
-                            }
+                            try {
+                                int g = Integer.parseInt(prev.text.trim());
+                                int diffY = Math.abs(prev.rect.centerY() - allNodes.get(i).rect.centerY());
+                                if (diffY < 80) {
+                                    detectedGems = g;
+                                    break;
+                                }
+                            } catch (Exception ignored) {}
                         }
                     }
                 }
             }
 
-            // Pattern C: Top-right header gem badge ([💎] [X] at X > 850, Y < 300)
+            // Pattern C: Top-right header gem badge ([💎] [X] in header bar)
             if (detectedGems < 0) {
+                int screenW = getResources().getDisplayMetrics().widthPixels;
+                int screenH = getResources().getDisplayMetrics().heightPixels;
                 for (NodeItem item : allNodes) {
-                    if (item.rect.centerX() > 850 && item.rect.centerY() > 140 && item.rect.centerY() < 300) {
+                    int cx = item.rect.centerX();
+                    int cy = item.rect.centerY();
+                    if (cx > (int)(screenW * 0.70) && cy < (int)(screenH * 0.15)) {
                         if (item.text.matches("^\\d{1,3}$")) {
                             try {
                                 detectedGems = Integer.parseInt(item.text.trim());
@@ -397,24 +405,24 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
-            boolean is25Gems = false;
-            // Stop ONLY when verified real gems reached >= 25
-            if (liveGems >= 25) {
-                is25Gems = true;
-            }
-
+            boolean is25Gems = (liveGems >= 25);
             for (NodeItem item : allNodes) {
                 String t = item.text.toLowerCase().trim();
-                if (t.contains("super offer unlocked") || t.contains("super task unlocked")) {
+                String d = item.contentDesc.toLowerCase().trim();
+                if (t.contains("25/25") || d.contains("25/25") || t.contains("25 / 25") || d.contains("25 / 25") ||
+                    t.contains("super offer unlocked") || t.contains("super task unlocked")) {
                     is25Gems = true;
                     break;
                 }
             }
 
-            // If 25 gems reached and no pending Collect Gem popup: PAUSE BOT!
-            if (is25Gems && !hasCollectGem) {
-                Log.i(TAG, "25 GEMS TARGET REACHED! Milestone achieved (" + liveGems + "/25). Pausing bot for Super Offer claim.");
-                currentStatus = "25 GEMS HIT! (1000 Coins)";
+            // STOP BOT AUTOMATICALLY WHEN 25 GEMS REACHED:
+            // 1. If 25th gem ad completed (isPending25thGemStop) -> STOP IMMEDIATELY!
+            // 2. If 25 gems is displayed on screen and no pending Collect Gem button -> STOP IMMEDIATELY!
+            if (isPending25thGemStop || (is25Gems && !hasCollectGem)) {
+                isPending25thGemStop = false;
+                Log.i(TAG, "25 GEMS TARGET REACHED! Milestone achieved (" + liveGems + "/25). Stopping bot for Super Offer claim.");
+                currentStatus = "25 GEMS HIT! (1000 Coins Ready)";
                 if (!hasAlerted25Gems) {
                     hasAlerted25Gems = true;
                     play25GemsMilestoneAlert();
@@ -431,6 +439,14 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 String combined = (t + " " + d).trim();
                 if (combined.contains("collect gem") || combined.contains("collect reward") || combined.contains("collect coins") || 
                     t.equals("collect") || t.equals("claim") || t.equals("claim now")) {
+                    
+                    // If we are at 24+ gems, this collection action earns the 25th gem!
+                    if (liveGems >= 24) {
+                        isPending25thGemStop = true;
+                        liveGems = 25;
+                        Log.i(TAG, "Collecting 25th Gem! Bot will automatically STOP after this ad completes.");
+                    }
+
                     Log.i(TAG, "Found Collect/Claim button: " + item.text + " at " + item.rect);
                     tapNode(item);
                     lastTapTime = now;
@@ -673,12 +689,14 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         // Effective text falls back to content description
         String effectiveText = !text.isEmpty() ? text : desc;
 
-        // Filter out status bar area (top 110px clock/icons), but NEVER filter out close/skip buttons
+        // Filter out status bar area (top 110px clock/icons), but NEVER filter out close/skip buttons or quiz header badges
         if (rect.bottom <= 110) {
             String lower = (text + " " + desc + " " + resId).toLowerCase();
-            if (!lower.contains("close") && !lower.contains("skip") && 
-                !lower.contains("\u2715") && !lower.contains("\u2716") && 
-                !lower.equals("x") && !lower.contains("dismiss")) {
+            boolean isAdNav = lower.contains("close") || lower.contains("skip") || 
+                              lower.contains("\u2715") || lower.contains("\u2716") || 
+                              lower.equals("x") || lower.contains("dismiss");
+            boolean isHeaderBadge = (nodePkg.equals("com.quiz.earn.money.game") && text.matches("^\\d{1,4}$"));
+            if (!isAdNav && !isHeaderBadge) {
                 return;
             }
         }
