@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -4303,13 +4303,11 @@ public class QuizEarnApp : Form
                     continue;
                 }
 
-                RunAdb("shell rm -f /sdcard/cur.xml");
-                RunAdb("shell uiautomator dump --compressed /sdcard/cur.xml");
-                string xml = RunAdb("shell cat /sdcard/cur.xml");
+                string xml = RunAdb("shell \"uiautomator dump --compressed /sdcard/cur.xml >/dev/null 2>&1 && cat /sdcard/cur.xml\"");
 
                 if (string.IsNullOrEmpty(xml) || xml.Contains("ERROR"))
                 {
-                    Thread.Sleep(1000);
+                    Thread.Sleep(chkTurboSpeed.Checked ? 200 : 600);
                     continue;
                 }
 
@@ -4548,7 +4546,7 @@ public class QuizEarnApp : Form
                         lastProgressTime = DateTime.Now;
                         SaveStatsToFile();
                         UpdateDashboard(lastCaptcha);
-                        Thread.Sleep(chkTurboSpeed.Checked ? 600 : 1200);
+                        Thread.Sleep(chkTurboSpeed.Checked ? 100 : 600);
                         continue;
                     }
                 }
@@ -4585,7 +4583,7 @@ public class QuizEarnApp : Form
                     lastProgressTime = DateTime.Now;
                     SaveStatsToFile();
                     UpdateDashboard(lastCaptcha);
-                    Thread.Sleep(chkTurboSpeed.Checked ? 600 : 1200);
+                    Thread.Sleep(chkTurboSpeed.Checked ? 100 : 600);
                     continue;
                 }
 
@@ -4596,11 +4594,11 @@ public class QuizEarnApp : Form
                     SaveStatsToFile();
                     UpdateDashboard(lastCaptcha);
                     lastProgressTime = DateTime.Now;
-                    Thread.Sleep(1200);
+                    Thread.Sleep(800);
                     continue;
                 }
 
-                Thread.Sleep(chkTurboSpeed.Checked ? 400 : 800);
+                Thread.Sleep(chkTurboSpeed.Checked ? 120 : 500);
             }
         }
         catch (Exception ex)
