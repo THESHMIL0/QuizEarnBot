@@ -2420,12 +2420,17 @@ public class QuizEarnApp : Form
         return candidatePorts;
     }
 
+    private bool IsEmulatorDevice(string id)
+    {
+        if (string.IsNullOrEmpty(id)) return false;
+        string lower = id.ToLower();
+        return lower.StartsWith("emulator-") || lower.StartsWith("127.0.0.1:") || lower.StartsWith("localhost:");
+    }
+
     private bool EnsureConnected()
     {
-        // 1. Check existing connected devices (Physical USB phones, Emulators)
+        // 1. Check existing connected devices (ONLY BlueStacks / Emulators! Physical phones are ignored)
         string devOut = RunAdb("devices");
-        string physicalDev = "";
-        string emulatorDev = "";
         foreach (string line in devOut.Split('\n'))
         {
             string trimmed = line.Trim();
@@ -2433,36 +2438,17 @@ public class QuizEarnApp : Form
                 continue;
 
             string[] parts = trimmed.Split(new char[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length >= 2)
+            if (parts.Length >= 2 && parts[1].ToLower() == "device")
             {
-                string state = parts[1].ToLower();
-                if (state == "device")
+                string id = parts[0];
+                if (IsEmulatorDevice(id))
                 {
-                    string id = parts[0];
-                    if (id.StartsWith("emulator-") || id.StartsWith("127.0.0.1:") || id.StartsWith("localhost:"))
-                    {
-                        if (string.IsNullOrEmpty(emulatorDev)) emulatorDev = id;
-                    }
-                    else
-                    {
-                        // Priority 1: Physical phone connected via USB!
-                        if (string.IsNullOrEmpty(physicalDev)) physicalDev = id;
-                    }
-                }
-                else if (state == "unauthorized")
-                {
-                    UpdatePortLabel("Allow USB Debugging on device!");
-                    return false;
+                    adbPort = id;
+                    UpdatePortLabel(adbPort);
+                    UpdateScreenResolution();
+                    return true;
                 }
             }
-        }
-        string chosenDev = !string.IsNullOrEmpty(physicalDev) ? physicalDev : emulatorDev;
-        if (!string.IsNullOrEmpty(chosenDev))
-        {
-            adbPort = chosenDev;
-            UpdatePortLabel(adbPort);
-            UpdateScreenResolution();
-            return true;
         }
 
         // 2. Discover and connect listening emulator ports
@@ -2482,7 +2468,7 @@ public class QuizEarnApp : Form
             }
         }
 
-        // 3. Final verification
+        // 3. Final verification: ONLY match emulators
         devOut = RunAdb("devices");
         foreach (string line in devOut.Split('\n'))
         {
@@ -2493,13 +2479,19 @@ public class QuizEarnApp : Form
             string[] parts = trimmed.Split(new char[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length >= 2 && parts[1].ToLower() == "device")
             {
-                adbPort = parts[0];
-                UpdatePortLabel(adbPort);
-                UpdateScreenResolution();
-                return true;
+                string id = parts[0];
+                if (IsEmulatorDevice(id))
+                {
+                    adbPort = id;
+                    UpdatePortLabel(adbPort);
+                    UpdateScreenResolution();
+                    return true;
+                }
             }
         }
 
+        UpdatePortLabel("Start BlueStacks! (Phone ignored)");
+        Log("[ADB] No BlueStacks instance found. Physical phones are ignored (use the Mobile APK on phone).");
         return false;
     }
 
@@ -3962,7 +3954,7 @@ public class QuizEarnApp : Form
         // 4. Foreign Third-Party App opened by ad (e.g. installed shopping/ad apps)
         Match mPkg = Regex.Match(focus, @"([a-zA-Z0-9_\.]+\.[a-zA-Z0-9_]+)");
         string foreignPkg = mPkg.Success ? mPkg.Groups[1].Value : "";
-        if (!string.IsNullOrEmpty(foreignPkg) && !foreignPkg.Contains("com.quiz.earn") && !foreignPkg.Contains("com.rayole") && !foreignPkg.Contains("android."))
+        if (!string.IsNullOrEmpty(foreignPkg) && !foreignPkg.Contains("com.quiz.earn") && !foreignPkg.Contains("com.rayole") && !foreignPkg.Contains("android.") && !foreignPkg.Contains("quizearn.assistant"))
         {
             Log(string.Format("[Guard] Foreign ad app opened ({0})! Force-closing and restoring Quiz & Earn...", foreignPkg));
             RunAdb("shell am force-stop " + foreignPkg);
