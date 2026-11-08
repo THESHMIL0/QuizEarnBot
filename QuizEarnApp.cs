@@ -1368,6 +1368,12 @@ public class QuizEarnApp : Form
         lblStatus.ForeColor = isAdbConnected ? Color.FromArgb(135, 135, 140) : Color.FromArgb(95, 95, 100);
 
         SilenceAudio(false);
+        if (IsEmulatorDevice(adbPort))
+        {
+            RunAdb("shell settings put global window_animation_scale 1.0");
+            RunAdb("shell settings put global transition_animation_scale 1.0");
+            RunAdb("shell settings put global animator_duration_scale 1.0");
+        }
         Log("<<< Bot stopped.");
     }
 
@@ -4268,10 +4274,13 @@ public class QuizEarnApp : Form
             Log(string.Format("[ADB] Connected to device on {0}!", adbPort));
             UpdateScreenResolution();
 
-            // Optimize animators
-            RunAdb("shell settings put global window_animation_scale 0");
-            RunAdb("shell settings put global transition_animation_scale 0");
-            RunAdb("shell settings put global animator_duration_scale 0");
+            // Optimize animators for emulators only
+            if (IsEmulatorDevice(adbPort))
+            {
+                RunAdb("shell settings put global window_animation_scale 0");
+                RunAdb("shell settings put global transition_animation_scale 0");
+                RunAdb("shell settings put global animator_duration_scale 0");
+            }
 
             if (chkAutoMute.Checked)
             {
