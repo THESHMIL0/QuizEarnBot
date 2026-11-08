@@ -520,16 +520,36 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     }
 
     private void tapNode(final NodeItem item) {
+        // 1. Try native accessibility click first (direct OS event, zero coordinate risk!)
+        try {
+            if (item.node != null) {
+                if (item.node.isClickable()) {
+                    if (item.node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        Log.i(TAG, "Native accessibility click succeeded on node.");
+                        return;
+                    }
+                }
+                AccessibilityNodeInfo parent = item.node.getParent();
+                if (parent != null && parent.isClickable()) {
+                    if (parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        Log.i(TAG, "Native accessibility click succeeded on parent.");
+                        return;
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+
+        // 2. Gesture tap fallback with coordinates strictly inside item bounds
         int cx = item.rect.centerX();
         int cy = item.rect.centerY();
-        // If close/skip button overlaps status bar (Y < 120), clamp Y so OS doesn't swallow gesture
-        if (cy < 120) {
-            if (item.rect.bottom > 120) {
-                cy = item.rect.bottom - 10;
-            } else {
-                cy = 125;
-            }
+
+        if (item.rect.width() > 6) {
+            cx = Math.max(item.rect.left + 3, Math.min(item.rect.right - 3, cx));
         }
+        if (item.rect.height() > 6) {
+            cy = Math.max(item.rect.top + 3, Math.min(item.rect.bottom - 3, cy));
+        }
+
         tapCoordinates(cx, cy);
     }
 
@@ -579,8 +599,14 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             return false;
         }
 
+        // Do not tap countdown timers (e.g. "Skip in 5s", "You can skip in 3 seconds")
+        if (t.contains(" in ") || d.contains(" in ") || t.contains("seconds") || d.contains("seconds")) {
+            return false;
+        }
+
         // Explicit skip text or description
-        if (t.contains("skip") || d.contains("skip")) {
+        if (t.equals("skip") || t.equals("skip ad") || t.startsWith("skip ") ||
+            d.equals("skip") || d.equals("skip ad") || d.startsWith("skip ")) {
             return true;
         }
 
@@ -614,29 +640,30 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             return false;
         }
 
-        // Multi-ad countdown indicator ("Ad 1 of 2", "Ad 2 of 2", etc.)
-        // NEVER treat as close button!
-        if (t.contains("ad 1 of") || t.contains("ad 2 of") || t.contains("ad 1 of 3") || 
-            t.contains("ad 2 of 3") || t.contains("ad 3 of 3") ||
-            d.contains("ad 1 of") || d.contains("ad 2 of") || d.contains("ad 1 of 3") || 
-            d.contains("ad 2 of 3") || d.contains("ad 3 of 3")) {
-            return false;
-        }
-        if ((t.contains("close ad") || d.contains("close ad")) && item.rect.centerX() < 350) {
+        // Countdown indicators ("Ad 1 of 2", "Video ends in 5s", "Reward in 10s")
+        if (t.contains("ad 1 of") || t.contains("ad 2 of") || t.contains("ad 3 of") ||
+            d.contains("ad 1 of") || d.contains("ad 2 of") || d.contains("ad 3 of") ||
+            t.contains("ends in") || d.contains("ends in") ||
+            t.contains("reward in") || d.contains("reward in") ||
+            t.contains("seconds after") || d.contains("seconds after")) {
             return false;
         }
 
-        // While an ad countdown is actively showing, DO NOT tap any generic "Close Ad"
-        // so we don't prematurely kill the ad before all videos in the sequence finish.
+        // Do not close prematurely while countdown is active
         if (hasAdCountdown) {
-            if (t.contains("close ad") || d.contains("close ad")) {
-                return false;
-            }
+            return false;
+        }
+
+        // Explicit Close / Close Ad content descriptions (e.g. Google Ads, Liftoff, AppLovin)
+        if (d.equals("close ad") || d.equals("close") || d.equals("close button") || 
+            d.equals("close video") || d.equals("dismiss") || d.contains("close ad")) {
+            return true;
         }
 
         // Explicit Close resource IDs
         if (id.contains("close_button") || id.contains("btn_close") || id.contains("iv_close") || 
-            id.contains("tt_video_ad_close") || id.contains("close_ad_btn")) {
+            id.contains("ia_clickable_close_button") || id.contains("tt_video_ad_close") || 
+            id.contains("close_ad") || id.contains("ad_close")) {
             return true;
         }
 
@@ -646,18 +673,14 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             return true;
         }
 
-        // Content description strictly "close" or "dismiss" or "close button"
-        if (d.equals("close") || d.equals("dismiss") || d.equals("close button") || d.equals("close video")) {
+        // Exact text match for close
+        if (t.equals("close ad") || t.equals("close") || t.equals("dismiss") || 
+            t.equals("no thanks") || t.equals("not now")) {
             return true;
         }
 
         // Post-reward claims
-        if (t.contains("reward granted") || t.contains("reward credited") || 
-            t.contains("no thanks") || t.contains("not now")) {
-            return true;
-        }
-
-        if ((t.equals("close") || t.equals("dismiss")) && item.rect.centerX() > 300) {
+        if (t.contains("reward granted") || t.contains("reward credited")) {
             return true;
         }
 
