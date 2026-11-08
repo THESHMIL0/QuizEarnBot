@@ -399,13 +399,15 @@ public class FloatingOverlayService extends Service {
                 Log.i(TAG, "START/PAUSE BUTTON CLICKED! Current state: " + QuizEarnAccessibilityService.isRunning);
                 if (QuizEarnAccessibilityService.isRunning) {
                     QuizEarnAccessibilityService.stopSolving();
+                    updateUiState();
                 } else {
                     if (QuizEarnAccessibilityService.currentStatus.contains("25 GEMS")) {
                         QuizEarnAccessibilityService.currentStatus = "Scanning...";
                     }
                     QuizEarnAccessibilityService.startSolving();
+                    updateUiState();
+                    collapseMenu();
                 }
-                updateUiState();
             }
         });
 
