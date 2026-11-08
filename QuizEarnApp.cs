@@ -2424,7 +2424,8 @@ public class QuizEarnApp : Form
     {
         // 1. Check existing connected devices (Physical USB phones, Emulators)
         string devOut = RunAdb("devices");
-        string candidateDev = "";
+        string physicalDev = "";
+        string emulatorDev = "";
         foreach (string line in devOut.Split('\n'))
         {
             string trimmed = line.Trim();
@@ -2437,14 +2438,16 @@ public class QuizEarnApp : Form
                 string state = parts[1].ToLower();
                 if (state == "device")
                 {
-                    if (parts[0].StartsWith("emulator-"))
+                    string id = parts[0];
+                    if (id.StartsWith("emulator-") || id.StartsWith("127.0.0.1:") || id.StartsWith("localhost:"))
                     {
-                        adbPort = parts[0];
-                        UpdatePortLabel(adbPort);
-                        UpdateScreenResolution();
-                        return true;
+                        if (string.IsNullOrEmpty(emulatorDev)) emulatorDev = id;
                     }
-                    if (string.IsNullOrEmpty(candidateDev)) candidateDev = parts[0];
+                    else
+                    {
+                        // Priority 1: Physical phone connected via USB!
+                        if (string.IsNullOrEmpty(physicalDev)) physicalDev = id;
+                    }
                 }
                 else if (state == "unauthorized")
                 {
@@ -2453,9 +2456,10 @@ public class QuizEarnApp : Form
                 }
             }
         }
-        if (!string.IsNullOrEmpty(candidateDev))
+        string chosenDev = !string.IsNullOrEmpty(physicalDev) ? physicalDev : emulatorDev;
+        if (!string.IsNullOrEmpty(chosenDev))
         {
-            adbPort = candidateDev;
+            adbPort = chosenDev;
             UpdatePortLabel(adbPort);
             UpdateScreenResolution();
             return true;

@@ -520,26 +520,6 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     }
 
     private void tapNode(final NodeItem item) {
-        // 1. Try native accessibility click first (direct OS event, zero coordinate risk!)
-        try {
-            if (item.node != null) {
-                if (item.node.isClickable()) {
-                    if (item.node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                        Log.i(TAG, "Native accessibility click succeeded on node.");
-                        return;
-                    }
-                }
-                AccessibilityNodeInfo parent = item.node.getParent();
-                if (parent != null && parent.isClickable()) {
-                    if (parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                        Log.i(TAG, "Native accessibility click succeeded on parent.");
-                        return;
-                    }
-                }
-            }
-        } catch (Exception ignored) {}
-
-        // 2. Gesture tap fallback with coordinates strictly inside item bounds
         int cx = item.rect.centerX();
         int cy = item.rect.centerY();
 
@@ -550,7 +530,21 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             cy = Math.max(item.rect.top + 3, Math.min(item.rect.bottom - 3, cy));
         }
 
+        // Always dispatch real hardware touch gesture (essential for custom UI, React Native & games)
         tapCoordinates(cx, cy);
+
+        // Also trigger native accessibility action in parallel (ensures ad webview close handles it)
+        try {
+            if (item.node != null) {
+                if (item.node.isClickable()) {
+                    item.node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                }
+                AccessibilityNodeInfo parent = item.node.getParent();
+                if (parent != null && parent.isClickable()) {
+                    parent.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                }
+            }
+        } catch (Exception ignored) {}
     }
 
     // Global filter to NEVER touch sound/mute, install, privacy, or info buttons
