@@ -155,6 +155,8 @@ public class QuizEarnApp : Form
     private int totalGems = 0;
     private int adsClosed = 0;
     private string lastCaptcha = "None";
+    private string lastSolvedTarget = "";
+    private DateTime lastSolveTime = DateTime.MinValue;
     private DateTime botStartTime;
     private DateTime lastProgressTime = DateTime.Now;
 
@@ -4477,25 +4479,95 @@ public class QuizEarnApp : Form
                     continue;
                 }
 
-                // CASE 5: Quiz Screen (Extract captcha digits or 4-digit target)
-                string targetNumber = "";
+                // CASE 5: Quiz Screen Solving (Math Quiz & Captcha Quiz)
+                int qMinY = (int)(devHeight * 0.18);
+                int qMaxY = (int)(devHeight * 0.40);
+                int optMinY = (int)(devHeight * 0.42);
+                int optMaxY = (int)(devHeight * 0.68);
+
                 int btnX = 0, btnY = 0;
 
+                // --- 5A. MATH QUIZ ---
+                Match mMath = Regex.Match(xml, @"(?:text|content-desc)=""(\d+)\s*([\+\-\–\—\*\×xX]|÷|\/)\s*(\d+)(?:\s*=\s*\?)?""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
+                if (mMath.Success)
+                {
+                    int my1 = int.Parse(mMath.Groups[5].Value);
+                    int my2 = int.Parse(mMath.Groups[7].Value);
+                    int mcy = (my1 + my2) / 2;
+                    if (mcy >= qMinY && mcy <= qMaxY)
+                    {
+                        int n1 = int.Parse(mMath.Groups[1].Value);
+                        string op = mMath.Groups[2].Value;
+                        int n2 = int.Parse(mMath.Groups[3].Value);
+                        int ans = -1;
+                        if (op == "+") ans = n1 + n2;
+                        else if (op == "-" || op == "–" || op == "—") ans = n1 - n2;
+                        else if (op == "*" || op == "×" || op.Equals("x", StringComparison.OrdinalIgnoreCase)) ans = n1 * n2;
+                        else if ((op == "/" || op == "÷") && n2 != 0) ans = n1 / n2;
+
+                        if (ans >= 0)
+                        {
+                            string mathTarget = string.Format("MATH:{0}{1}{2}={3}", n1, op, n2, ans);
+                            if (mathTarget == lastSolvedTarget && (DateTime.Now - lastSolveTime).TotalMilliseconds < 2500)
+                            {
+                                Thread.Sleep(200);
+                                continue;
+                            }
+
+                            string ansStr = ans.ToString();
+                            Log(string.Format("[Solver] Math in Question Zone: {0} {1} {2} = {3}", n1, op, n2, ans));
+
+                            // Find answer button strictly in Options Zone
+                            MatchCollection mAllAns = Regex.Matches(xml, string.Format(@"<node [^>]*text=""{0}""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""", ansStr));
+                            foreach (Match ma in mAllAns)
+                            {
+                                int ay1 = int.Parse(ma.Groups[2].Value);
+                                int ay2 = int.Parse(ma.Groups[4].Value);
+                                int acy = (ay1 + ay2) / 2;
+                                if (acy >= (optMinY - 40) && acy <= (optMaxY + 60))
+                                {
+                                    btnX = (int.Parse(ma.Groups[1].Value) + int.Parse(ma.Groups[3].Value)) / 2;
+                                    btnY = acy;
+                                    break;
+                                }
+                            }
+
+                            if (btnX > 0 && btnY > 0)
+                            {
+                                Log(string.Format("[ANSWER] Tapping Math '{0}' at ({1}, {2})...", ansStr, btnX, btnY));
+                                AdbTap(btnX, btnY);
+                                lastSolvedTarget = mathTarget;
+                                lastSolveTime = DateTime.Now;
+                                questionsSolved++;
+                                todaySolved++;
+                                lastProgressTime = DateTime.Now;
+                                SaveStatsToFile();
+                                UpdateDashboard(ansStr);
+                                Thread.Sleep(chkTurboSpeed.Checked ? 200 : 600);
+                                continue;
+                            }
+                        }
+                    }
+                }
+
+                // --- 5B. CAPTCHA QUIZ (Number Matching) ---
+                string targetNumber = "";
                 MatchCollection mNumNodes = Regex.Matches(xml, @"<node [^>]*text=""(\d{3,6})""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
 
-                // 1. Find question target number (y between 220 and 440)
+                // 1. Find question target number strictly in Question Zone
                 foreach (Match m in mNumNodes)
                 {
                     int y1 = int.Parse(m.Groups[3].Value);
                     int y2 = int.Parse(m.Groups[5].Value);
-                    if (y1 >= 220 && y2 <= 440)
+                    int cy = (y1 + y2) / 2;
+                    if (cy >= qMinY && cy <= qMaxY)
                     {
                         targetNumber = m.Groups[1].Value;
                         break;
                     }
                 }
 
-                // Format B: Content-desc digit items (y=650..850) fallback for older app versions
+                // Fallback: Content-desc digit items in Question Zone
                 if (string.IsNullOrEmpty(targetNumber))
                 {
                     List<DigitItem> digits = new List<DigitItem>();
@@ -4506,7 +4578,8 @@ public class QuizEarnApp : Form
                         int x1 = int.Parse(dm.Groups[2].Value);
                         int y1 = int.Parse(dm.Groups[3].Value);
                         int y2 = int.Parse(dm.Groups[5].Value);
-                        if (y1 >= 650 && y2 <= 850)
+                        int cy = (y1 + y2) / 2;
+                        if (cy >= qMinY && cy <= qMaxY)
                         {
                             digits.Add(new DigitItem { Digit = d, X = x1 });
                         }
@@ -4521,40 +4594,53 @@ public class QuizEarnApp : Form
 
                 if (!string.IsNullOrEmpty(targetNumber))
                 {
+                    string captchaTarget = "CAPTCHA:" + targetNumber;
+                    if (captchaTarget == lastSolvedTarget && (DateTime.Now - lastSolveTime).TotalMilliseconds < 2500)
+                    {
+                        Thread.Sleep(200);
+                        continue;
+                    }
+
                     lastCaptcha = targetNumber;
                     Log(string.Format("[QUIZ] Target: '{0}' | Progress: {1}/25", targetNumber, currentOfferGems));
 
-                    // 2. Find option button with text = targetNumber (y >= 460)
+                    // 2. Find option button strictly in Options Zone
                     foreach (Match m in mNumNodes)
                     {
                         if (m.Groups[1].Value == targetNumber)
                         {
                             int y1 = int.Parse(m.Groups[3].Value);
                             int y2 = int.Parse(m.Groups[5].Value);
-                            if (y1 >= 460)
+                            int cy = (y1 + y2) / 2;
+                            if (cy >= (optMinY - 40) && cy <= (optMaxY + 60))
                             {
                                 int x1 = int.Parse(m.Groups[2].Value);
                                 int x2 = int.Parse(m.Groups[4].Value);
                                 btnX = (x1 + x2) / 2;
-                                btnY = (y1 + y2) / 2;
+                                btnY = cy;
                                 break;
                             }
                         }
                     }
 
-                    // Fallback: search with content-desc or button attribute
+                    // Fallback: search with content-desc in Options Zone
                     if (btnX == 0)
                     {
                         string optPattern = string.Format(@"<node [^>]*content-desc=""{0}""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""", targetNumber);
-                        Match optMatch = Regex.Match(xml, optPattern);
-                        if (optMatch.Success)
+                        MatchCollection optMatches = Regex.Matches(xml, optPattern);
+                        foreach (Match optMatch in optMatches)
                         {
-                            int ox1 = int.Parse(optMatch.Groups[1].Value);
                             int oy1 = int.Parse(optMatch.Groups[2].Value);
-                            int ox2 = int.Parse(optMatch.Groups[3].Value);
                             int oy2 = int.Parse(optMatch.Groups[4].Value);
-                            btnX = (ox1 + ox2) / 2;
-                            btnY = (oy1 + oy2) / 2;
+                            int ocy = (oy1 + oy2) / 2;
+                            if (ocy >= (optMinY - 40) && ocy <= (optMaxY + 60))
+                            {
+                                int ox1 = int.Parse(optMatch.Groups[1].Value);
+                                int ox2 = int.Parse(optMatch.Groups[3].Value);
+                                btnX = (ox1 + ox2) / 2;
+                                btnY = ocy;
+                                break;
+                            }
                         }
                     }
 
@@ -4563,50 +4649,16 @@ public class QuizEarnApp : Form
                         Log(string.Format("[ANSWER] Tapping '{0}' at ({1}, {2})...", targetNumber, btnX, btnY));
                         AdbTap(btnX, btnY);
 
+                        lastSolvedTarget = captchaTarget;
+                        lastSolveTime = DateTime.Now;
                         questionsSolved++;
                         todaySolved++;
                         lastProgressTime = DateTime.Now;
                         SaveStatsToFile();
                         UpdateDashboard(lastCaptcha);
-                        Thread.Sleep(chkTurboSpeed.Checked ? 100 : 600);
+                        Thread.Sleep(chkTurboSpeed.Checked ? 200 : 600);
                         continue;
                     }
-                }
-
-                // CASE 6: Math Quiz fallback format (if active)
-                Match mMath = Regex.Match(xml, @"text=""(\d+)\s*([\+\-\*\/])\s*(\d+)\s*=\s*\?""");
-                if (mMath.Success)
-                {
-                    int n1 = int.Parse(mMath.Groups[1].Value);
-                    string op = mMath.Groups[2].Value;
-                    int n2 = int.Parse(mMath.Groups[3].Value);
-                    int ans = 0;
-                    if (op == "+") ans = n1 + n2;
-                    else if (op == "-") ans = n1 - n2;
-                    else if (op == "*") ans = n1 * n2;
-                    else if (op == "/" && n2 != 0) ans = n1 / n2;
-
-                    Log(string.Format("[Solver] Math: {0} {1} {2} = {3}", n1, op, n2, ans));
-
-                    Match mAnsNode = Regex.Match(xml, string.Format(@"<node [^>]*text=""{0}""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""", ans));
-                    if (mAnsNode.Success)
-                    {
-                        int ax = (int.Parse(mAnsNode.Groups[1].Value) + int.Parse(mAnsNode.Groups[3].Value)) / 2;
-                        int ay = (int.Parse(mAnsNode.Groups[2].Value) + int.Parse(mAnsNode.Groups[4].Value)) / 2;
-                        AdbTap(ax, ay);
-                    }
-                    else
-                    {
-                        AdbTapRef(250, 480);
-                    }
-
-                    questionsSolved++;
-                    todaySolved++;
-                    lastProgressTime = DateTime.Now;
-                    SaveStatsToFile();
-                    UpdateDashboard(lastCaptcha);
-                    Thread.Sleep(chkTurboSpeed.Checked ? 100 : 600);
-                    continue;
                 }
 
                 // Fallback check for any lingering ad close buttons

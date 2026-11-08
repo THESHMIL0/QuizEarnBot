@@ -46,11 +46,18 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     private long lastTapTime = 0;
     private long adStartTime = 0;
     private long lastProgressTime = 0;
+    private String lastSolvedTarget = "";
+    private long lastSolveTime = 0;
 
-    // Real math operations (excluding simple '/' which represents progress fractions like 0/25)
-    private final Pattern mathPattern = Pattern.compile("(\\d+)\\s*([\\+\\-\\×\\*]|÷)\\s*(\\d+)");
+    // Real math operations (including unicode multiplication and division)
+    private final Pattern mathPattern = Pattern.compile("(\\d+)\\s*([\\+\\-\\–\\—\\*×xX]|÷|\\/)\\s*(\\d+)");
     private final Pattern mathSlashPattern = Pattern.compile("(\\d+)\\s*\\/\\s*(\\d+)\\s*(?:=|\\?)");
     private final Pattern numPattern = Pattern.compile("^\\d{3,6}$");
+
+    private String cleanNumText(String raw) {
+        if (raw == null) return "";
+        return raw.replaceAll("[\\s\\u00A0\\u200B\\r\\n]+", "").trim();
+    }
 
     private final Runnable solveLoopRunnable = new Runnable() {
         @Override
@@ -72,6 +79,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         currentStatus = "Scanning...";
         Log.i(TAG, "startSolving called! instance = " + instance);
         if (instance != null) {
+            instance.lastSolvedTarget = "";
+            instance.lastSolveTime = 0;
             instance.lastProgressTime = System.currentTimeMillis();
             instance.adStartTime = 0;
             instance.loopHandler.removeCallbacks(instance.solveLoopRunnable);
@@ -90,6 +99,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     ctx.startActivity(intent);
                     Log.i(TAG, "Quiz & Earn relaunched cleanly.");
                     if (instance != null) {
+                        instance.lastSolvedTarget = "";
+                        instance.lastSolveTime = 0;
                         instance.lastProgressTime = System.currentTimeMillis();
                         instance.adStartTime = 0;
                     }
@@ -105,6 +116,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         isRunning = false;
         Log.i(TAG, "stopSolving called.");
         if (instance != null) {
+            instance.lastSolvedTarget = "";
+            instance.lastSolveTime = 0;
             instance.loopHandler.removeCallbacks(instance.solveLoopRunnable);
         }
         if (!currentStatus.contains("25 GEMS")) {
@@ -127,7 +140,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     public void onAccessibilityEvent(AccessibilityEvent event) {
         if (!isRunning || event == null) return;
         long now = System.currentTimeMillis();
-        if (now - lastTapTime > 250) {
+        if (now - lastTapTime > 350) {
             solveScreen();
         }
     }
@@ -136,7 +149,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         if (!isRunning) return;
 
         long now = System.currentTimeMillis();
-        if (now - lastTapTime < 350) {
+        if (now - lastTapTime < 450) {
             return;
         }
 
@@ -209,6 +222,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     tapNode(item);
                     lastTapTime = now;
                     lastProgressTime = now;
+                    lastSolvedTarget = "";
+                    lastSolveTime = 0;
                     currentStatus = "Skipping Ad...";
                     return;
                 }
@@ -225,6 +240,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     tapCoordinates(targetX, targetY);
                     lastTapTime = now;
                     lastProgressTime = now;
+                    lastSolvedTarget = "";
+                    lastSolveTime = 0;
                     adStartTime = 0;
                     currentStatus = "Reward Claimed! Closing...";
                     return;
@@ -238,6 +255,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     tapNode(item);
                     lastTapTime = now;
                     lastProgressTime = now;
+                    lastSolvedTarget = "";
+                    lastSolveTime = 0;
                     currentStatus = "Closing Ad...";
                     adStartTime = 0;
                     return;
@@ -416,62 +435,49 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     tapNode(item);
                     lastTapTime = now;
                     lastProgressTime = now;
+                    lastSolvedTarget = "";
+                    lastSolveTime = 0;
                     currentStatus = "Collecting Gem...";
                     adStartTime = 0;
                     return;
                 }
             }
 
-            // 5. Number Matching / Captcha Quiz (Duplicate 3-6 digit detection)
-            Map<String, List<NodeItem>> numGroups = new HashMap<>();
+            // 5. ZONE-BASED 100% ACCURATE QUIZ SOLVER
+            int screenW = getResources().getDisplayMetrics().widthPixels;
+            int screenH = getResources().getDisplayMetrics().heightPixels;
+
+            // Strict spatial zones to prevent ANY header/footer badge misidentification:
+            // - Header Zone: Y < screenH * 0.18 (Gems counter, Gift badges, Quiz title) -> EXCLUDED
+            // - Question Card Zone: screenH * 0.18 <= Y <= screenH * 0.40 (Math equation / Captcha number)
+            // - Options Grid Zone: screenH * 0.42 <= Y <= screenH * 0.68 (2x2 grid of 4 answer buttons)
+            // - Footer Zone: Y > screenH * 0.68 (Super offer milestones, 1000 coins text, My Offers) -> EXCLUDED
+            int qMinY = (int) (screenH * 0.18);
+            int qMaxY = (int) (screenH * 0.40);
+            int optMinY = (int) (screenH * 0.42);
+            int optMaxY = (int) (screenH * 0.68);
+
+            String detectedTarget = null;
+            String targetAnsStr = null;
+
+            // --- 5A. MATH QUIZ DETECTION ---
             for (NodeItem item : allNodes) {
-                if (numPattern.matcher(item.text).matches()) {
-                    List<NodeItem> list = numGroups.get(item.text);
-                    if (list == null) {
-                        list = new ArrayList<>();
-                        numGroups.put(item.text, list);
-                    }
-                    list.add(item);
+                int cy = item.rect.centerY();
+                if (cy < qMinY || cy > qMaxY) continue;
+
+                String rawText = item.text.trim();
+                if (rawText.contains("/25") || rawText.contains("/ 25") || rawText.contains("/50") || rawText.contains("/2")) {
+                    continue;
                 }
-            }
-
-            for (Map.Entry<String, List<NodeItem>> entry : numGroups.entrySet()) {
-                if (entry.getValue().size() >= 2) {
-                    List<NodeItem> group = entry.getValue();
-                    Collections.sort(group, new Comparator<NodeItem>() {
-                        @Override
-                        public int compare(NodeItem a, NodeItem b) {
-                            return Integer.compare(a.rect.centerY(), b.rect.centerY());
-                        }
-                    });
-
-                    NodeItem question = group.get(0);
-                    NodeItem answerButton = group.get(group.size() - 1);
-
-                    Log.i(TAG, "TARGET NUMBER DETECTED: " + entry.getKey());
-                    Log.i(TAG, "Question at Y=" + question.rect.centerY() + ", Option button at (" + answerButton.rect.centerX() + ", " + answerButton.rect.centerY() + ")");
-
-                    currentStatus = "Target: " + entry.getKey();
-                    tapNode(answerButton);
-
-                    solvedCount++;
-                    lastTapTime = now;
-                    lastProgressTime = now;
-                    currentStatus = "Solved #" + solvedCount + " (" + entry.getKey() + ")";
-                    return;
-                }
-            }
-
-            // 6. Math Quiz (e.g. 12 + 5 = ?)
-            for (NodeItem item : allNodes) {
-                if (item.text.contains("/25") || item.text.contains("/ 25") || item.text.contains("/50") || item.text.contains("/2")) {
+                String lower = rawText.toLowerCase();
+                if (lower.contains("attempt") || lower.contains("select") || lower.contains("correct")) {
                     continue;
                 }
 
-                Matcher m = mathPattern.matcher(item.text);
+                Matcher m = mathPattern.matcher(rawText);
                 boolean isSlashMath = false;
                 if (!m.find()) {
-                    m = mathSlashPattern.matcher(item.text);
+                    m = mathSlashPattern.matcher(rawText);
                     isSlashMath = m.find();
                 }
 
@@ -480,29 +486,149 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                         int n1 = Integer.parseInt(m.group(1));
                         String op = isSlashMath ? "/" : m.group(2);
                         int n2 = Integer.parseInt(m.group(3));
-                        int ans;
-                        if ("+".equals(op)) ans = n1 + n2;
-                        else if ("-".equals(op)) ans = n1 - n2;
-                        else if ("*".equals(op) || "×".equals(op)) ans = n1 * n2;
-                        else if ("/".equals(op) || "÷".equals(op)) {
-                            if (n2 == 0) continue;
-                            ans = n1 / n2;
-                        } else continue;
 
-                        String ansStr = String.valueOf(ans);
-                        Log.i(TAG, "Math Quiz Detected: " + n1 + " " + op + " " + n2 + " = " + ansStr);
-                        for (NodeItem opt : allNodes) {
-                            if (opt.node != item.node && opt.text.trim().equals(ansStr)) {
-                                Log.i(TAG, "Tapping answer button: " + ansStr + " at " + opt.rect);
-                                tapNode(opt);
-                                solvedCount++;
-                                lastTapTime = now;
-                                lastProgressTime = now;
-                                currentStatus = "Solved #" + solvedCount + " (" + ansStr + ")";
-                                return;
+                        int ans = -1;
+                        if ("+".equals(op)) ans = n1 + n2;
+                        else if ("-".equals(op) || "–".equals(op) || "—".equals(op)) ans = n1 - n2;
+                        else if ("*".equals(op) || "×".equals(op) || "x".equalsIgnoreCase(op)) ans = n1 * n2;
+                        else if ("/".equals(op) || "÷".equals(op)) {
+                            if (n2 != 0 && (n1 % n2 == 0)) {
+                                ans = n1 / n2;
                             }
                         }
+
+                        if (ans >= 0) {
+                            detectedTarget = "MATH:" + n1 + op + n2 + "=" + ans;
+                            targetAnsStr = String.valueOf(ans);
+                            Log.i(TAG, "Math Quiz Detected in Question Zone: " + n1 + " " + op + " " + n2 + " = " + ans);
+                            break;
+                        }
                     } catch (Exception ignored) {}
+                }
+            }
+
+            // --- 5B. NUMBER CAPTCHA QUIZ DETECTION ---
+            if (detectedTarget == null) {
+                // Find target number in Question Zone (e.g. 3983)
+                NodeItem bestQNode = null;
+                int maxArea = -1;
+                for (NodeItem item : allNodes) {
+                    int cy = item.rect.centerY();
+                    if (cy < qMinY || cy > qMaxY) continue;
+
+                    String cleaned = cleanNumText(item.text);
+                    if (numPattern.matcher(cleaned).matches()) {
+                        int area = item.rect.width() * item.rect.height();
+                        if (area > maxArea) {
+                            maxArea = area;
+                            bestQNode = item;
+                        }
+                    }
+                }
+
+                if (bestQNode != null) {
+                    String targetNum = cleanNumText(bestQNode.text);
+                    detectedTarget = "CAPTCHA:" + targetNum;
+                    targetAnsStr = targetNum;
+                    Log.i(TAG, "Number Captcha Detected in Question Zone: " + targetNum + " at " + bestQNode.rect);
+                } else {
+                    // Fallback: check if single-digit nodes form the target in Question Zone
+                    List<NodeItem> digitNodes = new ArrayList<>();
+                    for (NodeItem item : allNodes) {
+                        int cy = item.rect.centerY();
+                        if (cy >= qMinY && cy <= qMaxY) {
+                            String cleaned = cleanNumText(item.text);
+                            if (cleaned.length() == 1 && Character.isDigit(cleaned.charAt(0))) {
+                                digitNodes.add(item);
+                            }
+                        }
+                    }
+                    if (digitNodes.size() >= 3 && digitNodes.size() <= 6) {
+                        Collections.sort(digitNodes, new Comparator<NodeItem>() {
+                            @Override
+                            public int compare(NodeItem a, NodeItem b) {
+                                return Integer.compare(a.rect.left, b.rect.left);
+                            }
+                        });
+                        StringBuilder sb = new StringBuilder();
+                        for (NodeItem d : digitNodes) {
+                            sb.append(cleanNumText(d.text));
+                        }
+                        String reconstructed = sb.toString();
+                        detectedTarget = "CAPTCHA:" + reconstructed;
+                        targetAnsStr = reconstructed;
+                        Log.i(TAG, "Reconstructed Captcha Target from single-digit nodes: " + reconstructed);
+                    }
+                }
+            }
+
+            // --- 5C. GENERAL DUPLICATE FALLBACK (If layout slightly shifted) ---
+            if (detectedTarget == null) {
+                Map<String, List<NodeItem>> numGroups = new HashMap<>();
+                for (NodeItem item : allNodes) {
+                    int cy = item.rect.centerY();
+                    // Exclude Header Zone (< qMinY) and Footer Zone (> optMaxY + 80)
+                    if (cy < qMinY || cy > (optMaxY + 80)) continue;
+
+                    String cleaned = cleanNumText(item.text);
+                    if (numPattern.matcher(cleaned).matches()) {
+                        List<NodeItem> list = numGroups.get(cleaned);
+                        if (list == null) {
+                            list = new ArrayList<>();
+                            numGroups.put(cleaned, list);
+                        }
+                        list.add(item);
+                    }
+                }
+
+                for (Map.Entry<String, List<NodeItem>> entry : numGroups.entrySet()) {
+                    if (entry.getValue().size() >= 2) {
+                        detectedTarget = "CAPTCHA:" + entry.getKey();
+                        targetAnsStr = entry.getKey();
+                        Log.i(TAG, "Fallback duplicate target detected: " + entry.getKey());
+                        break;
+                    }
+                }
+            }
+
+            // --- 5D. SOLVE TARGET IF DETECTED ---
+            if (detectedTarget != null && targetAnsStr != null) {
+                // Anti-Ghosting / Transition Protection:
+                // If this is the exact same target we just solved within the last 2.5 seconds,
+                // do NOT tap again! The UI is still transitioning to the next question.
+                if (detectedTarget.equals(lastSolvedTarget) && (now - lastSolveTime < 2500)) {
+                    // Waiting for screen to update to next question
+                    return;
+                }
+
+                // Find the answer button strictly in the Options Zone
+                NodeItem answerButton = null;
+                for (NodeItem opt : allNodes) {
+                    if (isForbiddenElement(opt)) continue;
+                    int cy = opt.rect.centerY();
+                    if (cy < (optMinY - 40) || cy > (optMaxY + 60)) continue;
+
+                    String optText = cleanNumText(opt.text);
+                    String optDesc = cleanNumText(opt.contentDesc);
+                    if (optText.equals(targetAnsStr) || optDesc.equals(targetAnsStr)) {
+                        answerButton = opt;
+                        break;
+                    }
+                }
+
+                if (answerButton != null) {
+                    Log.i(TAG, "⚡ SOLVING ANSWER: " + detectedTarget + " -> Tapping option button '" + targetAnsStr + "' at " + answerButton.rect);
+                    tapNode(answerButton);
+
+                    lastSolvedTarget = detectedTarget;
+                    lastSolveTime = now;
+                    lastTapTime = now;
+                    lastProgressTime = now;
+                    solvedCount++;
+                    currentStatus = "Solved #" + solvedCount + " (" + targetAnsStr + ")";
+                    return;
+                } else {
+                    Log.d(TAG, "Target detected (" + detectedTarget + "), but option button not yet visible in Options Zone.");
                 }
             }
 
