@@ -3981,6 +3981,14 @@ public class QuizEarnApp : Form
     {
         if (string.IsNullOrEmpty(xml)) return false;
 
+        // CRITICAL GUARD: Never treat Quiz screen navigation (like top-left back arrow) as ad close/skip buttons!
+        if (xml.Contains("Select the correct number") || 
+            (xml.Contains("Super Offer") && (xml.Contains("gems") || xml.Contains("/25") || xml.Contains("attempts left"))) ||
+            (xml.Contains("Quiz") && (xml.Contains("attempts left") || xml.Contains("gems"))))
+        {
+            return false;
+        }
+
         // Specific detection for Playable / Interactive Ads (e.g. Zivame, Reward granted)
         if (xml.Contains("Reward granted") || xml.Contains("Reward Granted") || xml.Contains("reveal matching pairs") || xml.Contains("matching pairs") || xml.Contains("Complete for an instant reward") || xml.Contains("Zivame"))
         {
@@ -4480,10 +4488,10 @@ public class QuizEarnApp : Form
                 }
 
                 // CASE 5: Quiz Screen Solving (Math Quiz & Captcha Quiz)
-                int qMinY = (int)(devHeight * 0.18);
-                int qMaxY = (int)(devHeight * 0.40);
-                int optMinY = (int)(devHeight * 0.42);
-                int optMaxY = (int)(devHeight * 0.68);
+                int qMinY = (int)(devHeight * 0.12);
+                int qMaxY = (int)(devHeight * 0.36);
+                int optMinY = (int)(devHeight * 0.28);
+                int optMaxY = (int)(devHeight * 0.60);
 
                 int btnX = 0, btnY = 0;
 
@@ -4517,14 +4525,14 @@ public class QuizEarnApp : Form
                             string ansStr = ans.ToString();
                             Log(string.Format("[Solver] Math in Question Zone: {0} {1} {2} = {3}", n1, op, n2, ans));
 
-                            // Find answer button strictly in Options Zone
+                            // Find answer button strictly in Options Zone below question
                             MatchCollection mAllAns = Regex.Matches(xml, string.Format(@"<node [^>]*text=""{0}""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""", ansStr));
                             foreach (Match ma in mAllAns)
                             {
                                 int ay1 = int.Parse(ma.Groups[2].Value);
                                 int ay2 = int.Parse(ma.Groups[4].Value);
                                 int acy = (ay1 + ay2) / 2;
-                                if (acy >= (optMinY - 40) && acy <= (optMaxY + 60))
+                                if (acy >= (optMinY - 40) && acy <= (optMaxY + 60) && acy > mcy)
                                 {
                                     btnX = (int.Parse(ma.Groups[1].Value) + int.Parse(ma.Groups[3].Value)) / 2;
                                     btnY = acy;
@@ -4552,6 +4560,7 @@ public class QuizEarnApp : Form
 
                 // --- 5B. CAPTCHA QUIZ (Number Matching) ---
                 string targetNumber = "";
+                int questionCenterY = -1;
                 MatchCollection mNumNodes = Regex.Matches(xml, @"<node [^>]*text=""(\d{3,6})""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
 
                 // 1. Find question target number strictly in Question Zone
@@ -4563,6 +4572,7 @@ public class QuizEarnApp : Form
                     if (cy >= qMinY && cy <= qMaxY)
                     {
                         targetNumber = m.Groups[1].Value;
+                        questionCenterY = cy;
                         break;
                     }
                 }
@@ -4582,6 +4592,7 @@ public class QuizEarnApp : Form
                         if (cy >= qMinY && cy <= qMaxY)
                         {
                             digits.Add(new DigitItem { Digit = d, X = x1 });
+                            if (questionCenterY < 0) questionCenterY = cy;
                         }
                     }
 
@@ -4604,7 +4615,7 @@ public class QuizEarnApp : Form
                     lastCaptcha = targetNumber;
                     Log(string.Format("[QUIZ] Target: '{0}' | Progress: {1}/25", targetNumber, currentOfferGems));
 
-                    // 2. Find option button strictly in Options Zone
+                    // 2. Find option button strictly in Options Zone below question
                     foreach (Match m in mNumNodes)
                     {
                         if (m.Groups[1].Value == targetNumber)
@@ -4612,7 +4623,7 @@ public class QuizEarnApp : Form
                             int y1 = int.Parse(m.Groups[3].Value);
                             int y2 = int.Parse(m.Groups[5].Value);
                             int cy = (y1 + y2) / 2;
-                            if (cy >= (optMinY - 40) && cy <= (optMaxY + 60))
+                            if (cy >= (optMinY - 40) && cy <= (optMaxY + 60) && (questionCenterY < 0 || cy > questionCenterY))
                             {
                                 int x1 = int.Parse(m.Groups[2].Value);
                                 int x2 = int.Parse(m.Groups[4].Value);
@@ -4623,7 +4634,7 @@ public class QuizEarnApp : Form
                         }
                     }
 
-                    // Fallback: search with content-desc in Options Zone
+                    // Fallback: search with content-desc in Options Zone below question
                     if (btnX == 0)
                     {
                         string optPattern = string.Format(@"<node [^>]*content-desc=""{0}""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""", targetNumber);
@@ -4633,7 +4644,7 @@ public class QuizEarnApp : Form
                             int oy1 = int.Parse(optMatch.Groups[2].Value);
                             int oy2 = int.Parse(optMatch.Groups[4].Value);
                             int ocy = (oy1 + oy2) / 2;
-                            if (ocy >= (optMinY - 40) && ocy <= (optMaxY + 60))
+                            if (ocy >= (optMinY - 40) && ocy <= (optMaxY + 60) && (questionCenterY < 0 || ocy > questionCenterY))
                             {
                                 int ox1 = int.Parse(optMatch.Groups[1].Value);
                                 int ox2 = int.Parse(optMatch.Groups[3].Value);
@@ -4661,8 +4672,8 @@ public class QuizEarnApp : Form
                     }
                 }
 
-                // Fallback check for any lingering ad close buttons
-                if (TryFindAndClickAdButton(xml, 25))
+                // Fallback check for any lingering ad close buttons (ONLY if not on Quiz screen)
+                if (!xml.Contains("Select the correct number") && !xml.Contains("Super Offer") && TryFindAndClickAdButton(xml, 0))
                 {
                     adsClosed++;
                     SaveStatsToFile();

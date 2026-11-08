@@ -448,17 +448,18 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             int screenH = getResources().getDisplayMetrics().heightPixels;
 
             // Strict spatial zones to prevent ANY header/footer badge misidentification:
-            // - Header Zone: Y < screenH * 0.18 (Gems counter, Gift badges, Quiz title) -> EXCLUDED
-            // - Question Card Zone: screenH * 0.18 <= Y <= screenH * 0.40 (Math equation / Captcha number)
-            // - Options Grid Zone: screenH * 0.42 <= Y <= screenH * 0.68 (2x2 grid of 4 answer buttons)
-            // - Footer Zone: Y > screenH * 0.68 (Super offer milestones, 1000 coins text, My Offers) -> EXCLUDED
-            int qMinY = (int) (screenH * 0.18);
-            int qMaxY = (int) (screenH * 0.40);
-            int optMinY = (int) (screenH * 0.42);
-            int optMaxY = (int) (screenH * 0.68);
+            // - Header Zone: Y < screenH * 0.12 (Gems counter, Gift badges, Quiz title) -> EXCLUDED
+            // - Question Card Zone: screenH * 0.12 <= Y <= screenH * 0.36 (Math equation / Captcha number)
+            // - Options Grid Zone: screenH * 0.28 <= Y <= screenH * 0.60 (2x2 grid of 4 answer buttons)
+            // - Footer Zone: Y > screenH * 0.60 (Super offer milestones, 1000 coins text, My Offers) -> EXCLUDED
+            int qMinY = (int) (screenH * 0.12);
+            int qMaxY = (int) (screenH * 0.36);
+            int optMinY = (int) (screenH * 0.28);
+            int optMaxY = (int) (screenH * 0.60);
 
             String detectedTarget = null;
             String targetAnsStr = null;
+            int questionCenterY = -1;
 
             // --- 5A. MATH QUIZ DETECTION ---
             for (NodeItem item : allNodes) {
@@ -500,6 +501,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                         if (ans >= 0) {
                             detectedTarget = "MATH:" + n1 + op + n2 + "=" + ans;
                             targetAnsStr = String.valueOf(ans);
+                            questionCenterY = cy;
                             Log.i(TAG, "Math Quiz Detected in Question Zone: " + n1 + " " + op + " " + n2 + " = " + ans);
                             break;
                         }
@@ -530,6 +532,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     String targetNum = cleanNumText(bestQNode.text);
                     detectedTarget = "CAPTCHA:" + targetNum;
                     targetAnsStr = targetNum;
+                    questionCenterY = bestQNode.rect.centerY();
                     Log.i(TAG, "Number Captcha Detected in Question Zone: " + targetNum + " at " + bestQNode.rect);
                 } else {
                     // Fallback: check if single-digit nodes form the target in Question Zone
@@ -601,12 +604,13 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     return;
                 }
 
-                // Find the answer button strictly in the Options Zone
+                // Find the answer button strictly in the Options Zone below the question
                 NodeItem answerButton = null;
                 for (NodeItem opt : allNodes) {
                     if (isForbiddenElement(opt)) continue;
                     int cy = opt.rect.centerY();
                     if (cy < (optMinY - 40) || cy > (optMaxY + 60)) continue;
+                    if (questionCenterY > 0 && cy <= questionCenterY) continue;
 
                     String optText = cleanNumText(opt.text);
                     String optDesc = cleanNumText(opt.contentDesc);
