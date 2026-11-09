@@ -355,38 +355,64 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
-            // Pattern B: Match split nodes in Super Offer row: [X] [/] [25] or [X] [/25]
+            // Pattern B: Match split nodes in Super Offer row: [X] [/] [25]
             if (detectedGems < 0) {
-                for (int i = 0; i < allNodes.size(); i++) {
-                    String nodeT = allNodes.get(i).text.trim();
-                    if (nodeT.equals("/") || nodeT.equals("/25") || nodeT.equals("/ 25")) {
-                        if (i > 0) {
-                            NodeItem prev = allNodes.get(i - 1);
-                            try {
-                                int g = Integer.parseInt(prev.text.trim());
-                                int diffY = Math.abs(prev.rect.centerY() - allNodes.get(i).rect.centerY());
-                                if (diffY < 80) {
-                                    detectedGems = g;
-                                    break;
-                                }
-                            } catch (Exception ignored) {}
-                        }
+                for (int i = 0; i < allNodes.size() - 2; i++) {
+                    NodeItem itemCur = allNodes.get(i);
+                    NodeItem itemSlash = allNodes.get(i + 1);
+                    NodeItem item25 = allNodes.get(i + 2);
+
+                    String slashT = itemSlash.text.trim();
+                    String t25 = item25.text.trim();
+                    if (slashT.equals("/") && t25.equals("25")) {
+                        try {
+                            int g = Integer.parseInt(itemCur.text.trim());
+                            if (g >= 0 && g <= 25) {
+                                detectedGems = g;
+                                break;
+                            }
+                        } catch (Exception ignored) {}
                     }
                 }
             }
 
-            // Pattern C: Top-right header gem badge ([💎] [X] in header bar)
+            // Pattern B2: Single node slash followed by 25: [X] [/25]
+            if (detectedGems < 0) {
+                for (int i = 0; i < allNodes.size() - 1; i++) {
+                    NodeItem itemCur = allNodes.get(i);
+                    NodeItem itemSlash25 = allNodes.get(i + 1);
+                    String s25 = itemSlash25.text.replaceAll("\\s+", "");
+                    if (s25.equals("/25")) {
+                        try {
+                            int g = Integer.parseInt(itemCur.text.trim());
+                            if (g >= 0 && g <= 25) {
+                                detectedGems = g;
+                                break;
+                            }
+                        } catch (Exception ignored) {}
+                    }
+                }
+            }
+
+            // Pattern C: Top-right header gem badge (rightmost counter in header bar)
             if (detectedGems < 0) {
                 int screenW = getResources().getDisplayMetrics().widthPixels;
                 int screenH = getResources().getDisplayMetrics().heightPixels;
+                int maxCx = -1;
                 for (NodeItem item : allNodes) {
                     int cx = item.rect.centerX();
                     int cy = item.rect.centerY();
-                    if (cx > (int)(screenW * 0.70) && cy < (int)(screenH * 0.15)) {
-                        if (item.text.matches("^\\d{1,3}$")) {
+                    // Header row: top 12% of screen, right 30% of screen
+                    if (cx > (int)(screenW * 0.70) && cy < (int)(screenH * 0.12)) {
+                        String cleaned = item.text.trim();
+                        if (cleaned.matches("^\\d{1,2}$")) {
                             try {
-                                detectedGems = Integer.parseInt(item.text.trim());
-                                break;
+                                int val = Integer.parseInt(cleaned);
+                                // The gem badge is always the rightmost element in the header (gifts are on the left)
+                                if (cx > maxCx && val >= 0 && val <= 25) {
+                                    maxCx = cx;
+                                    detectedGems = val;
+                                }
                             } catch (Exception ignored) {}
                         }
                     }
@@ -473,10 +499,11 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             // - Question Card Zone: screenH * 0.12 <= Y <= screenH * 0.36 (Math equation / Captcha number)
             // - Options Grid Zone: screenH * 0.28 <= Y <= screenH * 0.60 (2x2 grid of 4 answer buttons)
             // - Footer Zone: Y > screenH * 0.60 (Super offer milestones, 1000 coins text, My Offers) -> EXCLUDED
-            int qMinY = (int) (screenH * 0.12);
-            int qMaxY = (int) (screenH * 0.36);
-            int optMinY = (int) (screenH * 0.28);
-            int optMaxY = (int) (screenH * 0.60);
+            // Adaptable spatial zones for all aspect ratios & screen resolutions (720p, 1080p, 2K, 16:9 to 21:9):
+            int qMinY = (int) (screenH * 0.10);
+            int qMaxY = (int) (screenH * 0.38);
+            int optMinY = (int) (screenH * 0.26);
+            int optMaxY = (int) (screenH * 0.65);
 
             String detectedTarget = null;
             String targetAnsStr = null;

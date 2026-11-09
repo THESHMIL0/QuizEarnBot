@@ -2463,8 +2463,9 @@ public class QuizEarnApp : Form
 
     private bool EnsureConnected()
     {
-        // 1. Check existing connected devices (ONLY BlueStacks / Emulators! Physical phones are ignored)
+        // 1. Check existing connected devices (Emulators first, then any physical Android device)
         string devOut = RunAdb("devices");
+        string physicalFallback = null;
         foreach (string line in devOut.Split('\n'))
         {
             string trimmed = line.Trim();
@@ -2478,9 +2479,13 @@ public class QuizEarnApp : Form
                 if (IsEmulatorDevice(id))
                 {
                     adbPort = id;
-                    UpdatePortLabel(adbPort);
+                    UpdatePortLabel("Emulator: " + adbPort);
                     UpdateScreenResolution();
                     return true;
+                }
+                else if (string.IsNullOrEmpty(physicalFallback))
+                {
+                    physicalFallback = id;
                 }
             }
         }
@@ -2495,14 +2500,24 @@ public class QuizEarnApp : Form
                 if (res.Contains("connected to") || res.Contains("already connected"))
                 {
                     adbPort = port;
-                    UpdatePortLabel(adbPort);
+                    UpdatePortLabel("Emulator: " + adbPort);
                     UpdateScreenResolution();
                     return true;
                 }
             }
         }
 
-        // 3. Final verification: ONLY match emulators
+        // 3. Connect to physical phone if plugged in
+        if (!string.IsNullOrEmpty(physicalFallback))
+        {
+            adbPort = physicalFallback;
+            UpdatePortLabel("Phone: " + adbPort);
+            UpdateScreenResolution();
+            Log(string.Format("[ADB] Connected to physical Android device: {0}", adbPort));
+            return true;
+        }
+
+        // 4. Final verification: accept ANY device
         devOut = RunAdb("devices");
         foreach (string line in devOut.Split('\n'))
         {
@@ -2513,19 +2528,16 @@ public class QuizEarnApp : Form
             string[] parts = trimmed.Split(new char[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length >= 2 && parts[1].ToLower() == "device")
             {
-                string id = parts[0];
-                if (IsEmulatorDevice(id))
-                {
-                    adbPort = id;
-                    UpdatePortLabel(adbPort);
-                    UpdateScreenResolution();
-                    return true;
-                }
+                adbPort = parts[0];
+                UpdatePortLabel("Device: " + adbPort);
+                UpdateScreenResolution();
+                Log(string.Format("[ADB] Connected to device: {0}", adbPort));
+                return true;
             }
         }
 
-        UpdatePortLabel("Start BlueStacks! (Phone ignored)");
-        Log("[ADB] No BlueStacks instance found. Physical phones are ignored (use the Mobile APK on phone).");
+        UpdatePortLabel("No Device Connected");
+        Log("[ADB] No Android device or emulator detected. Connect phone via USB with USB Debugging enabled, or start BlueStacks.");
         return false;
     }
 
@@ -4686,6 +4698,10 @@ public class QuizEarnApp : Form
                     }
 
                     Match mGemsProg = Regex.Match(xml, @"(?:text|content-desc)=""(\d+)/25");
+                    if (!mGemsProg.Success)
+                    {
+                        mGemsProg = Regex.Match(xml, @"text=""(\d{1,2})""[^>]*>\s*<node[^>]*text=""/""[^>]*>\s*<node[^>]*text=""25""", RegexOptions.Singleline);
+                    }
                     if (mGemsProg.Success)
                     {
                         currentOfferGems = int.Parse(mGemsProg.Groups[1].Value) + 1;
@@ -4743,10 +4759,43 @@ public class QuizEarnApp : Form
                 }
 
                 // CASE 5: Quiz Screen Solving (Math Quiz & Captcha Quiz)
-                int qMinY = (int)(devHeight * 0.12);
-                int qMaxY = (int)(devHeight * 0.36);
-                int optMinY = (int)(devHeight * 0.28);
-                int optMaxY = (int)(devHeight * 0.60);
+                // Real-time gem detection directly from the active quiz screen
+                Match mLiveGems = Regex.Match(xml, @"(?:text|content-desc)=""(\d{1,2})\s*/\s*25");
+                if (!mLiveGems.Success)
+                {
+                    mLiveGems = Regex.Match(xml, @"text=""(\d{1,2})""[^>]*>\s*<node[^>]*text=""/""[^>]*>\s*<node[^>]*text=""25""", RegexOptions.Singleline);
+                }
+                if (mLiveGems.Success)
+                {
+                    int pg = int.Parse(mLiveGems.Groups[1].Value);
+                    if (pg >= 0 && pg <= 25)
+                    {
+                        currentOfferGems = pg;
+                        UpdateDashboard(lastCaptcha);
+                    }
+                }
+
+                // Auto-stop if 25 gems reached
+                if (currentOfferGems >= 25)
+                {
+                    Log("[ALERT] 25 GEMS TARGET REACHED! Milestone achieved. Bot STOPPED automatically.");
+                    Play25GemsMilestoneAlert();
+                    if (this.InvokeRequired)
+                    {
+                        SafeBeginInvoke(new Action(delegate {
+                            lblStatus.Text = "STOPPED - 25 Gems Reached! (Claim Ready)";
+                            lblStatus.ForeColor = Color.FromArgb(76, 175, 80);
+                        }));
+                    }
+                    StopBot();
+                    return;
+                }
+
+                // Adaptable spatial zones for all aspect ratios & screen heights (720p, 1080p, 2K, 16:9 to 21:9)
+                int qMinY = (int)(devHeight * 0.10);
+                int qMaxY = (int)(devHeight * 0.38);
+                int optMinY = (int)(devHeight * 0.26);
+                int optMaxY = (int)(devHeight * 0.65);
 
                 int btnX = 0, btnY = 0;
 
