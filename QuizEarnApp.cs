@@ -3171,7 +3171,7 @@ public class QuizEarnApp : Form
 
     private int ParseSecondsNeeded(string xml, int buttonY = 0)
     {
-        // 1. Isolate text near buttonY (+/- 180px) to inspect the specific active card rather than global page
+        // 1. Isolate text near buttonY (+/- 240px) to inspect the specific active card rather than global page
         string cardScope = xml;
         if (buttonY > 0)
         {
@@ -3186,7 +3186,7 @@ public class QuizEarnApp : Form
                     int y1 = int.Parse(m.Groups[3].Value);
                     int y2 = int.Parse(m.Groups[5].Value);
                     int yc = (y1 + y2) / 2;
-                    if (Math.Abs(yc - buttonY) <= 180)
+                    if (Math.Abs(yc - buttonY) <= 240)
                     {
                         nearTexts.Add(t);
                     }
@@ -3194,14 +3194,15 @@ public class QuizEarnApp : Form
                 if (nearTexts.Count > 0)
                 {
                     cardScope = string.Join(" | ", nearTexts);
-                    Log(string.Format("[ðŸ’Ž Claimer] Card node texts near Y={0}: {1}", buttonY, cardScope.Length > 100 ? cardScope.Substring(0, 100) + "..." : cardScope));
+                    Log(string.Format("[💎 Claimer] Card node texts near Y={0}: {1}", buttonY, cardScope.Length > 100 ? cardScope.Substring(0, 100) + "..." : cardScope));
                 }
             }
             catch {}
         }
 
-        // 0. Check if usage is already verified or 100% completed on this card!
+        // 0. Check if usage is already verified, approved, or 100% completed on this card!
         if (cardScope.IndexOf("Usage verified", StringComparison.OrdinalIgnoreCase) >= 0 ||
+            cardScope.IndexOf("Approved", StringComparison.OrdinalIgnoreCase) >= 0 ||
             Regex.IsMatch(cardScope, @"\b100\s*%", RegexOptions.IgnoreCase))
         {
             return 0;
@@ -3213,7 +3214,8 @@ public class QuizEarnApp : Form
         {
             int mins = int.Parse(m1.Groups[1].Value);
             int secs = int.Parse(m1.Groups[2].Value);
-            return (mins * 60) + secs + 4;
+            int total = (mins * 60) + secs;
+            return total > 0 ? total + 4 : 0;
         }
 
         // B. e.g. "1m more needed" or "5 min more needed"
@@ -3221,18 +3223,18 @@ public class QuizEarnApp : Form
         if (m1b.Success)
         {
             int mins = int.Parse(m1b.Groups[1].Value);
-            return (mins * 60) + 4;
+            return mins > 0 ? (mins * 60) + 4 : 0;
         }
 
-        // C. e.g. "45s more needed" or "30 sec more needed"
+        // C. e.g. "45s more needed" or "30 sec more needed" or "28s more needed"
         Match m2 = Regex.Match(cardScope, @"(\d+)\s*s(?:ec)?\s*more\s*needed", RegexOptions.IgnoreCase);
         if (m2.Success)
         {
             int secs = int.Parse(m2.Groups[1].Value);
-            return secs + 4;
+            return secs > 0 ? secs + 4 : 0;
         }
 
-        // D. e.g. "Usage Progress 4m 5s / 12m 0s"
+        // D. e.g. "Usage Progress 4m 5s / 12m 0s" or "Usage Progress 3m 33s / 4m 0s"
         Match mProgress = Regex.Match(cardScope, @"(\d+)\s*m\s*(\d+)\s*s\s*\/\s*(\d+)\s*m\s*(\d+)\s*s", RegexOptions.IgnoreCase);
         if (mProgress.Success)
         {
@@ -3259,7 +3261,7 @@ public class QuizEarnApp : Form
         if (m3.Success)
         {
             int mins = int.Parse(m3.Groups[1].Value);
-            return (mins * 60) + 4;
+            return mins > 0 ? (mins * 60) + 4 : 0;
         }
 
         // G. e.g. "Tap 'Open App' to start using it for 12 min"
@@ -3267,19 +3269,10 @@ public class QuizEarnApp : Form
         if (m4.Success)
         {
             int mins = int.Parse(m4.Groups[1].Value);
-            return (mins * 60) + 4;
+            return mins > 0 ? (mins * 60) + 4 : 0;
         }
 
-        // H. Fallback: Check if cardScope contains "Xm Ys"
-        Match mFall = Regex.Match(cardScope, @"(\d+)\s*m\s*(\d+)\s*s", RegexOptions.IgnoreCase);
-        if (mFall.Success)
-        {
-            int mins = int.Parse(mFall.Groups[1].Value);
-            int secs = int.Parse(mFall.Groups[2].Value);
-            return (mins * 60) + secs + 4;
-        }
-
-        return 65;
+        return 0;
     }
     private bool FindAndClickReadyOfferCard(string xml, HashSet<string> skippedApps, out string clickedTitle)
     {
@@ -3396,9 +3389,9 @@ public class QuizEarnApp : Form
     {
         int consecutiveLoops = 0;
         int scrollAttempts = 0;
+        int consecutiveVerifyTaps = 0;
         string appTitle = targetTitle ?? "";
         string offerPkg = "";
-        bool justCompletedAppStay = false;
 
         try
         {
@@ -3421,124 +3414,132 @@ public class QuizEarnApp : Form
                     if (tm2.Success) appTitle = tm2.Groups[1].Value.Trim();
                 }
 
-                // Extract Offer App Package Name from top of detail page (e.g. com.ind.circuitpath, wni.WeathernewsTouch.jp)
-                Match pm = Regex.Match(xml, @"<node[^>]*text=""([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)+)""");
-                if (pm.Success)
+                // Extract Offer App Package Name from top of detail page (e.g. com.booking, com.ind.circuitpath, wni.WeathernewsTouch.jp)
+                MatchCollection pms = Regex.Matches(xml, @"<node[^>]*text=""([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)+)""");
+                foreach (Match pm in pms)
                 {
                     string candidate = pm.Groups[1].Value.Trim();
-                    if (candidate != "com.quiz.earn.money.game" && !candidate.StartsWith("android."))
+                    if (candidate != "com.quiz.earn.money.game" && 
+                        !candidate.StartsWith("android.") && 
+                        !candidate.StartsWith("com.android.") && 
+                        !candidate.StartsWith("com.google.") && 
+                        !candidate.Contains("accessibility"))
                     {
                         offerPkg = candidate;
+                        break;
                     }
                 }
 
-                // 1. Check for Claim Button first! (Matches "Claim" in text or content-desc)
+                // 1. Check for Claim Button first! (Matches "Claim" or "CLAIM" in text or content-desc)
                 int cx, cy;
-                if (TryFindNodeBounds(xml, "Claim", out cx, out cy))
+                if ((TryFindNodeBounds(xml, "Claim", out cx, out cy) || 
+                     TryFindNodeBounds(xml, "CLAIM", out cx, out cy)) && cy < 1560)
                 {
-                    // SAFETY: Never tap navigation bar (cy < 1560)
-                    if (cy < 1560)
+                    int rewardCoins = 100;
+                    try
                     {
-                        int rewardCoins = 100;
-                        try
+                        MatchCollection cms = Regex.Matches(xml, @"<node[^>]*text=""([0-9]{2,5})""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
+                        int bestDist = int.MaxValue;
+                        foreach (Match cm in cms)
                         {
-                            MatchCollection cms = Regex.Matches(xml, @"<node[^>]*text=""([0-9]{2,5})""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
-                            int bestDist = int.MaxValue;
-                            foreach (Match cm in cms)
+                            int ny = (int.Parse(cm.Groups[3].Value) + int.Parse(cm.Groups[5].Value)) / 2;
+                            int dist = Math.Abs(ny - cy);
+                            if (dist < bestDist && dist < 160)
                             {
-                                int ny = (int.Parse(cm.Groups[3].Value) + int.Parse(cm.Groups[5].Value)) / 2;
-                                int dist = Math.Abs(ny - cy);
-                                if (dist < bestDist && dist < 160)
+                                bestDist = dist;
+                                int val;
+                                if (int.TryParse(cm.Groups[1].Value, out val) && val > 0)
                                 {
-                                    bestDist = dist;
-                                    int val;
-                                    if (int.TryParse(cm.Groups[1].Value, out val) && val > 0)
-                                    {
-                                        rewardCoins = val;
-                                    }
+                                    rewardCoins = val;
                                 }
                             }
                         }
-                        catch {}
-
-                        Log(string.Format("[💎 Claimer] Milestone / Bonus ready! Tapping CLAIM (+{0} Coins) at ({1}, {2})...", rewardCoins, cx, cy));
-                        AdbTap(cx, cy);
-
-                        todayCoinsClaimed += rewardCoins;
-                        totalCoinsClaimed += rewardCoins;
-                        todayOffersClaimed++;
-                        totalOffersClaimed++;
-                        string titleTag = string.IsNullOrEmpty(appTitle) ? (string.IsNullOrEmpty(targetTitle) ? "Offer Milestone" : targetTitle) : appTitle;
-                        AddClaimHistory(string.Format("{0} (+{1:N0} Coins)", titleTag, rewardCoins));
-                        SaveStatsToFile();
-                        UpdateDataDashboard();
-
-                        justCompletedAppStay = false;
-                        Thread.Sleep(3000);
-                        RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
-                        Thread.Sleep(2000);
-                        continue; // Re-check if next milestone unlocked!
                     }
+                    catch {}
+
+                    Log(string.Format("[💎 Claimer] Milestone / Bonus ready! Tapping CLAIM (+{0} Coins) at ({1}, {2})...", rewardCoins, cx, cy));
+                    AdbTap(cx, cy);
+
+                    todayCoinsClaimed += rewardCoins;
+                    totalCoinsClaimed += rewardCoins;
+                    todayOffersClaimed++;
+                    totalOffersClaimed++;
+                    string titleTag = string.IsNullOrEmpty(appTitle) ? (string.IsNullOrEmpty(targetTitle) ? "Offer Milestone" : targetTitle) : appTitle;
+                    AddClaimHistory(string.Format("{0} (+{1:N0} Coins)", titleTag, rewardCoins));
+                    SaveStatsToFile();
+                    UpdateDataDashboard();
+
+                    consecutiveVerifyTaps = 0;
+                    Thread.Sleep(3000);
+                    RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
+                    Thread.Sleep(2000);
+                    continue; // Re-check if next milestone unlocked!
                 }
 
-                // 1.5 If we just returned from app stay and "Verify Usage" is still present, tap it!
-                if (justCompletedAppStay)
+                // 2. Check for "Verify Usage" OR "Open App" Button!
+                int vx = 0, vy = 0;
+                bool isVerify = TryFindNodeBounds(xml, "Verify Usage", out vx, out vy) || 
+                                TryFindNodeBounds(xml, "Verify", out vx, out vy);
+                int ox = 0, oy = 0;
+                bool isOpenApp = !isVerify && TryFindNodeBounds(xml, "Open App", out ox, out oy);
+
+                int actionX = isVerify ? vx : (isOpenApp ? ox : 0);
+                int actionY = isVerify ? vy : (isOpenApp ? oy : 0);
+
+                if ((isVerify || isOpenApp) && actionY < 1560)
                 {
-                    int vx, vy;
-                    if (TryFindNodeBounds(xml, "Verify Usage", out vx, out vy) || 
-                        TryFindNodeBounds(xml, "Verify", out vx, out vy))
+                    // If button is "Verify Usage", tap it first to submit/refresh usage verification!
+                    if (isVerify)
                     {
-                        if (vy < 1560)
+                        Log(string.Format("[💎 Claimer] Found 'Verify Usage' at ({0}, {1}). Tapping to verify usage...", actionX, actionY));
+                        AdbTap(actionX, actionY);
+                        Thread.Sleep(4000); // Allow Quiz & Earn to query UsageStats & update card UI
+
+                        // Re-dump XML right after tapping Verify Usage
+                        string afterVerifyXml = DumpAndReadXml("/sdcard/after_verify.xml");
+                        if (!string.IsNullOrEmpty(afterVerifyXml))
                         {
-                            Log(string.Format("[💎 Claimer] Verification pending after app stay. Tapping 'Verify Usage' at ({0}, {1})...", vx, vy));
-                            AdbTap(vx, vy);
-                            justCompletedAppStay = false;
-                            Thread.Sleep(4000); // Allow Quiz & Earn to query UsageStats & update card
-                            continue; // Re-check for Claim button
+                            xml = afterVerifyXml;
+
+                            // Did "Claim" appear after verifying?
+                            int ncx, ncy;
+                            if ((TryFindNodeBounds(xml, "Claim", out ncx, out ncy) || 
+                                 TryFindNodeBounds(xml, "CLAIM", out ncx, out ncy)) && ncy < 1560)
+                            {
+                                Log(string.Format("[💎 Claimer] Verified! 'Claim' button unlocked at ({0}, {1}). Proceeding to claim...", ncx, ncy));
+                                continue; // Will hit Section 1 on next iteration and claim!
+                            }
                         }
                     }
-                    justCompletedAppStay = false;
-                }
 
-                // 2. Check for Open App OR Verify Usage Button!
-                int ox, oy;
-                bool hasActionBtn = TryFindNodeBounds(xml, "Open App", out ox, out oy);
-                bool isVerifyBtn = false;
-                if (!hasActionBtn)
-                {
-                    hasActionBtn = TryFindNodeBounds(xml, "Verify Usage", out ox, out oy);
-                    isVerifyBtn = hasActionBtn;
-                }
+                    // Check if more time is still needed in the app (e.g. "28s more needed", "1m more needed")
+                    int staySeconds = ParseSecondsNeeded(xml, actionY);
 
-                if (hasActionBtn)
-                {
-                    if (oy < 1560)
+                    // If it was "Open App" and ParseSecondsNeeded didn't find specific remaining text, default to 65s (1 min)
+                    if (isOpenApp && staySeconds <= 0)
                     {
-                    int staySeconds = ParseSecondsNeeded(xml, oy);
-                    if (staySeconds <= 0)
-                    {
-                        Log(string.Format("[ðŸ’Ž Claimer] Usage requirement fulfilled! Quick-tapping '{0}' at ({1}, {2})...", isVerifyBtn ? "Verify Usage" : "Open App", ox, oy));
-                        AdbTap(ox, oy);
-                        Thread.Sleep(3000);
-                        continue; // Re-check screen for Claim button!
+                        staySeconds = 65;
                     }
 
-                    Log(string.Format("[ðŸ’Ž Claimer] Found '{0}' for Bonus / Milestone! Time required: {1}s ({2}m {3}s)...", isVerifyBtn ? "Verify Usage" : "Open App", staySeconds, staySeconds / 60, staySeconds % 60));
-
-                    if (isVerifyBtn && !string.IsNullOrEmpty(offerPkg))
+                    if (staySeconds > 0)
                     {
-                        Log(string.Format("[ðŸ’Ž Claimer] Launching '{0}' to complete remaining usage time...", offerPkg));
-                        RunAdb(string.Format("shell monkey -p {0} -c android.intent.category.LAUNCHER 1", offerPkg));
-                        Thread.Sleep(3500);
-                    }
-                    else
-                    {
-                        AdbTap(ox, oy);
-                        Thread.Sleep(3500);
-                    }
+                        // User requirement: "if it still need to stay in the app go back and stay for the time"
+                        Log(string.Format("[💎 Claimer] Usage required: {0}s ({1}m {2}s) in app '{3}'. Launching to complete time...", 
+                            staySeconds, staySeconds / 60, staySeconds % 60, string.IsNullOrEmpty(offerPkg) ? "target app" : offerPkg));
 
-                    // Check and dismiss any notification / permission popup immediately on launch!
-                    DismissAppDialogs();
+                        if (!string.IsNullOrEmpty(offerPkg))
+                        {
+                            RunAdb(string.Format("shell monkey -p {0} -c android.intent.category.LAUNCHER 1", offerPkg));
+                            Thread.Sleep(3500);
+                        }
+                        else
+                        {
+                            AdbTap(actionX, actionY);
+                            Thread.Sleep(3500);
+                        }
+
+                        // Check and dismiss any notification / permission popup immediately on launch!
+                        DismissAppDialogs();
 
                         string targetPkg = ExtractPackageName(GetCurrentFocus());
                         if (targetPkg == "com.android.vending" || targetPkg.Contains("vending") || targetPkg.Contains("google.android.finsky"))
@@ -3563,11 +3564,13 @@ public class QuizEarnApp : Form
                             Thread.Sleep(3500);
                             targetPkg = ExtractPackageName(GetCurrentFocus());
                         }
+
                         if (targetPkg == "com.quiz.earn.money.game")
                         {
                             Log("[Claimer] Warning: Target app could not be opened. Returning to offers list...");
                             break;
                         }
+
                         Log(string.Format("[💎 Claimer] Staying active in app '{0}' for {1}s...", targetPkg, staySeconds));
 
                         int remaining = staySeconds;
@@ -3615,26 +3618,59 @@ public class QuizEarnApp : Form
 
                         if (!isAutoOffering) return;
 
+                        // User requirement: "cime again clime if the button there or if it veryfy tap it again to veryfy the time"
                         Log("[💎 Claimer] Required time completed! Returning to Quiz & Earn...");
                         RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
                         Thread.Sleep(3000);
 
-                        // CRITICAL FIX: Tap "Verify Usage" immediately so Quiz & Earn tracks the completed time!
-                        // Otherwise, the card retains stale unverified time and forces a 2nd redundant app stay!
+                        consecutiveVerifyTaps = 0;
+
+                        // Check what's on screen upon returning:
                         string retXml = DumpAndReadXml("/sdcard/after_usage.xml");
-                        int rvx, rvy;
-                        if (TryFindNodeBounds(retXml, "Verify Usage", out rvx, out rvy) || 
-                            TryFindNodeBounds(retXml, "Verify", out rvx, out rvy))
+                        int rcx, rcy;
+                        if ((TryFindNodeBounds(retXml, "Claim", out rcx, out rcy) || 
+                             TryFindNodeBounds(retXml, "CLAIM", out rcx, out rcy)) && rcy < 1560)
                         {
-                            if (rvy < 1560)
+                            Log(string.Format("[💎 Claimer] Claim button already visible at ({0}, {1})! Claiming...", rcx, rcy));
+                            continue; // Section 1 will claim it!
+                        }
+
+                        int rvx, rvy;
+                        if ((TryFindNodeBounds(retXml, "Verify Usage", out rvx, out rvy) || 
+                             TryFindNodeBounds(retXml, "Verify", out rvx, out rvy)) && rvy < 1560)
+                        {
+                            Log(string.Format("[💎 Claimer] Returned from app! Tapping 'Verify Usage' at ({0}, {1}) to verify newly elapsed time...", rvx, rvy));
+                            AdbTap(rvx, rvy);
+                            Thread.Sleep(4000); // Allow Quiz & Earn to query UsageStats & update card
+                        }
+                        continue; // Re-check screen: if Claim -> claims; if more time needed -> goes back to app!
+                    }
+                    else
+                    {
+                        // staySeconds <= 0
+                        // User requirement: "or if it veryfy tap it again to veryfy the time"
+                        if (isVerify)
+                        {
+                            consecutiveVerifyTaps++;
+                            if (consecutiveVerifyTaps <= 2)
                             {
-                                Log(string.Format("[💎 Claimer] Returned from app! Tapping 'Verify Usage' at ({0}, {1}) to submit tracked time...", rvx, rvy));
-                                AdbTap(rvx, rvy);
-                                Thread.Sleep(4000); // Allow Quiz & Earn to query UsageStats & update card
+                                Log(string.Format("[💎 Claimer] Usage appears fulfilled. Tapping 'Verify Usage' again ({0}/2) to confirm with server...", consecutiveVerifyTaps));
+                                AdbTap(actionX, actionY);
+                                Thread.Sleep(4000);
+                                continue;
+                            }
+                            else
+                            {
+                                Log("[💎 Claimer] 'Verify Usage' tapped multiple times without unlocking Claim. Moving to inspect lower milestones...");
                             }
                         }
-                        justCompletedAppStay = true;
-                        continue; // Re-check screen for Claim button!
+                        else if (isOpenApp)
+                        {
+                            Log(string.Format("[💎 Claimer] Tapping 'Open App' at ({0}, {1})...", actionX, actionY));
+                            AdbTap(actionX, actionY);
+                            Thread.Sleep(3000);
+                            continue;
+                        }
                     }
                 }
 
