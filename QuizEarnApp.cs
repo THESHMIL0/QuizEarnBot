@@ -4231,7 +4231,7 @@ public class QuizEarnApp : Form
                 continue;
             }
 
-            bool isMatch = Regex.IsMatch(txt, @"(close|skip|dismiss|next-button|mbridge_iv_close|close_button|btn_close|tt_video_ad_close|iv_close|ia_clickable_close_button|al_close_button|unity_close_button|vungle_close_button|btn_back|iv_back|button_back|no thanks|not now|close video|close ad|skip video|skip ad|leave|exit|✕|✖|⨯|×|\bX\b|>>|››|»|>|)", RegexOptions.IgnoreCase);
+            bool isMatch = Regex.IsMatch(txt, @"(close|skip|dismiss|next-button|mbridge_iv_close|close_button|btn_close|tt_video_ad_close|iv_close|ia_clickable_close_button|al_close_button|unity_close_button|vungle_close_button|btn_back|iv_back|button_back|no thanks|not now|close video|close ad|skip video|skip ad|leave|exit|✕|✖|⨯|×|\bX\b|>>|››|»|>\|)", RegexOptions.IgnoreCase);
 
             Match bMatch = Regex.Match(txt, @"bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
             if (bMatch.Success)
