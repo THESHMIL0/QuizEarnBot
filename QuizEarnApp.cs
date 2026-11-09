@@ -3169,9 +3169,8 @@ public class QuizEarnApp : Form
         return false;
     }
 
-    private int ParseSecondsNeeded(string xml, int buttonY = 0)
+    private bool IsUsageCompleted(string xml, int buttonY = 0)
     {
-        // 1. Isolate text near buttonY (+/- 240px) to inspect the specific active card rather than global page
         string cardScope = xml;
         if (buttonY > 0)
         {
@@ -3186,7 +3185,39 @@ public class QuizEarnApp : Form
                     int y1 = int.Parse(m.Groups[3].Value);
                     int y2 = int.Parse(m.Groups[5].Value);
                     int yc = (y1 + y2) / 2;
-                    if (Math.Abs(yc - buttonY) <= 240)
+                    if (Math.Abs(yc - buttonY) <= 140)
+                    {
+                        nearTexts.Add(t);
+                    }
+                }
+                if (nearTexts.Count > 0) cardScope = string.Join(" | ", nearTexts);
+            }
+            catch {}
+        }
+
+        return cardScope.IndexOf("Usage verified", StringComparison.OrdinalIgnoreCase) >= 0 ||
+               Regex.IsMatch(cardScope, @"\b100\s*%") ||
+               Regex.IsMatch(cardScope, @"\b0s\s*more\s*needed", RegexOptions.IgnoreCase);
+    }
+
+    private int ParseSecondsNeeded(string xml, int buttonY = 0)
+    {
+        // 1. Isolate text near buttonY (+/- 140px) to inspect the specific active card rather than global page
+        string cardScope = xml;
+        if (buttonY > 0)
+        {
+            try
+            {
+                MatchCollection matches = Regex.Matches(xml, @"<node [^>]*text=""([^""]*)""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
+                List<string> nearTexts = new List<string>();
+                foreach (Match m in matches)
+                {
+                    string t = m.Groups[1].Value.Trim();
+                    if (string.IsNullOrEmpty(t)) continue;
+                    int y1 = int.Parse(m.Groups[3].Value);
+                    int y2 = int.Parse(m.Groups[5].Value);
+                    int yc = (y1 + y2) / 2;
+                    if (Math.Abs(yc - buttonY) <= 140)
                     {
                         nearTexts.Add(t);
                     }
@@ -3200,10 +3231,10 @@ public class QuizEarnApp : Form
             catch {}
         }
 
-        // 0. Check if usage is already verified, approved, or 100% completed on this card!
+        // 0. Check if usage is already verified or 100% completed on this card!
         if (cardScope.IndexOf("Usage verified", StringComparison.OrdinalIgnoreCase) >= 0 ||
-            cardScope.IndexOf("Approved", StringComparison.OrdinalIgnoreCase) >= 0 ||
-            Regex.IsMatch(cardScope, @"\b100\s*%", RegexOptions.IgnoreCase))
+            Regex.IsMatch(cardScope, @"\b100\s*%") ||
+            Regex.IsMatch(cardScope, @"\b0s\s*more\s*needed", RegexOptions.IgnoreCase))
         {
             return 0;
         }
@@ -3488,7 +3519,20 @@ public class QuizEarnApp : Form
 
                 if ((isVerify || isOpenApp) && actionY < 1560)
                 {
-                    // If button is "Verify Usage", tap it first to submit/refresh usage verification!
+                    // CASE A: Button is "Open App" AND usage is already 100% or verified!
+                    if (isOpenApp && IsUsageCompleted(xml, actionY))
+                    {
+                        Log(string.Format("[💎 Claimer] Usage is already 100% / verified! Tapping 'Open App' button at ({0}, {1}) to trigger Claim unlock...", actionX, actionY));
+                        AdbTap(actionX, actionY);
+                        Thread.Sleep(4500); // Allow target app to launch and Quiz & Earn to register open
+
+                        Log("[💎 Claimer] Returning to Quiz & Earn to collect reward...");
+                        RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
+                        Thread.Sleep(3000);
+                        continue; // Re-check screen: Claim button is now unlocked and Section 1 will claim it!
+                    }
+
+                    // CASE B: Button is "Verify Usage", tap it first to submit/refresh usage verification!
                     if (isVerify)
                     {
                         Log(string.Format("[💎 Claimer] Found 'Verify Usage' at ({0}, {1}). Tapping to verify usage...", actionX, actionY));
@@ -3515,19 +3559,25 @@ public class QuizEarnApp : Form
                     // Check if more time is still needed in the app (e.g. "28s more needed", "1m more needed")
                     int staySeconds = ParseSecondsNeeded(xml, actionY);
 
-                    // If it was "Open App" and ParseSecondsNeeded didn't find specific remaining text, default to 65s (1 min)
-                    if (isOpenApp && staySeconds <= 0)
+                    // If it was "Open App" and ParseSecondsNeeded didn't find specific remaining text (and not 100%), default to 65s (1 min)
+                    if (isOpenApp && staySeconds <= 0 && !IsUsageCompleted(xml, actionY))
                     {
                         staySeconds = 65;
                     }
 
                     if (staySeconds > 0)
                     {
-                        // User requirement: "if it still need to stay in the app go back and stay for the time"
                         Log(string.Format("[💎 Claimer] Usage required: {0}s ({1}m {2}s) in app '{3}'. Launching to complete time...", 
                             staySeconds, staySeconds / 60, staySeconds % 60, string.IsNullOrEmpty(offerPkg) ? "target app" : offerPkg));
 
-                        if (!string.IsNullOrEmpty(offerPkg))
+                        // CRITICAL FIX: ALWAYS tap the "Open App" button directly on screen!
+                        if (isOpenApp)
+                        {
+                            Log(string.Format("[💎 Claimer] Tapping 'Open App' button on screen at ({0}, {1})...", actionX, actionY));
+                            AdbTap(actionX, actionY);
+                            Thread.Sleep(3500);
+                        }
+                        else if (!string.IsNullOrEmpty(offerPkg))
                         {
                             RunAdb(string.Format("shell monkey -p {0} -c android.intent.category.LAUNCHER 1", offerPkg));
                             Thread.Sleep(3500);
@@ -3666,8 +3716,11 @@ public class QuizEarnApp : Form
                         }
                         else if (isOpenApp)
                         {
-                            Log(string.Format("[💎 Claimer] Tapping 'Open App' at ({0}, {1})...", actionX, actionY));
+                            Log(string.Format("[💎 Claimer] Tapping 'Open App' button on screen at ({0}, {1})...", actionX, actionY));
                             AdbTap(actionX, actionY);
+                            Thread.Sleep(4500);
+                            Log("[💎 Claimer] Returning to Quiz & Earn to check Claim button...");
+                            RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
                             Thread.Sleep(3000);
                             continue;
                         }
