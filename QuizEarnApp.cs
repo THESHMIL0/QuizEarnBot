@@ -2916,15 +2916,33 @@ public class QuizEarnApp : Form
 
                 // Switch back to Quiz & Earn
                 RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
-                Thread.Sleep(1500);
+                Thread.Sleep(3000);
+
+                // Auto-tap "Verify Usage" or "Claim" upon returning from Booster!
+                string boostXml = DumpAndReadXml("/sdcard/boost_after.xml");
+                int bvx, bvy;
+                if (TryFindNodeBounds(boostXml, "Verify Usage", out bvx, out bvy) || 
+                    TryFindNodeBounds(boostXml, "Verify", out bvx, out bvy))
+                {
+                    Log(string.Format("[⚡ Booster] Returned from app! Tapping 'Verify Usage' at ({0}, {1})...", bvx, bvy));
+                    AdbTap(bvx, bvy);
+                    Thread.Sleep(3500);
+                    boostXml = DumpAndReadXml("/sdcard/boost_after2.xml");
+                }
+                int bcx, bcy;
+                if (TryFindNodeBounds(boostXml, "Claim", out bcx, out bcy))
+                {
+                    Log(string.Format("[⚡ Booster] Tapping 'Claim' at ({0}, {1})...", bcx, bcy));
+                    AdbTap(bcx, bcy);
+                }
 
                 try { System.Media.SystemSounds.Asterisk.Play(); } catch {}
 
                 SafeBeginInvoke(new Action(() => {
                     if (lblBoostStatus != null)
                     {
-                        lblBoostStatus.Text = "⚡ Completed! Ready to claim coins.";
-                        lblBoostStatus.ForeColor = Color.FromArgb(200, 200, 205);
+                        lblBoostStatus.Text = "⚡ Completed! Verified & claimed.";
+                        lblBoostStatus.ForeColor = Color.FromArgb(76, 175, 80);
                     }
                 }));
             }
@@ -3380,6 +3398,7 @@ public class QuizEarnApp : Form
         int scrollAttempts = 0;
         string appTitle = targetTitle ?? "";
         string offerPkg = "";
+        bool justCompletedAppStay = false;
 
         try
         {
@@ -3454,11 +3473,31 @@ public class QuizEarnApp : Form
                         SaveStatsToFile();
                         UpdateDataDashboard();
 
+                        justCompletedAppStay = false;
                         Thread.Sleep(3000);
                         RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
                         Thread.Sleep(2000);
                         continue; // Re-check if next milestone unlocked!
                     }
+                }
+
+                // 1.5 If we just returned from app stay and "Verify Usage" is still present, tap it!
+                if (justCompletedAppStay)
+                {
+                    int vx, vy;
+                    if (TryFindNodeBounds(xml, "Verify Usage", out vx, out vy) || 
+                        TryFindNodeBounds(xml, "Verify", out vx, out vy))
+                    {
+                        if (vy < 1560)
+                        {
+                            Log(string.Format("[💎 Claimer] Verification pending after app stay. Tapping 'Verify Usage' at ({0}, {1})...", vx, vy));
+                            AdbTap(vx, vy);
+                            justCompletedAppStay = false;
+                            Thread.Sleep(4000); // Allow Quiz & Earn to query UsageStats & update card
+                            continue; // Re-check for Claim button
+                        }
+                    }
+                    justCompletedAppStay = false;
                 }
 
                 // 2. Check for Open App OR Verify Usage Button!
@@ -3579,6 +3618,22 @@ public class QuizEarnApp : Form
                         Log("[💎 Claimer] Required time completed! Returning to Quiz & Earn...");
                         RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
                         Thread.Sleep(3000);
+
+                        // CRITICAL FIX: Tap "Verify Usage" immediately so Quiz & Earn tracks the completed time!
+                        // Otherwise, the card retains stale unverified time and forces a 2nd redundant app stay!
+                        string retXml = DumpAndReadXml("/sdcard/after_usage.xml");
+                        int rvx, rvy;
+                        if (TryFindNodeBounds(retXml, "Verify Usage", out rvx, out rvy) || 
+                            TryFindNodeBounds(retXml, "Verify", out rvx, out rvy))
+                        {
+                            if (rvy < 1560)
+                            {
+                                Log(string.Format("[💎 Claimer] Returned from app! Tapping 'Verify Usage' at ({0}, {1}) to submit tracked time...", rvx, rvy));
+                                AdbTap(rvx, rvy);
+                                Thread.Sleep(4000); // Allow Quiz & Earn to query UsageStats & update card
+                            }
+                        }
+                        justCompletedAppStay = true;
                         continue; // Re-check screen for Claim button!
                     }
                 }

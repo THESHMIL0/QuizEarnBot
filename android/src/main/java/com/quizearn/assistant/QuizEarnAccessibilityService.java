@@ -431,29 +431,30 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 return;
             }
 
-            // 4. Check for "Collect Gem", "Claim", or Reward collection buttons
+            // 4. Check for "Collect Gem", "Claim", "Verify Usage", or Reward collection buttons
             for (NodeItem item : allNodes) {
                 if (isForbiddenElement(item)) continue;
                 String t = item.text.trim().toLowerCase();
                 String d = item.contentDesc.trim().toLowerCase();
                 String combined = (t + " " + d).trim();
                 if (combined.contains("collect gem") || combined.contains("collect reward") || combined.contains("collect coins") || 
-                    t.equals("collect") || t.equals("claim") || t.equals("claim now")) {
+                    t.equals("collect") || t.equals("claim") || t.equals("claim now") ||
+                    t.contains("verify usage") || t.equals("verify") || d.contains("verify usage")) {
                     
                     // If we are at 24+ gems, this collection action earns the 25th gem!
-                    if (liveGems >= 24) {
+                    if (liveGems >= 24 && (combined.contains("collect gem") || combined.contains("collect reward") || combined.contains("collect coins"))) {
                         isPending25thGemStop = true;
                         liveGems = 25;
                         Log.i(TAG, "Collecting 25th Gem! Bot will automatically STOP after this ad completes.");
                     }
 
-                    Log.i(TAG, "Found Collect/Claim button: " + item.text + " at " + item.rect);
+                    Log.i(TAG, "Found Action/Claim/Verify button: " + item.text + " at " + item.rect);
                     tapNode(item);
                     lastTapTime = now;
                     lastProgressTime = now;
                     lastSolvedTarget = "";
                     lastSolveTime = 0;
-                    currentStatus = "Collecting Gem...";
+                    currentStatus = (t.contains("verify") || d.contains("verify")) ? "Verifying Usage..." : "Collecting Gem...";
                     adStartTime = 0;
                     return;
                 }
