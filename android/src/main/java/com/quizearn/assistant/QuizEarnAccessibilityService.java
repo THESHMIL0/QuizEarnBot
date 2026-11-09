@@ -163,11 +163,11 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             CharSequence pkgSeq = root.getPackageName();
             String pkg = (pkgSeq != null) ? pkgSeq.toString() : "";
 
-            // 0. Auto-Dismiss Google Play Store redirect
-            if (pkg.contains("vending")) {
-                Log.i(TAG, "Play Store opened by ad! Pressing Back immediately to return...");
+            // 0. Auto-Dismiss Google Play Store / Chrome redirect
+            if (pkg.contains("vending") || pkg.contains("chrome") || pkg.contains("browser")) {
+                Log.i(TAG, "Play Store / Browser opened by ad! Pressing Back immediately to return...");
                 performGlobalAction(GLOBAL_ACTION_BACK);
-                lastTapTime = now;
+                lastTapTime = now + 3500; // 3.5s hands-off cooldown so we don't re-trigger the ad CTA overlay
                 lastProgressTime = now;
                 currentStatus = "Returning from Store...";
                 adStartTime = 0;
@@ -194,7 +194,9 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 if (t.contains("reward in") || t.contains("video ends in") || 
                     t.contains("video will end in") || t.contains("seconds after") || 
                     t.contains("skip in ") || d.contains("reward in") || 
-                    d.contains("ends in") || d.contains("skip in ")) {
+                    d.contains("ends in") || d.contains("skip in ") ||
+                    id.contains("countdown") || id.contains("count_down") ||
+                    id.contains("timer")) {
                     hasAdCountdown = true;
                     isAd = true;
                 }
@@ -303,8 +305,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     }
                 }
 
-                // After 22s: Progressive Universal Close coordinates tap (top-right & top-left corners)
-                if (adElapsed >= 22 && adElapsed < 34 && (now - lastTapTime > 1800)) {
+                // After 24s: Progressive Universal Close coordinates tap ONLY if no countdown is active
+                if (!hasAdCountdown && adElapsed >= 24 && adElapsed < 34 && (now - lastTapTime > 2000)) {
                     Log.i(TAG, "Ad running long (" + adElapsed + "s): Tapping universal corner close coordinates...");
                     tapCoordinates(screenW - 65, 65);
                     tapCoordinates(screenW - 40, 50);
@@ -313,8 +315,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     return;
                 }
 
-                // After 36s+: Press native Android Back key to return to Quiz
-                if (adElapsed >= 36 && (now - lastTapTime > 3000)) {
+                // After 34s+: Press native Android Back key to return to Quiz
+                if (adElapsed >= 34 && (now - lastTapTime > 2500)) {
                     Log.i(TAG, "Ad timeout (" + adElapsed + "s): Pressing Back key to return to Quiz...");
                     performGlobalAction(GLOBAL_ACTION_BACK);
                     lastTapTime = now;
@@ -766,10 +768,27 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
     // Global filter to NEVER touch sound/mute, install, privacy, or info buttons
     private boolean isForbiddenElement(NodeItem item) {
+        if (item == null || item.rect == null) return true;
+
+        // CRITICAL GUARD: Fullscreen and oversized touch overlays are ad-traps!
+        int w = item.rect.width();
+        int h = item.rect.height();
+        if (w >= 450 && h >= 450) {
+            return true;
+        }
+
         String t = item.text.toLowerCase().trim();
         String d = item.contentDesc.toLowerCase().trim();
         String id = item.resId.toLowerCase().trim();
         String combined = (t + " " + d + " " + id);
+
+        // Deceptive full-screen / CTA overlay layers
+        if (combined.contains("fullscreen") || combined.contains("overlay") || 
+            combined.contains("interceptor") || combined.contains("touch_layer") || 
+            combined.contains("call to action") || id.contains("overlay") || 
+            id.contains("fullscreen") || id.contains("cta")) {
+            return true;
+        }
 
         // Sound / Audio / Mute / Volume / Music
         if (combined.contains("sound") || combined.contains("mute") || 
@@ -799,6 +818,12 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
     private boolean isSkipElement(NodeItem item) {
         if (isForbiddenElement(item)) {
+            return false;
+        }
+
+        int w = item.rect.width();
+        int h = item.rect.height();
+        if (w < 8 || h < 8 || w > 350 || h > 250) {
             return false;
         }
 
@@ -843,6 +868,12 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             return false;
         }
 
+        int w = item.rect.width();
+        int h = item.rect.height();
+        if (w < 8 || h < 8 || w > 450 || h > 250) {
+            return false;
+        }
+
         String t = item.text.toLowerCase().trim();
         String d = item.contentDesc.toLowerCase().trim();
         String id = item.resId.toLowerCase().trim();
@@ -856,13 +887,33 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             d.contains("ad 1 of") || d.contains("ad 2 of") || d.contains("ad 3 of") ||
             t.contains("ends in") || d.contains("ends in") ||
             t.contains("reward in") || d.contains("reward in") ||
-            t.contains("seconds after") || d.contains("seconds after")) {
+            t.contains("seconds after") || d.contains("seconds after") ||
+            id.contains("countdown")) {
             return false;
         }
 
         // Do not close prematurely while countdown is active
         if (hasAdCountdown) {
             return false;
+        }
+
+        // Exact text match for confirmation dialogs ("Close Video", "Skip Video", "Leave", "Yes", etc.)
+        if (t.equals("close video") || t.equals("skip video") || t.equals("dismiss") || 
+            t.equals("no thanks") || t.equals("not now") || t.equals("leave") || 
+            t.equals("yes") || t.equals("resume video") || t.contains("close video")) {
+            return true;
+        }
+
+        // A close icon (X, Close button, etc.) MUST be either:
+        // 1. In the top area (item.rect.top <= 450)
+        // 2. In a side/corner (item.rect.right >= screenW * 0.70 || item.rect.left <= screenW * 0.30)
+        int screenW = getResources().getDisplayMetrics().widthPixels;
+        boolean isTopOrCorner = (item.rect.top <= 450) || 
+                                (item.rect.centerX() >= (int)(screenW * 0.70)) || 
+                                (item.rect.centerX() <= (int)(screenW * 0.30));
+
+        if (!isTopOrCorner) {
+            return false; // Reject any button in the center of the screen
         }
 
         // Explicit Close / Close Ad content descriptions (e.g. Google Ads, Liftoff, AppLovin, Unity)
@@ -873,11 +924,12 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         }
 
         // Explicit Close resource IDs
-        if (id.contains("close_button") || id.contains("btn_close") || id.contains("iv_close") || 
+        if (id.contains("close-or-skip-button") || id.contains("close_button") || 
+            id.contains("btn_close") || id.contains("iv_close") || 
             id.contains("ia_clickable_close_button") || id.contains("tt_video_ad_close") || 
             id.contains("close_ad") || id.contains("ad_close") || id.contains("btn_back") || 
             id.contains("iv_back") || id.contains("button_back") || id.contains("al_close") ||
-            id.contains("unity_close")) {
+            id.contains("unity_close") || id.contains("vungle_close")) {
             return true;
         }
 
@@ -887,14 +939,6 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             t.equals("<") || t.equals("\u2039") || t.equals("‹") ||
             t.equals("back") || t.equals("exit") ||
             d.equals("back") || d.equals("navigate up") || d.equals("exit")) {
-            return true;
-        }
-
-        // Exact text match for close and confirmation dialogs
-        if (t.equals("close ad") || t.equals("close") || t.equals("close video") || 
-            t.equals("skip video") || t.equals("dismiss") || t.equals("no thanks") || 
-            t.equals("not now") || t.equals("leave") || t.equals("yes") || 
-            t.equals("resume video") || t.contains("close video")) {
             return true;
         }
 

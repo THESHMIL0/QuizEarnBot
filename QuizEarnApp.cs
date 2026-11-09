@@ -4104,7 +4104,7 @@ public class QuizEarnApp : Form
             RunAdb("shell am force-stop com.android.chrome");
             Thread.Sleep(400);
             RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
-            Thread.Sleep(800);
+            Thread.Sleep(3000); // 3-second cooldown to let the ad UI settle without clicking overlays
             return true;
         }
 
@@ -4226,12 +4226,12 @@ public class QuizEarnApp : Form
         {
             string txt = m.Value;
 
-            if (Regex.IsMatch(txt, @"(Ad \d of|Sponsored|\bOpen\b|\bOPEN\b|\bPlay\b|\bInstall\b|\bDownload\b|\bGet\b|\bUpdate\b|\bShop\b|\bVisit\b|Learn More|Google Play)", RegexOptions.IgnoreCase))
+            if (Regex.IsMatch(txt, @"(Ad \d of|Sponsored|\bOpen\b|\bOPEN\b|\bPlay\b|\bInstall\b|\bDownload\b|\bGet\b|\bUpdate\b|\bShop\b|\bVisit\b|Learn More|Google Play|fullscreen|overlay|interceptor|touch_layer)", RegexOptions.IgnoreCase))
             {
                 continue;
             }
 
-            bool isMatch = Regex.IsMatch(txt, @"(close|skip|dismiss|next-button|mbridge_iv_close|close_button|btn_close|tt_video_ad_close|iv_close|ia_clickable_close_button|al_close_button|unity_close_button|vungle_close_button|btn_back|iv_back|button_back|no thanks|not now|close video|close ad|skip video|skip ad|leave|exit|✕|✖|⨯|×|\bX\b|>>|››|»|>\|)", RegexOptions.IgnoreCase);
+            bool isMatch = Regex.IsMatch(txt, @"(close|skip|dismiss|next-button|close-or-skip-button|mbridge_iv_close|close_button|btn_close|tt_video_ad_close|iv_close|ia_clickable_close_button|al_close_button|unity_close_button|vungle_close|btn_back|iv_back|button_back|no thanks|not now|close video|close ad|skip video|skip ad|leave|exit|✕|✖|⨯|×|\bX\b|>>|››|»|>\|)", RegexOptions.IgnoreCase);
 
             Match bMatch = Regex.Match(txt, @"bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
             if (bMatch.Success)
@@ -4243,14 +4243,18 @@ public class QuizEarnApp : Form
                 int w = x2 - x1;
                 int h = y2 - y1;
 
-                // Explicit match
-                if (isMatch && w >= 10 && w <= 420 && h >= 10 && h <= 420)
+                // Explicit match (enforce size & position to prevent tapping ad-traps)
+                if (isMatch && w >= 10 && w <= 380 && h >= 10 && h <= 250)
                 {
+                    bool isTextDialog = Regex.IsMatch(txt, @"(close video|skip video|no thanks|not now|leave|exit|yes)", RegexOptions.IgnoreCase);
                     int cx = (x1 + x2) / 2;
                     int cy = (y1 + y2) / 2;
-                    Log(string.Format("[Ad] Detected ad close/skip button at ({0}, {1})! Tapping...", cx, cy));
-                    AdbTap(cx, cy);
-                    return true;
+                    if (isTextDialog || cy <= (int)(devHeight * 0.28) || cx >= (int)(devWidth * 0.70) || cx <= (int)(devWidth * 0.30))
+                    {
+                        Log(string.Format("[Ad] Detected ad close/skip button at ({0}, {1})! Tapping...", cx, cy));
+                        AdbTap(cx, cy);
+                        return true;
+                    }
                 }
 
                 // Top-right corner after 20s (Guard against tapping 'OPEN' or 'INSTALL' headers)
