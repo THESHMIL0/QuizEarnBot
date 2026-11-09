@@ -303,10 +303,12 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     }
                 }
 
-                // After 28s: Universal Close coordinates tap (covers Google, Unity, AppLovin, Liftoff)
-                if (adElapsed >= 28 && adElapsed < 36 && (now - lastTapTime > 2500)) {
-                    Log.i(TAG, "Ad running long (" + adElapsed + "s): Tapping top-right universal close coordinates...");
-                    tapCoordinates(screenW - 75, 180);
+                // After 22s: Progressive Universal Close coordinates tap (top-right & top-left corners)
+                if (adElapsed >= 22 && adElapsed < 34 && (now - lastTapTime > 1800)) {
+                    Log.i(TAG, "Ad running long (" + adElapsed + "s): Tapping universal corner close coordinates...");
+                    tapCoordinates(screenW - 65, 65);
+                    tapCoordinates(screenW - 40, 50);
+                    tapCoordinates(65, 65);
                     lastTapTime = now;
                     return;
                 }
@@ -666,14 +668,11 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         CharSequence pkgSeq = node.getPackageName();
         String nodePkg = (pkgSeq != null) ? pkgSeq.toString() : "";
 
-        // STRICT NOTIFICATION & FOREIGN APP FILTER
+        // STRICT NOTIFICATION & LAUNCHER FILTER (Allow all ad SDKs, webviews, and app activities)
         if (nodePkg.equals("com.android.systemui") || 
             nodePkg.equals("com.android.launcher") || 
             nodePkg.contains("launcher") || 
-            (!nodePkg.isEmpty() && !nodePkg.equals("com.quiz.earn.money.game") && 
-             !nodePkg.contains("gms.ads") && !nodePkg.contains("admob") && 
-             !nodePkg.contains("vending") && !nodePkg.contains("webview") && 
-             !nodePkg.contains("quizearn.assistant"))) {
+            nodePkg.contains("systemui")) {
             return;
         }
 
@@ -866,9 +865,10 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             return false;
         }
 
-        // Explicit Close / Close Ad content descriptions (e.g. Google Ads, Liftoff, AppLovin)
+        // Explicit Close / Close Ad content descriptions (e.g. Google Ads, Liftoff, AppLovin, Unity)
         if (d.equals("close ad") || d.equals("close") || d.equals("close button") || 
-            d.equals("close video") || d.equals("dismiss") || d.contains("close ad")) {
+            d.equals("close video") || d.equals("dismiss") || d.contains("close ad") ||
+            d.contains("skip ad") || d.equals("skip")) {
             return true;
         }
 
@@ -876,7 +876,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         if (id.contains("close_button") || id.contains("btn_close") || id.contains("iv_close") || 
             id.contains("ia_clickable_close_button") || id.contains("tt_video_ad_close") || 
             id.contains("close_ad") || id.contains("ad_close") || id.contains("btn_back") || 
-            id.contains("iv_back") || id.contains("button_back")) {
+            id.contains("iv_back") || id.contains("button_back") || id.contains("al_close") ||
+            id.contains("unity_close")) {
             return true;
         }
 
@@ -889,9 +890,11 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             return true;
         }
 
-        // Exact text match for close
-        if (t.equals("close ad") || t.equals("close") || t.equals("dismiss") || 
-            t.equals("no thanks") || t.equals("not now")) {
+        // Exact text match for close and confirmation dialogs
+        if (t.equals("close ad") || t.equals("close") || t.equals("close video") || 
+            t.equals("skip video") || t.equals("dismiss") || t.equals("no thanks") || 
+            t.equals("not now") || t.equals("leave") || t.equals("yes") || 
+            t.equals("resume video") || t.contains("close video")) {
             return true;
         }
 

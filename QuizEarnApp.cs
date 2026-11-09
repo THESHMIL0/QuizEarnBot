@@ -4203,6 +4203,24 @@ public class QuizEarnApp : Form
             return true;
         }
 
+        // Specific detection for "Close Video?" / "Resume" / "Leave ad" confirmation dialogs
+        if (Regex.IsMatch(xml, @"(close video|resume video|keep watching|reward will be lost|leave ad|exit ad)", RegexOptions.IgnoreCase))
+        {
+            Match mCloseBtn = Regex.Match(xml, @"<node [^>]*text=""(Close Video|Close|Skip|Yes|Leave|Exit)""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""", RegexOptions.IgnoreCase);
+            if (mCloseBtn.Success)
+            {
+                int bx1 = int.Parse(mCloseBtn.Groups[2].Value);
+                int by1 = int.Parse(mCloseBtn.Groups[3].Value);
+                int bx2 = int.Parse(mCloseBtn.Groups[4].Value);
+                int by2 = int.Parse(mCloseBtn.Groups[5].Value);
+                int bcx = (bx1 + bx2) / 2;
+                int bcy = (by1 + by2) / 2;
+                Log(string.Format("[Ad] Detected confirmation dialog button '{0}' at ({1}, {2})! Tapping...", mCloseBtn.Groups[1].Value, bcx, bcy));
+                AdbTap(bcx, bcy);
+                return true;
+            }
+        }
+
         MatchCollection matches = Regex.Matches(xml, @"<node [^>]+>");
         foreach (Match m in matches)
         {
@@ -4213,7 +4231,7 @@ public class QuizEarnApp : Form
                 continue;
             }
 
-            bool isMatch = Regex.IsMatch(txt, @"(close|skip|dismiss|next-button|mbridge_iv_close|close_button|btn_close|tt_video_ad_close|iv_close)", RegexOptions.IgnoreCase);
+            bool isMatch = Regex.IsMatch(txt, @"(close|skip|dismiss|next-button|mbridge_iv_close|close_button|btn_close|tt_video_ad_close|iv_close|ia_clickable_close_button|al_close_button|unity_close_button|vungle_close_button|btn_back|iv_back|button_back|no thanks|not now|close video|close ad|skip video|skip ad|leave|exit|✕|✖|⨯|×|\bX\b|>>|››|»|>|)", RegexOptions.IgnoreCase);
 
             Match bMatch = Regex.Match(txt, @"bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
             if (bMatch.Success)
@@ -4226,7 +4244,7 @@ public class QuizEarnApp : Form
                 int h = y2 - y1;
 
                 // Explicit match
-                if (isMatch && w >= 10 && w <= 380 && h >= 10 && h <= 380)
+                if (isMatch && w >= 10 && w <= 420 && h >= 10 && h <= 420)
                 {
                     int cx = (x1 + x2) / 2;
                     int cy = (y1 + y2) / 2;
@@ -4235,8 +4253,8 @@ public class QuizEarnApp : Form
                     return true;
                 }
 
-                // Top-right corner after 25s (Guard against tapping 'OPEN' or 'INSTALL' headers)
-                if (!isMatch && elapsedSeconds >= 25 && w >= 15 && w <= 160 && h >= 15 && h <= 160 && (x1 >= (int)(devWidth * 0.78) && y1 <= (int)(devHeight * 0.12)))
+                // Top-right corner after 20s (Guard against tapping 'OPEN' or 'INSTALL' headers)
+                if (!isMatch && elapsedSeconds >= 20 && w >= 15 && w <= 200 && h >= 15 && h <= 200 && (x1 >= (int)(devWidth * 0.72) && y1 <= (int)(devHeight * 0.14)))
                 {
                     if (!Regex.IsMatch(txt, @"text=""\d+""") && !Regex.IsMatch(txt, @"\b(Open|Play|Install|Get|Update|Shop|Visit)\b", RegexOptions.IgnoreCase))
                     {
@@ -4248,8 +4266,8 @@ public class QuizEarnApp : Form
                     }
                 }
 
-                // Top-left arrow after 25s
-                if (!isMatch && elapsedSeconds >= 25 && w >= 20 && w <= 120 && h >= 20 && h <= 120 && (x1 <= (int)(devWidth * 0.10) && y1 <= (int)(devHeight * 0.10)))
+                // Top-left arrow after 20s
+                if (!isMatch && elapsedSeconds >= 20 && w >= 15 && w <= 160 && h >= 15 && h <= 160 && (x1 <= (int)(devWidth * 0.15) && y1 <= (int)(devHeight * 0.14)))
                 {
                     if (!Regex.IsMatch(txt, @"\b(Open|Play|Install|Get|Update|Shop|Visit)\b", RegexOptions.IgnoreCase))
                     {
@@ -4270,13 +4288,13 @@ public class QuizEarnApp : Form
         Log("[Ad] Watching ad... (hands-off to ensure reward callback)");
         DateTime start = DateTime.Now;
 
-        // Phase 1: Wait 15 seconds without premature clicks
+        // Phase 1: Wait 6 seconds initial buffer, then begin checking for skip/close
         while ((DateTime.Now - start).TotalSeconds < 15)
         {
             Thread.Sleep(1000);
             string focus = GetCurrentFocus();
 
-            if ((DateTime.Now - start).TotalSeconds > 3)
+            if ((DateTime.Now - start).TotalSeconds >= 6)
             {
                 RunAdb("shell uiautomator dump --compressed /sdcard/ad_check.xml");
                 string chkXml = RunAdb("shell cat /sdcard/ad_check.xml");
@@ -4301,6 +4319,22 @@ public class QuizEarnApp : Form
                     string reFocus = GetCurrentFocus();
                     if (reFocus.Contains("MainActivity"))
                     {
+                        adsClosed++;
+                        SaveStatsToFile();
+                        UpdateDashboard(lastCaptcha);
+                        return;
+                    }
+                }
+
+                // Check for early skip or close buttons available after 6 seconds
+                double earlyElapsed = (DateTime.Now - start).TotalSeconds;
+                if (TryFindAndClickAdButton(chkXml, (int)earlyElapsed))
+                {
+                    Thread.Sleep(1200);
+                    string reFocus = GetCurrentFocus();
+                    if (reFocus.Contains("MainActivity"))
+                    {
+                        Log("[Ad Closed] Successfully back in Quiz!");
                         adsClosed++;
                         SaveStatsToFile();
                         UpdateDashboard(lastCaptcha);
@@ -4362,17 +4396,21 @@ public class QuizEarnApp : Form
             }
             else
             {
-                if (elapsed >= 24 && elapsed < 32)
+                if (elapsed >= 22 && elapsed < 28)
                 {
+                    AdbTapRef(835, 65);
+                    AdbTapRef(860, 50);
                     AdbTapRef(54, 54);
-                    AdbTapRef(824, 71);
-                    AdbTapRef(856, 50);
+                    AdbTapRef(60, 65);
                 }
-                else if (elapsed >= 32)
+                else if (elapsed >= 28)
                 {
                     Log("[Ad] Sending Back key to return to Quiz...");
                     AdbKey(4);
-                    Thread.Sleep(1200);
+                    Thread.Sleep(1000);
+                    AdbTapRef(835, 65);
+                    AdbTapRef(860, 50);
+                    Thread.Sleep(800);
                     string reFocus = GetCurrentFocus();
                     if (reFocus.Contains("MainActivity"))
                     {
