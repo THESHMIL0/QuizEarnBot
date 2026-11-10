@@ -34,6 +34,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     public static final String TAG = "QuizEarnAssistant";
 
     public static volatile boolean isRunning = false;
+    public static volatile boolean isUserRunning = false;
     public static volatile boolean isServiceActive = false;
     public static volatile int solvedCount = 0;
     public static volatile int liveGems = -1;
@@ -76,6 +77,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
     public static void startSolving() {
         isRunning = true;
+        isUserRunning = true;
         hasAlerted25Gems = false;
         isPending25thGemStop = false;
         currentStatus = "Scanning...";
@@ -116,6 +118,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
     public static void stopSolving() {
         isRunning = false;
+        isUserRunning = false;
         isPending25thGemStop = false;
         Log.i(TAG, "stopSolving called.");
         if (instance != null) {
@@ -133,8 +136,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         super.onServiceConnected();
         instance = this;
         isServiceActive = true;
-        Log.i(TAG, "Quiz Math Assistant connected successfully.");
-        if (isRunning) {
+        Log.i(TAG, "Quiz Math Assistant connected successfully. isUserRunning=" + isUserRunning);
+        if (isUserRunning) {
             startSolving();
         }
     }
@@ -182,7 +185,9 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             // 1. Detect Ad State & Countdowns (Ad 1 of 2, Ad 2 of 2, etc.)
             boolean hasAdCountdown = false;
             boolean isAd = false;
-            if (pkg.contains("gms.ads") || pkg.contains("admob")) {
+            if (pkg.contains("gms.ads") || pkg.contains("admob") || pkg.contains("unity3d") || 
+                pkg.contains("applovin") || pkg.contains("ironsource") || pkg.contains("vungle") || 
+                pkg.contains("mintegral") || pkg.contains("inmobi") || pkg.contains("fyber")) {
                 isAd = true;
             }
 
@@ -215,6 +220,9 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     id.contains("endcard") || id.contains("watermark") || id.contains("advert") || 
                     id.contains("unity3d") || id.contains("applovin") || id.contains("mbridge") || 
                     id.contains("tt_") || id.contains("close-or-skip-button") ||
+                    id.contains("app-interstitial") || id.contains("ad-interstitial") ||
+                    id.contains("mys-creative") || id.contains("mys-content") ||
+                    id.contains("mys-wrapper") || id.contains("mys-progress-bar") ||
                     t.contains("moloco") || t.contains("liftoff"))) {
                     isAd = true;
                 }
@@ -278,8 +286,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 int screenW = getResources().getDisplayMetrics().widthPixels;
                 int screenH = getResources().getDisplayMetrics().heightPixels;
 
-                // After 22s: Search for small corner icons / back buttons in custom webview/canvas
-                if (adElapsed >= 22 && (now - lastTapTime > 2500)) {
+                // After 18s: Search for small corner icons / back buttons in custom webview/canvas
+                if (adElapsed >= 18 && (now - lastTapTime > 2000)) {
                     for (NodeItem item : allNodes) {
                         if (isForbiddenElement(item)) continue;
                         int cx = item.rect.centerX();
@@ -287,8 +295,14 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                         int w = item.rect.width();
                         int h = item.rect.height();
 
+                        String itemT = item.text.trim();
+                        // Reject text nodes with words that aren't close/skip
+                        if (!itemT.isEmpty() && itemT.length() > 6 && !itemT.equalsIgnoreCase("close") && !itemT.equalsIgnoreCase("skip")) {
+                            continue;
+                        }
+
                         // Top-right close icon in webview/playable
-                        if (cx > (int)(screenW * 0.80) && cy < 350 && w < 250 && h < 250) {
+                        if (cx > (int)(screenW * 0.75) && cy < 350 && w < 260 && h < 260) {
                             Log.i(TAG, "Ad timeout (" + adElapsed + "s): Tapping top-right corner node at " + item.rect);
                             tapNode(item);
                             lastTapTime = now;
@@ -296,7 +310,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                         }
 
                         // Top-left back / skip arrow in webview/playable
-                        if (cx < (int)(screenW * 0.20) && cy < 350 && w < 250 && h < 250) {
+                        if (cx < (int)(screenW * 0.25) && cy < 350 && w < 260 && h < 260) {
                             Log.i(TAG, "Ad timeout (" + adElapsed + "s): Tapping top-left corner node at " + item.rect);
                             tapNode(item);
                             lastTapTime = now;
@@ -305,18 +319,22 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     }
                 }
 
-                // After 24s: Progressive Universal Close coordinates tap ONLY if no countdown is active
-                if (!hasAdCountdown && adElapsed >= 24 && adElapsed < 34 && (now - lastTapTime > 2000)) {
-                    Log.i(TAG, "Ad running long (" + adElapsed + "s): Tapping universal corner close coordinates...");
-                    tapCoordinates(screenW - 65, 65);
-                    tapCoordinates(screenW - 40, 50);
-                    tapCoordinates(65, 65);
+                // After 22s: Progressive Universal Close coordinates tap alternating corners
+                if (!hasAdCountdown && adElapsed >= 22 && adElapsed < 32 && (now - lastTapTime > 2000)) {
+                    int step = (int)((adElapsed - 22) / 2);
+                    if (step % 2 == 0) {
+                        Log.i(TAG, "Ad running long (" + adElapsed + "s): Tapping top-right corner close coordinate...");
+                        tapCoordinates(screenW - 55, 55);
+                    } else {
+                        Log.i(TAG, "Ad running long (" + adElapsed + "s): Tapping top-left corner close coordinate...");
+                        tapCoordinates(55, 55);
+                    }
                     lastTapTime = now;
                     return;
                 }
 
-                // After 34s+: Press native Android Back key to return to Quiz
-                if (adElapsed >= 34 && (now - lastTapTime > 2500)) {
+                // After 32s+: Press native Android Back key to return to Quiz
+                if (adElapsed >= 32 && (now - lastTapTime > 2500)) {
                     Log.i(TAG, "Ad timeout (" + adElapsed + "s): Pressing Back key to return to Quiz...");
                     performGlobalAction(GLOBAL_ACTION_BACK);
                     lastTapTime = now;
@@ -718,19 +736,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         // Effective text falls back to content description
         String effectiveText = !text.isEmpty() ? text : desc;
 
-        // Filter out status bar area (top 110px clock/icons), but NEVER filter out close/skip buttons or quiz header badges
-        if (rect.bottom <= 110) {
-            String lower = (text + " " + desc + " " + resId).toLowerCase();
-            boolean isAdNav = lower.contains("close") || lower.contains("skip") || 
-                              lower.contains("\u2715") || lower.contains("\u2716") || 
-                              lower.equals("x") || lower.contains("dismiss");
-            boolean isHeaderBadge = (nodePkg.equals("com.quiz.earn.money.game") && text.matches("^\\d{1,4}$"));
-            if (!isAdNav && !isHeaderBadge) {
-                return;
-            }
-        }
-
-        if ((!effectiveText.isEmpty() || !resId.isEmpty()) && !rect.isEmpty()) {
+        // Add node if it has text, content description, resource ID, or is clickable
+        if ((!effectiveText.isEmpty() || !desc.isEmpty() || !resId.isEmpty() || node.isClickable()) && !rect.isEmpty()) {
             list.add(new NodeItem(node, effectiveText, desc, resId, rect));
         }
 
@@ -840,6 +847,13 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             return true;
         }
 
+        // Ad counters/labels ("Ad 1 of 2", "Ad 2 of 2", "Ad", "Sponsored", "Advertisement")
+        if (t.contains("ad 1 of") || t.contains("ad 2 of") || t.contains("ad 3 of") || 
+            t.equals("ad") || t.equals("sponsored") || t.equals("advertisement") ||
+            d.contains("ad 1 of") || d.contains("ad 2 of")) {
+            return true;
+        }
+
         return false;
     }
 
@@ -850,7 +864,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
         int w = item.rect.width();
         int h = item.rect.height();
-        if (w < 8 || h < 8 || w > 350 || h > 250) {
+        if (w < 8 || h < 8 || w > 400 || h > 250) {
             return false;
         }
 
@@ -862,28 +876,32 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             return false;
         }
 
-        // Do not tap countdown timers (e.g. "Skip in 5s", "You can skip in 3 seconds")
-        if (t.contains(" in ") || d.contains(" in ") || t.contains("seconds") || d.contains("seconds")) {
+        // Do not tap active countdown timers (e.g. "Skip in 5s", "You can skip in 3 seconds")
+        if ((t.contains(" in ") || d.contains(" in ") || t.contains("seconds") || d.contains("seconds")) &&
+            !t.contains("in 0") && !d.contains("in 0")) {
             return false;
         }
 
         // Explicit skip text or description
-        if (t.equals("skip") || t.equals("skip ad") || t.startsWith("skip ") ||
-            d.equals("skip") || d.equals("skip ad") || d.startsWith("skip ")) {
+        if (t.equals("skip") || t.equals("skip ad") || t.startsWith("skip ") || t.endsWith(" skip") ||
+            t.contains("skip ad") || t.contains("skip video") ||
+            d.equals("skip") || d.equals("skip ad") || d.startsWith("skip ") || d.endsWith(" skip") ||
+            d.contains("skip ad") || d.contains("skip video")) {
             return true;
         }
 
-        // Visible skip arrows: >>, ››, », >|, ▶▶
+        // Visible skip arrows: >>, ››, », >|, ▶▶, ⏭, ⏩
         if (t.contains(">>") || t.contains("\u203A\u203A") || t.contains("\u00BB") || 
-            t.contains(">|") || t.contains("\u25B6\u25B6") || 
+            t.contains(">|") || t.contains("\u25B6\u25B6") || t.contains("\u23ED") || t.contains("\u23E9") ||
             d.contains(">>") || d.contains("\u203A\u203A") || d.contains("\u00BB") || 
-            d.contains("fast forward")) {
+            d.contains("fast forward") || d.contains("skip")) {
             return true;
         }
 
-        // Only exact skip resource IDs
+        // Exact skip resource IDs
         if (id.contains("skip_button") || id.contains("btn_skip") || 
-            id.contains("close-or-skip-button") || id.contains("skip_ad")) {
+            id.contains("close-or-skip-button") || id.contains("skip_ad") || 
+            id.contains("skipbutton") || id.contains("skip-button")) {
             return true;
         }
 
@@ -927,7 +945,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         // Exact text match for confirmation dialogs ("Close Video", "Skip Video", "Leave", "Yes", etc.)
         if (t.equals("close video") || t.equals("skip video") || t.equals("dismiss") || 
             t.equals("no thanks") || t.equals("not now") || t.equals("leave") || 
-            t.equals("yes") || t.equals("resume video") || t.contains("close video")) {
+            t.equals("yes") || t.equals("resume video") || t.contains("close video") ||
+            t.equals("close") || t.equals("close ad")) {
             return true;
         }
 
@@ -946,7 +965,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         // Explicit Close / Close Ad content descriptions (e.g. Google Ads, Liftoff, AppLovin, Unity)
         if (d.equals("close ad") || d.equals("close") || d.equals("close button") || 
             d.equals("close video") || d.equals("dismiss") || d.contains("close ad") ||
-            d.contains("skip ad") || d.equals("skip")) {
+            d.contains("close advertisement") || d.startsWith("close") ||
+            d.contains("skip ad") || d.equals("skip") || d.startsWith("skip")) {
             return true;
         }
 
@@ -956,16 +976,18 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             id.contains("ia_clickable_close_button") || id.contains("tt_video_ad_close") || 
             id.contains("close_ad") || id.contains("ad_close") || id.contains("btn_back") || 
             id.contains("iv_back") || id.contains("button_back") || id.contains("al_close") ||
-            id.contains("unity_close") || id.contains("vungle_close")) {
+            id.contains("unity_close") || id.contains("vungle_close") || 
+            id.contains("closebutton") || id.contains("close-button")) {
             return true;
         }
 
         // Explicit Close text symbols (✕, ✖, ⨯, ×, X, <, ‹, back, exit)
         if (t.equals("\u2715") || t.equals("\u2716") || t.equals("\u2A2F") || 
-            t.equals("\u00D7") || t.equalsIgnoreCase("x") ||
+            t.equals("\u00D7") || t.equalsIgnoreCase("x") || t.equals("✕") || t.equals("✖") ||
             t.equals("<") || t.equals("\u2039") || t.equals("‹") ||
             t.equals("back") || t.equals("exit") ||
-            d.equals("back") || d.equals("navigate up") || d.equals("exit")) {
+            d.equals("back") || d.equals("navigate up") || d.equals("exit") ||
+            d.equals("x") || d.equals("\u2715") || d.equals("\u2716")) {
             return true;
         }
 
@@ -1043,8 +1065,12 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     @Override
     public void onDestroy() {
         super.onDestroy();
-        stopSolving();
+        isRunning = false;
+        if (instance != null) {
+            instance.loopHandler.removeCallbacks(instance.solveLoopRunnable);
+        }
         instance = null;
         isServiceActive = false;
+        Log.i(TAG, "onDestroy called, isUserRunning=" + isUserRunning);
     }
 }
