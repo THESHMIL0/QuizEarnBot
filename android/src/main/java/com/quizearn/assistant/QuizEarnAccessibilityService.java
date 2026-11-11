@@ -40,7 +40,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     public static volatile int liveGems = -1;
     public static volatile String currentStatus = "Standby";
     private static boolean hasAlerted25Gems = false;
-    public static volatile boolean isPending25thGemStop = false;
+    public static volatile boolean isCollecting25thGem = false;
+    public static volatile boolean finalAdStarted = false;
 
     public static QuizEarnAccessibilityService instance = null;
 
@@ -80,7 +81,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         isRunning = true;
         isUserRunning = true;
         hasAlerted25Gems = false;
-        isPending25thGemStop = false;
+        isCollecting25thGem = false;
+        finalAdStarted = false;
         currentStatus = "Scanning...";
         Log.i(TAG, "startSolving called! instance = " + instance);
         if (instance != null) {
@@ -120,7 +122,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     public static void stopSolving() {
         isRunning = false;
         isUserRunning = false;
-        isPending25thGemStop = false;
+        isCollecting25thGem = false;
+        finalAdStarted = false;
         Log.i(TAG, "stopSolving called.");
         if (instance != null) {
             instance.lastSolvedTarget = "";
@@ -323,7 +326,12 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 lastProgressTime = now; // Actively watching ad - NOT a stall!
                 if (adStartTime == 0) adStartTime = now;
                 long adElapsed = (now - adStartTime) / 1000;
-                currentStatus = "Ad Playing (" + adElapsed + "s)...";
+                if (isCollecting25thGem) {
+                    finalAdStarted = true;
+                    currentStatus = "Final Ad (" + adElapsed + "s) - 25th Gem...";
+                } else {
+                    currentStatus = "Ad Playing (" + adElapsed + "s)...";
+                }
 
                 // After 18s: Search for verified small corner close icons / back buttons in custom webview/canvas
                 if (!hasAdCountdown && adElapsed >= 18 && (now - lastTapTime > 2000)) {
@@ -501,29 +509,38 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 String t = item.text.trim().toLowerCase();
                 String d = item.contentDesc.trim().toLowerCase();
                 String combined = (t + " " + d).trim();
-                if (combined.contains("collect gem") || combined.contains("collect reward") || combined.contains("collect coins")) {
+                if (combined.contains("collect gem") || combined.contains("collect reward")) {
                     hasCollectGem = true;
                     break;
                 }
             }
 
-            boolean is25Gems = (liveGems >= 25);
+            boolean is25GemsOnScreen = (detectedGems >= 25 || liveGems >= 25);
             for (NodeItem item : allNodes) {
                 String t = item.text.toLowerCase().trim();
                 String d = item.contentDesc.toLowerCase().trim();
                 if (t.contains("25/25") || d.contains("25/25") || t.contains("25 / 25") || d.contains("25 / 25") ||
+                    t.contains("gems collected") || d.contains("gems collected") ||
+                    t.contains("start offer") || d.contains("start offer") ||
+                    t.contains("1000 coins") || d.contains("1000 coins") ||
                     t.contains("super offer unlocked") || t.contains("super task unlocked")) {
-                    is25Gems = true;
+                    is25GemsOnScreen = true;
                     break;
                 }
             }
 
-            // STOP BOT AUTOMATICALLY WHEN 25 GEMS REACHED:
-            // 1. If 25th gem ad completed (isPending25thGemStop) -> STOP IMMEDIATELY!
-            // 2. If 25 gems is displayed on screen and no pending Collect Gem button -> STOP IMMEDIATELY!
-            if (isPending25thGemStop || (is25Gems && !hasCollectGem)) {
-                isPending25thGemStop = false;
-                Log.i(TAG, "25 GEMS TARGET REACHED! Milestone achieved (" + liveGems + "/25). Stopping bot for Super Offer claim.");
+            // Check if final ad for 25th gem has finished and returned to Quiz app
+            boolean finalAdCompleted = (isCollecting25thGem && finalAdStarted && !isAd && (now - lastTapTime > 1500));
+
+            // STOP BOT AUTOMATICALLY ONLY WHEN ON THE 25 GEMS PAGE (AFTER FINAL AD CLOSES):
+            // 1. Must be back in Quiz app (!isAd && pkg.equals("com.quiz.earn.money.game"))
+            // 2. Final ad must be completed (finalAdCompleted) OR 25 gems is explicitly on screen (is25GemsOnScreen)
+            // 3. No pending Collect Gem button on screen (!hasCollectGem)
+            if (!isAd && pkg.equals("com.quiz.earn.money.game") && (is25GemsOnScreen || finalAdCompleted) && !hasCollectGem) {
+                isCollecting25thGem = false;
+                finalAdStarted = false;
+                liveGems = 25;
+                Log.i(TAG, "🎉 25 GEMS TARGET REACHED! Final ad closed. Milestone achieved (25/25). Stopping bot on 25 Gems Page.");
                 currentStatus = "25 GEMS HIT! (1000 Coins Ready)";
                 if (!hasAlerted25Gems) {
                     hasAlerted25Gems = true;
@@ -534,31 +551,44 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             }
 
             // 4. Check for "Collect Gem", "Claim", "Verify Usage", or Reward collection buttons
-            for (NodeItem item : allNodes) {
-                if (isForbiddenElement(item)) continue;
-                String t = item.text.trim().toLowerCase();
-                String d = item.contentDesc.trim().toLowerCase();
-                String combined = (t + " " + d).trim();
-                if (combined.contains("collect gem") || combined.contains("collect reward") || combined.contains("collect coins") || 
-                    t.equals("collect") || t.equals("claim") || t.equals("claim now") ||
-                    t.contains("verify usage") || t.equals("verify") || d.contains("verify usage")) {
-                    
-                    // If we are at 24+ gems, this collection action earns the 25th gem!
-                    if (liveGems >= 24 && (combined.contains("collect gem") || combined.contains("collect reward") || combined.contains("collect coins"))) {
-                        isPending25thGemStop = true;
-                        liveGems = 25;
-                        Log.i(TAG, "Collecting 25th Gem! Bot will automatically STOP after this ad completes.");
-                    }
+            if (!is25GemsOnScreen) {
+                for (NodeItem item : allNodes) {
+                    if (isForbiddenElement(item)) continue;
+                    String t = item.text.trim().toLowerCase();
+                    String d = item.contentDesc.trim().toLowerCase();
+                    String combined = (t + " " + d).trim();
+                    if (combined.contains("collect gem") || combined.contains("collect reward") || 
+                        t.equals("collect") || t.equals("claim") || t.equals("claim now") ||
+                        t.contains("verify usage") || t.equals("verify") || d.contains("verify usage")) {
+                        
+                        // If we are at 24+ gems, this collection action starts the final ad for the 25th gem!
+                        boolean is24thGem = (liveGems >= 24);
+                        if (!is24thGem) {
+                            for (NodeItem n : allNodes) {
+                                String nt = n.text.toLowerCase();
+                                String nd = n.contentDesc.toLowerCase();
+                                if (nt.contains("24/25") || nd.contains("24/25") || nt.contains("24 / 25") || nd.contains("24 / 25")) {
+                                    is24thGem = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (is24thGem && (combined.contains("collect gem") || combined.contains("collect reward"))) {
+                            isCollecting25thGem = true;
+                            finalAdStarted = false;
+                            Log.i(TAG, "Collecting 25th Gem! Final ad will play now. Bot remains ACTIVE to close the ad before stopping on the 25 gems page.");
+                        }
 
-                    Log.i(TAG, "Found Action/Claim/Verify button: " + item.text + " at " + item.rect);
-                    tapNode(item);
-                    lastTapTime = now;
-                    lastProgressTime = now;
-                    lastSolvedTarget = "";
-                    lastSolveTime = 0;
-                    currentStatus = (t.contains("verify") || d.contains("verify")) ? "Verifying Usage..." : "Collecting Gem...";
-                    adStartTime = 0;
-                    return;
+                        Log.i(TAG, "Found Action/Claim/Verify button: " + item.text + " at " + item.rect);
+                        tapNode(item);
+                        lastTapTime = now;
+                        lastProgressTime = now;
+                        lastSolvedTarget = "";
+                        lastSolveTime = 0;
+                        currentStatus = (t.contains("verify") || d.contains("verify")) ? "Verifying Usage..." : "Collecting Gem...";
+                        adStartTime = 0;
+                        return;
+                    }
                 }
             }
 
