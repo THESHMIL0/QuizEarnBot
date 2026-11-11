@@ -80,6 +80,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     public static void startSolving() {
         isRunning = true;
         isUserRunning = true;
+        liveGems = -1; // Reset live gems for clean cycle detection
         hasAlerted25Gems = false;
         isCollecting25thGem = false;
         finalAdStarted = false;
@@ -377,29 +378,47 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     }
                 }
 
-                // After 22s: Progressive Universal Close coordinates tap alternating corners
-                if (!hasAdCountdown && adElapsed >= 22 && adElapsed < 32 && (now - lastTapTime > 2000)) {
-                    int step = (int)((adElapsed - 22) / 2);
-                    int targetX = (step % 2 == 0) ? (screenW - 55) : 55;
-                    int targetY = 55;
-
-                    if (!isPointInForbiddenElement(targetX, targetY, allNodes)) {
-                        if (step % 2 == 0) {
-                            Log.i(TAG, "Ad running long (" + adElapsed + "s): Tapping top-right corner close coordinate at (" + targetX + ", " + targetY + ")...");
-                        } else {
-                            Log.i(TAG, "Ad running long (" + adElapsed + "s): Tapping top-left corner close coordinate at (" + targetX + ", " + targetY + ")...");
-                        }
-                        tapCoordinates(targetX, targetY);
-                        lastTapTime = now;
+                // After 20s+: Progressive Universal Close taps (top-right corner, top-left corner, and Back key)
+                if (adElapsed >= 20 && (now - lastTapTime > 1800)) {
+                    // After 50s+: Ad is stuck or unresponsive -> Auto-recover cleanly by relaunching Quiz & Earn
+                    if (adElapsed >= 50) {
+                        Log.w(TAG, "Ad stuck (" + adElapsed + "s): Relaunching Quiz & Earn to recover cleanly...");
+                        restartQuizApp();
+                        lastTapTime = now + 3000;
+                        lastProgressTime = now;
                         return;
-                    } else {
-                        Log.w(TAG, "Skipping corner coordinate tap: CTA / forbidden button detected at (" + targetX + ", " + targetY + ")");
                     }
-                }
 
-                // After 32s+: Press native Android Back key to return to Quiz
-                if (adElapsed >= 32 && (now - lastTapTime > 2500)) {
-                    Log.i(TAG, "Ad timeout (" + adElapsed + "s): Pressing Back key to return to Quiz...");
+                    int step = (int)((adElapsed - 20) / 2);
+                    if (step % 3 == 0) {
+                        int targetX = screenW - 55;
+                        int targetY = 55;
+                        if (!isPointInForbiddenElement(targetX, targetY, allNodes)) {
+                            Log.i(TAG, "Ad running (" + adElapsed + "s): Tapping top-right corner close coordinate at (" + targetX + ", " + targetY + ")...");
+                            tapCoordinates(targetX, targetY);
+                            lastTapTime = now;
+                            return;
+                        } else {
+                            // Fallback to top-left if top-right is covered by a CTA
+                            targetX = 55;
+                            if (!isPointInForbiddenElement(targetX, targetY, allNodes)) {
+                                Log.i(TAG, "Ad running (" + adElapsed + "s): Tapping top-left corner fallback close at (" + targetX + ", " + targetY + ")...");
+                                tapCoordinates(targetX, targetY);
+                                lastTapTime = now;
+                                return;
+                            }
+                        }
+                    } else if (step % 3 == 1) {
+                        int targetX = 55;
+                        int targetY = 55;
+                        if (!isPointInForbiddenElement(targetX, targetY, allNodes)) {
+                            Log.i(TAG, "Ad running (" + adElapsed + "s): Tapping top-left corner close coordinate at (" + targetX + ", " + targetY + ")...");
+                            tapCoordinates(targetX, targetY);
+                            lastTapTime = now;
+                            return;
+                        }
+                    }
+                    Log.i(TAG, "Ad running (" + adElapsed + "s): Pressing Back key to return to Quiz...");
                     performGlobalAction(GLOBAL_ACTION_BACK);
                     lastTapTime = now;
                     return;
@@ -515,18 +534,46 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
-            boolean is25GemsOnScreen = (detectedGems >= 25 || liveGems >= 25);
+            // Check if active quiz elements exist on screen (question or answer options)
+            boolean hasActiveQuiz = false;
             for (NodeItem item : allNodes) {
-                String t = item.text.toLowerCase().trim();
-                String d = item.contentDesc.toLowerCase().trim();
-                if (t.contains("25/25") || d.contains("25/25") || t.contains("25 / 25") || d.contains("25 / 25") ||
-                    t.contains("gems collected") || d.contains("gems collected") ||
-                    t.contains("start offer") || d.contains("start offer") ||
-                    t.contains("1000 coins") || d.contains("1000 coins") ||
-                    t.contains("super offer unlocked") || t.contains("super task unlocked")) {
-                    is25GemsOnScreen = true;
-                    break;
+                int cy = item.rect.centerY();
+                // Question Card Zone (math equation or captcha number)
+                if (cy >= (int)(screenH * 0.10) && cy <= (int)(screenH * 0.42)) {
+                    String raw = item.text.trim();
+                    if (mathPattern.matcher(raw).find() || numPattern.matcher(cleanNumText(raw)).matches()) {
+                        hasActiveQuiz = true;
+                        break;
+                    }
                 }
+                // Options Grid Zone: answer button checking
+                if (cy >= (int)(screenH * 0.26) && cy <= (int)(screenH * 0.65)) {
+                    String raw = cleanNumText(item.text.trim());
+                    if (numPattern.matcher(raw).matches()) {
+                        hasActiveQuiz = true;
+                        break;
+                    }
+                }
+            }
+
+            boolean is25GemsOnScreen = (detectedGems >= 25);
+            if (!hasActiveQuiz) {
+                for (NodeItem item : allNodes) {
+                    String t = item.text.toLowerCase().trim();
+                    String d = item.contentDesc.toLowerCase().trim();
+                    if (t.contains("25/25") || d.contains("25/25") || t.contains("25 / 25") || d.contains("25 / 25") ||
+                        t.contains("gems collected") || d.contains("gems collected") ||
+                        t.contains("start offer") || d.contains("start offer") ||
+                        t.contains("claim 1000 coins") || d.contains("claim 1000 coins") ||
+                        t.contains("collect 1000 coins") || d.contains("collect 1000 coins") ||
+                        t.contains("my super offers") || d.contains("my super offers") ||
+                        t.contains("super offer unlocked") || t.contains("super task unlocked")) {
+                        is25GemsOnScreen = true;
+                        break;
+                    }
+                }
+            } else {
+                is25GemsOnScreen = false;
             }
 
             // Check if final ad for 25th gem has finished and returned to Quiz app
@@ -534,9 +581,10 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
             // STOP BOT AUTOMATICALLY ONLY WHEN ON THE 25 GEMS PAGE (AFTER FINAL AD CLOSES):
             // 1. Must be back in Quiz app (!isAd && pkg.equals("com.quiz.earn.money.game"))
-            // 2. Final ad must be completed (finalAdCompleted) OR 25 gems is explicitly on screen (is25GemsOnScreen)
+            // 2. Must NOT be an active quiz question (!hasActiveQuiz)
             // 3. No pending Collect Gem button on screen (!hasCollectGem)
-            if (!isAd && pkg.equals("com.quiz.earn.money.game") && (is25GemsOnScreen || finalAdCompleted) && !hasCollectGem) {
+            // 4. Final ad must be completed (finalAdCompleted) OR 25 gems is explicitly on screen (is25GemsOnScreen)
+            if (!isAd && pkg.equals("com.quiz.earn.money.game") && !hasActiveQuiz && !hasCollectGem && (is25GemsOnScreen || finalAdCompleted)) {
                 isCollecting25thGem = false;
                 finalAdStarted = false;
                 liveGems = 25;
@@ -914,6 +962,10 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         if (allNodes == null) return false;
         for (NodeItem item : allNodes) {
             if (item.rect != null && item.rect.contains(x, y)) {
+                // Ignore large background containers when checking point collisions
+                if (item.rect.width() >= 450 && item.rect.height() >= 450) {
+                    continue;
+                }
                 if (isForbiddenElement(item)) {
                     return true;
                 }
