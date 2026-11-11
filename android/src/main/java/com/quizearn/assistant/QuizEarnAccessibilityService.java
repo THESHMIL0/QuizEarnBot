@@ -50,6 +50,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     private long lastProgressTime = 0;
     private String lastSolvedTarget = "";
     private long lastSolveTime = 0;
+    private int externalAppBackCount = 0;
 
     // Real math operations (including unicode multiplication and division)
     private final Pattern mathPattern = Pattern.compile("(\\d+)\\s*([\\+\\-\\–\\—\\*×xX]|÷|\\/)\\s*(\\d+)");
@@ -166,15 +167,42 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             CharSequence pkgSeq = root.getPackageName();
             String pkg = (pkgSeq != null) ? pkgSeq.toString() : "";
 
-            // 0. Auto-Dismiss Google Play Store / Chrome redirect
-            if (pkg.contains("vending") || pkg.contains("chrome") || pkg.contains("browser")) {
-                Log.i(TAG, "Play Store / Browser opened by ad! Pressing Back immediately to return...");
+            // 0. Universal Auto-Dismiss: Return immediately if an ad launched Play Store, Chrome, or any external app
+            boolean isQuizApp = pkg.equals("com.quiz.earn.money.game");
+            boolean isAssistantApp = pkg.equals("com.quizearn.assistant");
+            boolean isSystemOrSettings = pkg.equals("com.android.systemui") || pkg.equals("com.android.settings");
+            boolean isAdActivity = pkg.contains("gms.ads") || pkg.contains("admob") || 
+                                   pkg.contains("unity3d") || pkg.contains("applovin") || 
+                                   pkg.contains("ironsource") || pkg.contains("vungle") || 
+                                   pkg.contains("mintegral") || pkg.contains("inmobi") || 
+                                   pkg.contains("fyber");
+
+            if (!isQuizApp && !isAssistantApp && !isSystemOrSettings && !isAdActivity && !pkg.isEmpty()) {
+                externalAppBackCount++;
+                Log.i(TAG, "External app opened (" + pkg + ")! Attempt=" + externalAppBackCount + ". Pressing Back immediately to return to Quiz & Earn...");
                 performGlobalAction(GLOBAL_ACTION_BACK);
-                lastTapTime = now + 3500; // 3.5s hands-off cooldown so we don't re-trigger the ad CTA overlay
+                lastTapTime = now + 2000;
                 lastProgressTime = now;
-                currentStatus = "Returning from Store...";
+                currentStatus = "Returning to Quiz...";
                 adStartTime = 0;
+
+                // If still stuck on external app after 3 back attempts, force bring Quiz & Earn directly to front
+                if (externalAppBackCount >= 3) {
+                    Log.w(TAG, "Still stuck on " + pkg + " after 3 back attempts. Bringing Quiz & Earn to front via Intent...");
+                    try {
+                        Intent launchIntent = getPackageManager().getLaunchIntentForPackage("com.quiz.earn.money.game");
+                        if (launchIntent != null) {
+                            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+                            startActivity(launchIntent);
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error bringing Quiz & Earn to front", e);
+                    }
+                    externalAppBackCount = 0;
+                }
                 return;
+            } else {
+                externalAppBackCount = 0;
             }
 
             List<NodeItem> allNodes = new ArrayList<>();
@@ -183,6 +211,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             if (allNodes.isEmpty()) return;
 
             // 1. Detect Ad State & Countdowns (Ad 1 of 2, Ad 2 of 2, etc.)
+            int screenW = getResources().getDisplayMetrics().widthPixels;
+            int screenH = getResources().getDisplayMetrics().heightPixels;
             boolean hasAdCountdown = false;
             boolean isAd = false;
             if (pkg.contains("gms.ads") || pkg.contains("admob") || pkg.contains("unity3d") || 
@@ -228,6 +258,19 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
+            // Game screen override: If quiz game elements (Collect Gem, Super Offer, etc.) are visible, this is NOT an ad!
+            for (NodeItem item : allNodes) {
+                String t = item.text.toLowerCase();
+                String d = item.contentDesc.toLowerCase();
+                if (t.contains("collect gem") || d.contains("collect gem") || 
+                    t.contains("super offer") || t.contains("keep going") ||
+                    t.contains("my offers") || t.equals("verify") || t.contains("verify usage")) {
+                    isAd = false;
+                    hasAdCountdown = false;
+                    break;
+                }
+            }
+
             // 2. OFFICIAL SKIP ARROW CHECK (Tapped as soon as network provides Skip)
             for (NodeItem item : allNodes) {
                 if (isSkipElement(item)) {
@@ -247,7 +290,6 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 String t = item.text.toLowerCase().trim();
                 if (t.contains("reward granted") || t.contains("reward credited")) {
                     Log.i(TAG, "Reward granted banner detected! Tapping top-right Close (X)...");
-                    int screenW = getResources().getDisplayMetrics().widthPixels;
                     int targetX = Math.min(screenW - 75, item.rect.right + 60);
                     int targetY = item.rect.centerY();
                     tapCoordinates(targetX, targetY);
@@ -283,11 +325,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 long adElapsed = (now - adStartTime) / 1000;
                 currentStatus = "Ad Playing (" + adElapsed + "s)...";
 
-                int screenW = getResources().getDisplayMetrics().widthPixels;
-                int screenH = getResources().getDisplayMetrics().heightPixels;
-
-                // After 18s: Search for small corner icons / back buttons in custom webview/canvas
-                if (adElapsed >= 18 && (now - lastTapTime > 2000)) {
+                // After 18s: Search for verified small corner close icons / back buttons in custom webview/canvas
+                if (!hasAdCountdown && adElapsed >= 18 && (now - lastTapTime > 2000)) {
                     for (NodeItem item : allNodes) {
                         if (isForbiddenElement(item)) continue;
                         int cx = item.rect.centerX();
@@ -296,22 +335,33 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                         int h = item.rect.height();
 
                         String itemT = item.text.trim();
-                        // Reject text nodes with words that aren't close/skip
-                        if (!itemT.isEmpty() && itemT.length() > 6 && !itemT.equalsIgnoreCase("close") && !itemT.equalsIgnoreCase("skip")) {
+                        String itemD = item.contentDesc.trim();
+                        String itemId = item.resId.trim();
+
+                        // Genuine close button MUST have verified close/skip text, desc, or ID!
+                        boolean hasCloseIndicator = isCloseOrSkipText(itemT) || 
+                                                    isCloseOrSkipDesc(itemD) || 
+                                                    isCloseOrSkipId(itemId);
+                        if (!hasCloseIndicator) {
+                            continue; // Reject any anonymous or non-close node (e.g. "Open", countdown wrappers, etc.)
+                        }
+
+                        // Genuine close icons are small (30-130px)
+                        if (w > 130 || h > 130) {
                             continue;
                         }
 
                         // Top-right close icon in webview/playable
-                        if (cx > (int)(screenW * 0.75) && cy < 350 && w < 260 && h < 260) {
-                            Log.i(TAG, "Ad timeout (" + adElapsed + "s): Tapping top-right corner node at " + item.rect);
+                        if (cx > (int)(screenW * 0.75) && cy < 350) {
+                            Log.i(TAG, "Ad timeout (" + adElapsed + "s): Tapping verified top-right corner close node at " + item.rect + " [text='" + itemT + "', desc='" + itemD + "', id='" + itemId + "']");
                             tapNode(item);
                             lastTapTime = now;
                             return;
                         }
 
                         // Top-left back / skip arrow in webview/playable
-                        if (cx < (int)(screenW * 0.25) && cy < 350 && w < 260 && h < 260) {
-                            Log.i(TAG, "Ad timeout (" + adElapsed + "s): Tapping top-left corner node at " + item.rect);
+                        if (cx < (int)(screenW * 0.25) && cy < 350) {
+                            Log.i(TAG, "Ad timeout (" + adElapsed + "s): Tapping verified top-left corner close node at " + item.rect + " [text='" + itemT + "', desc='" + itemD + "', id='" + itemId + "']");
                             tapNode(item);
                             lastTapTime = now;
                             return;
@@ -322,15 +372,21 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 // After 22s: Progressive Universal Close coordinates tap alternating corners
                 if (!hasAdCountdown && adElapsed >= 22 && adElapsed < 32 && (now - lastTapTime > 2000)) {
                     int step = (int)((adElapsed - 22) / 2);
-                    if (step % 2 == 0) {
-                        Log.i(TAG, "Ad running long (" + adElapsed + "s): Tapping top-right corner close coordinate...");
-                        tapCoordinates(screenW - 55, 55);
+                    int targetX = (step % 2 == 0) ? (screenW - 55) : 55;
+                    int targetY = 55;
+
+                    if (!isPointInForbiddenElement(targetX, targetY, allNodes)) {
+                        if (step % 2 == 0) {
+                            Log.i(TAG, "Ad running long (" + adElapsed + "s): Tapping top-right corner close coordinate at (" + targetX + ", " + targetY + ")...");
+                        } else {
+                            Log.i(TAG, "Ad running long (" + adElapsed + "s): Tapping top-left corner close coordinate at (" + targetX + ", " + targetY + ")...");
+                        }
+                        tapCoordinates(targetX, targetY);
+                        lastTapTime = now;
+                        return;
                     } else {
-                        Log.i(TAG, "Ad running long (" + adElapsed + "s): Tapping top-left corner close coordinate...");
-                        tapCoordinates(55, 55);
+                        Log.w(TAG, "Skipping corner coordinate tap: CTA / forbidden button detected at (" + targetX + ", " + targetY + ")");
                     }
-                    lastTapTime = now;
-                    return;
                 }
 
                 // After 32s+: Press native Android Back key to return to Quiz
@@ -414,8 +470,6 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
             // Pattern C: Top-right header gem badge (rightmost counter in header bar)
             if (detectedGems < 0) {
-                int screenW = getResources().getDisplayMetrics().widthPixels;
-                int screenH = getResources().getDisplayMetrics().heightPixels;
                 int maxCx = -1;
                 for (NodeItem item : allNodes) {
                     int cx = item.rect.centerX();
@@ -509,9 +563,6 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             }
 
             // 5. ZONE-BASED 100% ACCURATE QUIZ SOLVER
-            int screenW = getResources().getDisplayMetrics().widthPixels;
-            int screenH = getResources().getDisplayMetrics().heightPixels;
-
             // Strict spatial zones to prevent ANY header/footer badge misidentification:
             // - Header Zone: Y < screenH * 0.12 (Gems counter, Gift badges, Quiz title) -> EXCLUDED
             // - Question Card Zone: screenH * 0.12 <= Y <= screenH * 0.36 (Math equation / Captcha number)
@@ -800,7 +851,48 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         } catch (Exception ignored) {}
     }
 
-    // Global filter to NEVER touch sound/mute, install, privacy, or info buttons
+    private boolean isCloseOrSkipText(String text) {
+        if (text == null) return false;
+        String t = text.trim().toLowerCase();
+        if (t.isEmpty()) return false;
+        return t.equals("close") || t.equals("skip") || t.equals("dismiss") ||
+               t.equals("x") || t.equals("✕") || t.equals("✖") || t.equals("×") ||
+               t.equals("<") || t.equals("‹") || t.equals("«") || t.equals("back") ||
+               t.equals("done") || t.equals("exit") || t.equals("no thanks") ||
+               t.equals("not now") || t.equals(">>") || t.equals("››") || t.equals("»") ||
+               t.equals("▶▶") || t.equals("⏭") || t.equals("⏩") || t.equals(">|");
+    }
+
+    private boolean isCloseOrSkipDesc(String desc) {
+        if (desc == null) return false;
+        String d = desc.trim().toLowerCase();
+        if (d.isEmpty()) return false;
+        return d.contains("close") || d.contains("skip") || d.contains("dismiss") ||
+               d.equals("x") || d.equals("✕") || d.equals("✖") || d.equals("back") ||
+               d.equals("exit") || d.equals("navigate up");
+    }
+
+    private boolean isCloseOrSkipId(String resId) {
+        if (resId == null) return false;
+        String id = resId.trim().toLowerCase();
+        if (id.isEmpty()) return false;
+        return id.contains("close") || id.contains("skip") || id.contains("dismiss") || 
+               id.contains("btn_back") || id.contains("iv_back") || id.contains("al_close");
+    }
+
+    private boolean isPointInForbiddenElement(int x, int y, List<NodeItem> allNodes) {
+        if (allNodes == null) return false;
+        for (NodeItem item : allNodes) {
+            if (item.rect != null && item.rect.contains(x, y)) {
+                if (isForbiddenElement(item)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // Global filter to NEVER touch CTA buttons (Open, Install, Download, Play, etc.), audio, privacy, or deceptive layers
     private boolean isForbiddenElement(NodeItem item) {
         if (item == null || item.rect == null) return true;
 
@@ -833,10 +925,43 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             return true;
         }
 
-        // Install / Download / CTA
-        if (combined.contains("install") || combined.contains("download") || 
+        // Action CTA: "Open" buttons & variants (Skyscanner, apps, stores)
+        if (t.equals("open") || t.startsWith("open ") || t.endsWith(" open") || 
+            t.contains("open in") || t.contains("open app") || t.contains("open game") ||
+            d.equals("open") || d.startsWith("open ") || d.endsWith(" open") || 
+            d.contains("open in") || d.contains("open app") ||
+            id.contains("open_button") || id.contains("btn_open") || 
+            id.contains("open_app") || id.contains("openbutton")) {
+            return true;
+        }
+
+        // Action CTA: "Play" buttons & variants
+        if (t.equals("play") || t.equals("play now") || t.startsWith("play ") || 
+            t.contains("play game") || t.contains("play free") ||
+            d.equals("play") || d.equals("play now") || d.startsWith("play ") || 
+            id.contains("btn_play") || id.contains("play_button")) {
+            return true;
+        }
+
+        // Action CTA: Install / Download / Get
+        if (t.equals("get") || t.startsWith("get ") || t.contains("get app") ||
+            d.equals("get") || d.startsWith("get ") || d.contains("get app") ||
+            combined.contains("install") || combined.contains("download") || 
             combined.contains("get app") || combined.contains("play store") || 
-            id.contains("install") || id.contains("download") || id.contains("cta")) {
+            id.contains("install") || id.contains("download")) {
+            return true;
+        }
+
+        // Action CTA: Shop / Try / Visit / Details
+        if (t.equals("shop") || t.startsWith("shop ") || t.contains("shop now") ||
+            d.equals("shop") || d.startsWith("shop ") || d.contains("shop now") ||
+            t.equals("try") || t.startsWith("try ") || t.contains("try now") ||
+            d.equals("try") || d.startsWith("try ") || d.contains("try now") ||
+            t.equals("visit") || t.startsWith("visit ") || d.equals("visit") ||
+            combined.contains("learn more") || combined.contains("view details") ||
+            combined.contains("see more") || combined.contains("sign up") ||
+            combined.contains("order now") || combined.contains("buy now") ||
+            id.contains("action_button") || id.contains("button_action") || id.contains("btn_action")) {
             return true;
         }
 
