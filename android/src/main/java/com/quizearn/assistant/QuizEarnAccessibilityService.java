@@ -24,6 +24,7 @@ import android.os.Vibrator;
 import android.util.Log;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.accessibility.AccessibilityWindowInfo;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -282,16 +283,48 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         }
 
         AccessibilityNodeInfo root = getRootInActiveWindow();
-        if (root == null) return;
+        List<NodeItem> allNodes = new ArrayList<>();
+        String pkg = "";
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            try {
+                List<AccessibilityWindowInfo> windows = getWindows();
+                if (windows != null && !windows.isEmpty()) {
+                    for (AccessibilityWindowInfo win : windows) {
+                        if (win == null) continue;
+                        AccessibilityNodeInfo winRoot = win.getRoot();
+                        if (winRoot != null) {
+                            if (pkg.isEmpty() && winRoot.getPackageName() != null) {
+                                String wp = winRoot.getPackageName().toString();
+                                if (!wp.equals("com.quizearn.assistant") && !wp.equals("com.android.systemui")) {
+                                    pkg = wp;
+                                }
+                            }
+                            collectAllNodes(winRoot, allNodes);
+                            winRoot.recycle();
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Error getting windows list", e);
+            }
+        }
+
+        if (root != null) {
+            if (pkg.isEmpty() && root.getPackageName() != null) {
+                pkg = root.getPackageName().toString();
+            }
+            if (allNodes.isEmpty()) {
+                collectAllNodes(root, allNodes);
+            }
+        }
+
+        if (allNodes.isEmpty()) {
+            if (root != null) root.recycle();
+            return;
+        }
 
         try {
-            CharSequence pkgSeq = root.getPackageName();
-            String pkg = (pkgSeq != null) ? pkgSeq.toString() : "";
-
-            List<NodeItem> allNodes = new ArrayList<>();
-            collectAllNodes(root, allNodes);
-
-            if (allNodes.isEmpty()) return;
 
             int screenW = getResources().getDisplayMetrics().widthPixels;
             int screenH = getResources().getDisplayMetrics().heightPixels;
@@ -485,6 +518,18 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
+            // Check if Home Screen is visible (Start Quiz, Tasks, Community, Wallet, Profile)
+            boolean hasHomeScreen = false;
+            for (NodeItem item : allNodes) {
+                String t = item.text.trim().toLowerCase();
+                if (t.equals("start quiz") || t.equals("start math quiz") || 
+                    t.equals("tasks") || t.equals("wallet") || t.equals("profile") ||
+                    t.contains("rate us 5 stars") || t.contains("daily win")) {
+                    hasHomeScreen = true;
+                    break;
+                }
+            }
+
             // 1. Detect Ad State & Countdowns (Ad 1 of 2, Ad 2 of 2, etc.)
             boolean hasAdCountdown = false;
             boolean isAd = false;
@@ -519,7 +564,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
                 boolean isAdCta = (t.equals("install") || t.equals("install now") || (t.startsWith("install") && t.length() <= 15) ||
                     t.equals("download") || t.equals("download now") || (t.startsWith("download") && t.length() <= 15) ||
-                    t.contains("play store") || t.contains("advertisement") ||
+                    (t.contains("play store") && !t.contains("rate") && !t.contains("stars")) || t.contains("advertisement") ||
                     t.contains("reward will be") || t.contains("you can skip in") ||
                     t.contains("shop now") || t.contains("claim bonus") || t.contains("play now") ||
                     t.contains("get it on") || t.equals("get") || t.equals("open"));
@@ -538,8 +583,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
-            // Game screen override: If actual quiz questions, Collect Gem, OR Super Offer milestone page are visible, this is NOT an ad!
-            if (hasActiveQuiz || hasCollectGem || hasSuperOfferMilestone) {
+            // Game screen override: If actual quiz questions, Collect Gem, Super Offer milestone page, OR Home Screen are visible, this is NOT an ad!
+            if (hasActiveQuiz || hasCollectGem || hasSuperOfferMilestone || hasHomeScreen) {
                 isAd = false;
                 hasAdCountdown = false;
                 adStartTime = 0;
@@ -680,8 +725,9 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 // Keep progress active while ad is running (so stall timer never triggers upon ad completion)
                 lastProgressTime = now;
 
-                // After 20s+: Progressive Universal Close taps (top-right corner, top-left corner, and Back key)
-                if (adElapsed >= 20 && (now - lastTapTime > 1800)) {
+                // Progressive Universal Close taps (top-right skip pill, corner close X, top-left corner, and Back key)
+                long minAdElapsed = hasAdCountdown ? 20 : 8;
+                if (adElapsed >= minAdElapsed && (now - lastTapTime > 1800)) {
                     // Only after 120s+ of total ad unresponsiveness: soft-bring Quiz & Earn to front (NEVER kill app)
                     if (adElapsed >= 120) {
                         Log.w(TAG, "Ad exceeded 120s timeout without dismissing. Bringing Quiz & Earn to front...");
@@ -692,8 +738,19 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                         return;
                     }
 
-                    int step = (int)((adElapsed - 20) / 2);
-                    if (step % 3 == 0) {
+                    int step = (int)((adElapsed - minAdElapsed) / 2);
+                    if (step % 4 == 0) {
+                        // Center of top-right Skip pill button (e.g. ">> Skip to Google Play")
+                        int targetX = Math.max(50, screenW - 120);
+                        int targetY = 60;
+                        if (!isPointInForbiddenElement(targetX, targetY, allNodes)) {
+                            Log.i(TAG, "Ad running (" + adElapsed + "s): Tapping top-right Skip pill button at (" + targetX + ", " + targetY + ")...");
+                            tapCoordinates(targetX, targetY);
+                            lastTapTime = now;
+                            return;
+                        }
+                    } else if (step % 4 == 1) {
+                        // Extreme top-right corner close X / chevron
                         int targetX = screenW - 55;
                         int targetY = 55;
                         if (!isPointInForbiddenElement(targetX, targetY, allNodes)) {
@@ -701,17 +758,9 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                             tapCoordinates(targetX, targetY);
                             lastTapTime = now;
                             return;
-                        } else {
-                            // Fallback to top-left if top-right is covered by a CTA
-                            targetX = 55;
-                            if (!isPointInForbiddenElement(targetX, targetY, allNodes)) {
-                                Log.i(TAG, "Ad running (" + adElapsed + "s): Tapping top-left corner fallback close at (" + targetX + ", " + targetY + ")...");
-                                tapCoordinates(targetX, targetY);
-                                lastTapTime = now;
-                                return;
-                            }
                         }
-                    } else if (step % 3 == 1) {
+                    } else if (step % 4 == 2) {
+                        // Top-left corner fallback close
                         int targetX = 55;
                         int targetY = 55;
                         if (!isPointInForbiddenElement(targetX, targetY, allNodes)) {
@@ -1297,7 +1346,9 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             currentStatus = "Scanning...";
 
         } finally {
-            root.recycle();
+            if (root != null) {
+                root.recycle();
+            }
         }
     }
 
@@ -1328,8 +1379,17 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         // Effective text falls back to content description
         String effectiveText = !text.isEmpty() ? text : desc;
 
-        // Add node if it has text, content description, resource ID, or is clickable
-        if ((!effectiveText.isEmpty() || !desc.isEmpty() || !resId.isEmpty() || node.isClickable()) && !rect.isEmpty()) {
+        boolean isSpecialClass = false;
+        CharSequence clsSeq = node.getClassName();
+        if (clsSeq != null) {
+            String cls = clsSeq.toString().toLowerCase();
+            if (cls.contains("webview")) {
+                isSpecialClass = true;
+            }
+        }
+
+        // Add node if it has text, content description, resource ID, is clickable, or is a WebView
+        if ((!effectiveText.isEmpty() || !desc.isEmpty() || !resId.isEmpty() || node.isClickable() || isSpecialClass) && !rect.isEmpty()) {
             list.add(new NodeItem(node, effectiveText, desc, resId, rect));
         }
 
@@ -2216,12 +2276,13 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
         // Case B: Verify button is present
         if (verifyBtn != null) {
-            boolean hasInstalledApp = (offerTargetPackage != null && !offerTargetPackage.isEmpty()) ||
-                                      detectNewlyInstalledPackage(baselinePackages) != null ||
-                                      !findMostRecentInstalledPackage().isEmpty();
+            String newPkg = (offerTargetPackage != null && !offerTargetPackage.isEmpty()) 
+                ? offerTargetPackage 
+                : detectNewlyInstalledPackage(baselinePackages);
 
-            if (hasInstalledApp || appIsDuplicate) {
-                Log.i(TAG, "⚡ App ready/checked! Tapping 'Verify Installation' on Super Offer page at " + verifyBtn.rect);
+            if (newPkg != null && !newPkg.isEmpty()) {
+                offerTargetPackage = newPkg;
+                Log.i(TAG, "⚡ App ready/checked (" + offerTargetPackage + ")! Tapping 'Verify Installation' on Super Offer page at " + verifyBtn.rect);
                 currentStatus = "Verifying Offer...";
                 tapNode(verifyBtn);
                 offerState = OFFER_STATE_VERIFYING;
@@ -2229,23 +2290,23 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 lastTapTime = now + 2000;
                 return true;
             } else {
-                // If on install step but no app is installed yet:
-                // If 12 seconds have passed without opening Play Store, tap Go Back to return to 25 gems page and restart ad
-                if (now - offerStateStartTime > 12000) {
-                    NodeItem backBtn = (goBackBtn != null) ? goBackBtn : restartOfferBtn;
-                    if (backBtn != null) {
-                        Log.w(TAG, "On Install step but no app installed after 12s. Tapping " + backBtn.text + " to retry ad...");
-                        tapNode(backBtn);
-                    } else {
-                        Log.w(TAG, "On Install step but no app installed after 12s. Pressing Back to retry ad...");
-                        performGlobalAction(GLOBAL_ACTION_BACK);
-                    }
+                // If on install step but no app is installed yet for this offer session:
+                // Tap Go Back immediately to return to the Start Offer screen and play a fresh ad
+                NodeItem backBtn = (goBackBtn != null) ? goBackBtn : restartOfferBtn;
+                if (backBtn != null) {
+                    Log.w(TAG, "⚠️ No app installed for this offer! Tapping " + backBtn.text + " to retry and play offer ad...");
+                    currentStatus = "Retrying Offer Ad...";
+                    tapNode(backBtn);
                     offerState = OFFER_STATE_IDLE;
-                    lastTapTime = now + 1500;
+                    lastTapTime = now + 2000;
+                    return true;
+                } else {
+                    Log.w(TAG, "⚠️ No app installed for this offer! Pressing Back to retry ad...");
+                    performGlobalAction(GLOBAL_ACTION_BACK);
+                    offerState = OFFER_STATE_IDLE;
+                    lastTapTime = now + 2000;
                     return true;
                 }
-                currentStatus = "Waiting for app install...";
-                return true;
             }
         }
 
