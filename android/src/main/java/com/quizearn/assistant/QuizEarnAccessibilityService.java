@@ -153,22 +153,47 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         }
     }
 
+    public static boolean isQuizAppPackage(String pkg) {
+        if (pkg == null || pkg.isEmpty()) return false;
+        return pkg.equals("com.quiz.earn.money.game") || 
+               pkg.equals("com.rayole.cashmafia2") || 
+               pkg.contains("cashmafia") || 
+               pkg.contains("quiz.earn");
+    }
+
+    public static String getQuizAppPackage(Context ctx) {
+        if (ctx == null) return "com.quiz.earn.money.game";
+        try {
+            PackageManager pm = ctx.getPackageManager();
+            String[] candidates = new String[]{"com.quiz.earn.money.game", "com.rayole.cashmafia2"};
+            for (String p : candidates) {
+                try {
+                    pm.getPackageInfo(p, 0);
+                    return p;
+                } catch (PackageManager.NameNotFoundException ignored) {}
+            }
+        } catch (Exception ignored) {}
+        return "com.quiz.earn.money.game";
+    }
+
     public static void restartQuizApp() {
         Log.i(TAG, "restartQuizApp called.");
         Context ctx = (instance != null) ? instance : null;
         if (ctx != null) {
             try {
-                // Try force-stop on rooted devices / emulators to clean state
-                try {
-                    Runtime.getRuntime().exec(new String[]{"am", "force-stop", "com.quiz.earn.money.game"});
-                    Thread.sleep(350);
-                } catch (Throwable ignored) {}
+                final String targetPkg = getQuizAppPackage(ctx);
+                // Safe non-blocking force stop on background thread for rooted devices
+                new Thread(() -> {
+                    try {
+                        Runtime.getRuntime().exec(new String[]{"am", "force-stop", targetPkg});
+                    } catch (Throwable ignored) {}
+                }).start();
 
-                Intent intent = ctx.getPackageManager().getLaunchIntentForPackage("com.quiz.earn.money.game");
+                Intent intent = ctx.getPackageManager().getLaunchIntentForPackage(targetPkg);
                 if (intent != null) {
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
                     ctx.startActivity(intent);
-                    Log.i(TAG, "Quiz & Earn relaunched cleanly.");
+                    Log.i(TAG, "Quiz & Earn (" + targetPkg + ") relaunched cleanly.");
                     if (instance != null) {
                         instance.lastSolvedTarget = "";
                         instance.lastSolveTime = 0;
@@ -192,7 +217,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         Context ctx = (instance != null) ? instance : null;
         if (ctx != null) {
             try {
-                Intent intent = ctx.getPackageManager().getLaunchIntentForPackage("com.quiz.earn.money.game");
+                String targetPkg = getQuizAppPackage(ctx);
+                Intent intent = ctx.getPackageManager().getLaunchIntentForPackage(targetPkg);
                 if (intent != null) {
                     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
                     ctx.startActivity(intent);
@@ -285,8 +311,20 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
         AccessibilityNodeInfo root = getRootInActiveWindow();
         List<NodeItem> allNodes = new ArrayList<>();
+        List<AccessibilityNodeInfo> rootsToRecycle = new ArrayList<>();
         String pkg = "";
 
+        // 1. Primary source for active package is ALWAYS the active window
+        if (root != null) {
+            rootsToRecycle.add(root);
+            if (root.getPackageName() != null) {
+                pkg = root.getPackageName().toString();
+            }
+            collectAllNodes(root, allNodes);
+        }
+
+        // 2. Also inspect windows for multi-window ads and overlay buttons
+        boolean foundQuizInWindows = false;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             try {
                 List<AccessibilityWindowInfo> windows = getWindows();
@@ -295,14 +333,22 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                         if (win == null) continue;
                         AccessibilityNodeInfo winRoot = win.getRoot();
                         if (winRoot != null) {
-                            if (pkg.isEmpty() && winRoot.getPackageName() != null) {
-                                String wp = winRoot.getPackageName().toString();
-                                if (!wp.equals("com.quizearn.assistant") && !wp.equals("com.android.systemui")) {
-                                    pkg = wp;
+                            rootsToRecycle.add(winRoot);
+                            CharSequence wpSeq = winRoot.getPackageName();
+                            if (wpSeq != null) {
+                                String wp = wpSeq.toString();
+                                if (isQuizAppPackage(wp)) {
+                                    foundQuizInWindows = true;
+                                }
+                                if (pkg.isEmpty() && (win.isActive() || win.isFocused() || win.getType() == AccessibilityWindowInfo.TYPE_APPLICATION)) {
+                                    if (!wp.equals("com.quizearn.assistant") && !wp.equals("com.android.systemui")) {
+                                        pkg = wp;
+                                    }
                                 }
                             }
-                            collectAllNodes(winRoot, allNodes);
-                            winRoot.recycle();
+                            if (root == null || !winRoot.equals(root)) {
+                                collectAllNodes(winRoot, allNodes);
+                            }
                         }
                     }
                 }
@@ -311,17 +357,15 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             }
         }
 
-        if (root != null) {
-            if (pkg.isEmpty() && root.getPackageName() != null) {
-                pkg = root.getPackageName().toString();
-            }
-            if (allNodes.isEmpty()) {
-                collectAllNodes(root, allNodes);
-            }
+        // 3. Absolute Safeguard: If the Quiz app is present in any active window or root, pkg MUST be the Quiz app!
+        if (foundQuizInWindows || isQuizAppPackage(pkg)) {
+            pkg = getQuizAppPackage(this);
         }
 
         if (allNodes.isEmpty()) {
-            if (root != null) root.recycle();
+            for (AccessibilityNodeInfo r : rootsToRecycle) {
+                try { if (r != null) r.recycle(); } catch (Throwable ignored) {}
+            }
             return;
         }
 
@@ -370,7 +414,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             }
 
             // 0. Universal Auto-Dismiss: Return immediately if an ad launched Chrome or unexpected external app
-            boolean isQuizApp = pkg.equals("com.quiz.earn.money.game");
+            boolean isQuizApp = isQuizAppPackage(pkg);
             boolean isAssistantApp = pkg.equals("com.quizearn.assistant");
             boolean isSystemOrSettings = pkg.equals("com.android.systemui") || pkg.equals("com.android.settings");
             boolean isAdActivity = pkg.contains("gms.ads") || pkg.contains("admob") || 
@@ -379,6 +423,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                                    pkg.contains("mintegral") || pkg.contains("inmobi") || 
                                    pkg.contains("fyber");
             boolean isPlayStore = pkg.equals("com.android.vending") || pkg.contains("vending");
+            boolean isLauncher = pkg.contains("launcher") || pkg.contains("home") || pkg.equals("android");
 
             // While in Play Store state, Play Store is EXPECTED and required!
             if (isPlayStore && (offerState == OFFER_STATE_AD_PLAYING || offerState == OFFER_STATE_PLAYSTORE || offerState == OFFER_STATE_INSTALLING)) {
@@ -438,7 +483,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
-            if (!isQuizApp && !isAssistantApp && !isSystemOrSettings && !isAdActivity && !pkg.isEmpty()) {
+            if (!isQuizApp && !isAssistantApp && !isSystemOrSettings && !isAdActivity && !isLauncher && !pkg.isEmpty()) {
                 externalAppBackCount++;
                 Log.i(TAG, "External app opened (" + pkg + ")! Attempt=" + externalAppBackCount + ". Pressing Back immediately to return to Quiz & Earn...");
                 performGlobalAction(GLOBAL_ACTION_BACK);
@@ -450,15 +495,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 // If still stuck on external app after 3 back attempts, force bring Quiz & Earn directly to front
                 if (externalAppBackCount >= 3) {
                     Log.w(TAG, "Still stuck on " + pkg + " after 3 back attempts. Bringing Quiz & Earn to front via Intent...");
-                    try {
-                        Intent launchIntent = getPackageManager().getLaunchIntentForPackage("com.quiz.earn.money.game");
-                        if (launchIntent != null) {
-                            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
-                            startActivity(launchIntent);
-                        }
-                    } catch (Exception e) {
-                        Log.e(TAG, "Error bringing Quiz & Earn to front", e);
-                    }
+                    bringQuizAppToFront();
                     externalAppBackCount = 0;
                 }
                 return;
@@ -787,7 +824,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             }
 
             // 5. Game Stall Auto-Recovery (Only when in game, completely frozen with no questions or ads for > 75s, and no ad active)
-            if (pkg.equals("com.quiz.earn.money.game") && adStartTime == 0 && lastProgressTime > 0 && now - lastProgressTime > 75000) {
+            if (isQuizApp && adStartTime == 0 && lastProgressTime > 0 && now - lastProgressTime > 75000) {
                 Log.w(TAG, "Quiz & Earn stuck without questions or ads (>75s). Restarting app cleanly...");
                 currentStatus = "Stall: Restarting App...";
                 restartQuizApp();
@@ -961,7 +998,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             }
 
             // SUPER OFFER AUTOMATION: Automates the 25-Gems 1000 Coins Super Offer end-to-end
-            if (!isAd && pkg.equals("com.quiz.earn.money.game")) {
+            if (!isAd && isQuizApp) {
                 if (isSuperOfferEnabled) {
                     if (isOfferScreen) {
                         if (isCollecting25thGem && finalAdCompleted) {
@@ -1001,19 +1038,33 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 // Check if we are on the Quiz Complete / Gem Collection Screen (Waiting for Ad)
                 boolean isQuizCompleteCollectGemScreen = false;
                 boolean hasAdLoadErrorToast = false;
+                boolean hasActiveQuizQuestion = false;
+
                 for (NodeItem n : allNodes) {
                     String nt = n.text.toLowerCase();
                     String nd = n.contentDesc.toLowerCase();
+
+                    // Check for active quiz questions / options (prevents false matches on question screen!)
+                    if (nt.contains("question ") || nt.contains("?") || nt.contains(" = ") ||
+                        nt.matches(".*\\d+\\s*[+\\-xX/÷*]\\s*\\d+.*")) {
+                        hasActiveQuizQuestion = true;
+                    }
+
                     if (nt.contains("congratulations") || nd.contains("congratulations") ||
                         nt.contains("+1 gem") || nd.contains("+1 gem") ||
                         nt.contains("watch an ad to collect your gem") || nd.contains("watch an ad to collect your gem") ||
-                        nt.contains("gems to unlock super offer") || nd.contains("gems to unlock super offer") ||
-                        nt.contains("collect gem") || nd.contains("collect gem")) {
+                        nt.equals("collect gem") || nd.equals("collect gem") ||
+                        nt.equals("collect reward") || nd.equals("collect reward")) {
                         isQuizCompleteCollectGemScreen = true;
                     }
-                    if (nt.contains("please watch the full ad") || nd.contains("please watch the full ad")) {
+                    if (nt.contains("please watch the full ad") || nd.contains("please watch the full ad") ||
+                        nt.contains("ad not available") || nd.contains("failed to load ad")) {
                         hasAdLoadErrorToast = true;
                     }
+                }
+
+                if (hasActiveQuizQuestion) {
+                    isQuizCompleteCollectGemScreen = false;
                 }
 
                 if (isQuizCompleteCollectGemScreen) {
@@ -1024,19 +1075,23 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
                     long elapsedOnCollectScreen = now - collectGemScreenStartTime;
 
-                    // Watchdog: If the ad does not load after completing quiz within 9s (or toast appears and > 5s elapsed):
+                    // Watchdog: If the ad does not load after completing quiz within 10s of tapping Collect Gem:
                     // Automatically restart the app cleanly as requested by user!
-                    if ((collectGemTapCount >= 2 && elapsedOnCollectScreen > 6000) ||
-                        (hasAdLoadErrorToast && elapsedOnCollectScreen > 5000) ||
-                        (elapsedOnCollectScreen > 9000)) {
-                        Log.w(TAG, "Ad not loading after completing quiz (" + (elapsedOnCollectScreen / 1000) + "s on Collect Gem screen, taps=" + collectGemTapCount + "). Restarting app cleanly as requested...");
-                        currentStatus = "Ad not loading -> Restarting App";
-                        collectGemScreenStartTime = 0;
-                        collectGemTapCount = 0;
-                        restartQuizApp();
-                        lastTapTime = now + 3500;
-                        lastProgressTime = now;
-                        return;
+                    // ONLY restart if we already attempted to tap collect gem at least once (collectGemTapCount > 0)!
+                    // NEVER restart if collectGemTapCount == 0 (we haven't even tapped Collect Gem yet!)
+                    if (collectGemTapCount > 0) {
+                        if ((collectGemTapCount >= 2 && elapsedOnCollectScreen > 8000) ||
+                            (hasAdLoadErrorToast && elapsedOnCollectScreen > 5000) ||
+                            (elapsedOnCollectScreen > 15000)) {
+                            Log.w(TAG, "Ad not loading after completing quiz (" + (elapsedOnCollectScreen / 1000) + "s on Collect Gem screen, taps=" + collectGemTapCount + "). Restarting app cleanly as requested...");
+                            currentStatus = "Ad not loading -> Restarting App";
+                            collectGemScreenStartTime = 0;
+                            collectGemTapCount = 0;
+                            restartQuizApp();
+                            lastTapTime = now + 3500;
+                            lastProgressTime = now;
+                            return;
+                        }
                     }
                 } else {
                     collectGemScreenStartTime = 0;
@@ -1263,9 +1318,9 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             if (detectedTarget != null && targetAnsStr != null) {
                 // If this is the exact same target we already solved:
                 if (detectedTarget.equals(lastSolvedTarget)) {
-                    // If the app has remained stuck on this already-solved question for > 6s, auto-refresh via Back key!
-                    if (now - lastSolveTime > 6000) {
-                        Log.w(TAG, "Quiz WebView stuck on answered question (" + detectedTarget + ") > 6s! Auto-backing to Home to refresh...");
+                    // If the app has remained stuck on this already-solved question for > 15s, auto-refresh via Back key!
+                    if (now - lastSolveTime > 15000) {
+                        Log.w(TAG, "Quiz WebView stuck on answered question (" + detectedTarget + ") > 15s! Auto-backing to Home to refresh...");
                         performGlobalAction(GLOBAL_ACTION_BACK);
                         lastTapTime = now + 1500;
                         lastSolveTime = now;
@@ -1299,8 +1354,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 if (answerButton != null) {
                     // Check if option button is already disabled (clicked)
                     if (answerButton.node != null && !answerButton.node.isEnabled()) {
-                        if (detectedTarget.equals(lastSolvedTarget) && (now - lastSolveTime > 3500)) {
-                            Log.w(TAG, "Option button '" + targetAnsStr + "' is disabled and app hasn't advanced for 3.5s. Auto-backing to Home to refresh...");
+                        if (detectedTarget.equals(lastSolvedTarget) && (now - lastSolveTime > 12000)) {
+                            Log.w(TAG, "Option button '" + targetAnsStr + "' is disabled and app hasn't advanced for 12s. Auto-backing to Home to refresh...");
                             performGlobalAction(GLOBAL_ACTION_BACK);
                             lastTapTime = now + 1500;
                             lastSolveTime = now;
@@ -1329,12 +1384,12 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     if (questionWaitingStartTime == 0 || !detectedTarget.equals(lastWaitingQuestion)) {
                         questionWaitingStartTime = now;
                         lastWaitingQuestion = detectedTarget;
-                    } else if (now - questionWaitingStartTime > 10000) {
-                        Log.w(TAG, "Quiz question options stuck on '...' for >10s! Restarting app cleanly...");
+                    } else if (now - questionWaitingStartTime > 35000) {
+                        Log.w(TAG, "Quiz question options stuck on '...' for >35s! Bringing app cleanly to front...");
                         questionWaitingStartTime = 0;
                         lastWaitingQuestion = "";
-                        restartQuizApp();
-                        lastTapTime = now + 3500;
+                        bringQuizAppToFront();
+                        lastTapTime = now + 2500;
                         lastProgressTime = now;
                         return;
                     }
@@ -1347,8 +1402,10 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             currentStatus = "Scanning...";
 
         } finally {
-            if (root != null) {
-                root.recycle();
+            for (AccessibilityNodeInfo r : rootsToRecycle) {
+                try {
+                    if (r != null) r.recycle();
+                } catch (Throwable ignored) {}
             }
         }
     }
@@ -1797,7 +1854,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                         !pi.packageName.startsWith("com.android.") &&
                         !pi.packageName.startsWith("com.bluestacks.") &&
                         !pi.packageName.contains("location.provider") &&
-                        !pi.packageName.equals("com.quiz.earn.money.game") &&
+                        !isQuizAppPackage(pi.packageName) &&
                         !pi.packageName.equals("com.quizearn.assistant")) {
                         return pi.packageName;
                     }
@@ -1815,16 +1872,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         offerStateStartTime = now;
 
         // Bring Quiz & Earn directly to front
-        try {
-            Intent intent = getPackageManager().getLaunchIntentForPackage("com.quiz.earn.money.game");
-            if (intent != null) {
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
-                startActivity(intent);
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error bringing Quiz & Earn to front", e);
-            performGlobalAction(GLOBAL_ACTION_BACK);
-        }
+        bringQuizAppToFront();
         lastTapTime = now + 2000;
     }
 
@@ -1952,16 +2000,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             offerState = OFFER_STATE_REWARD_CLAIM;
             offerStateStartTime = now;
 
-            try {
-                Intent intent = getPackageManager().getLaunchIntentForPackage("com.quiz.earn.money.game");
-                if (intent != null) {
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
-                    startActivity(intent);
-                }
-            } catch (Exception e) {
-                Log.e(TAG, "Error returning to Quiz & Earn", e);
-                performGlobalAction(GLOBAL_ACTION_BACK);
-            }
+            bringQuizAppToFront();
             lastTapTime = now + 2500;
         }
     }
@@ -1975,7 +2014,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             long now = System.currentTimeMillis();
 
             for (PackageInfo p : pkgs) {
-                if (p.packageName.equals("com.quiz.earn.money.game") || 
+                if (isQuizAppPackage(p.packageName) || 
                     p.packageName.equals("com.quizearn.assistant") ||
                     p.packageName.startsWith("com.android.") ||
                     p.packageName.startsWith("com.google.android.") ||
