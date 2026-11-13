@@ -94,6 +94,12 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     private long lastSolveTime = 0;
     private int externalAppBackCount = 0;
 
+    // Ad loading watchdog after quiz completion & question option loading watchdog:
+    private long collectGemScreenStartTime = 0;
+    private int collectGemTapCount = 0;
+    private long questionWaitingStartTime = 0;
+    private String lastWaitingQuestion = "";
+
     // Real math operations (including unicode multiplication and division)
     private final Pattern mathPattern = Pattern.compile("(\\d+)\\s*([\\+\\-\\–\\—\\*×xX]|÷|\\/)\\s*(\\d+)");
     private final Pattern mathSlashPattern = Pattern.compile("(\\d+)\\s*\\/\\s*(\\d+)\\s*(?:=|\\?)");
@@ -137,6 +143,10 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             instance.lastSolveTime = 0;
             instance.lastProgressTime = System.currentTimeMillis();
             instance.adStartTime = 0;
+            instance.collectGemScreenStartTime = 0;
+            instance.collectGemTapCount = 0;
+            instance.questionWaitingStartTime = 0;
+            instance.lastWaitingQuestion = "";
             instance.loopHandler.removeCallbacks(instance.solveLoopRunnable);
             instance.loopHandler.post(instance.solveLoopRunnable);
         }
@@ -147,6 +157,12 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         Context ctx = (instance != null) ? instance : null;
         if (ctx != null) {
             try {
+                // Try force-stop on rooted devices / emulators to clean state
+                try {
+                    Runtime.getRuntime().exec(new String[]{"am", "force-stop", "com.quiz.earn.money.game"});
+                    Thread.sleep(350);
+                } catch (Throwable ignored) {}
+
                 Intent intent = ctx.getPackageManager().getLaunchIntentForPackage("com.quiz.earn.money.game");
                 if (intent != null) {
                     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
@@ -157,6 +173,10 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                         instance.lastSolveTime = 0;
                         instance.lastProgressTime = System.currentTimeMillis();
                         instance.adStartTime = 0;
+                        instance.collectGemScreenStartTime = 0;
+                        instance.collectGemTapCount = 0;
+                        instance.questionWaitingStartTime = 0;
+                        instance.lastWaitingQuestion = "";
                     }
                     currentStatus = "App Restarted";
                 }
@@ -197,6 +217,10 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         if (instance != null) {
             instance.lastSolvedTarget = "";
             instance.lastSolveTime = 0;
+            instance.collectGemScreenStartTime = 0;
+            instance.collectGemTapCount = 0;
+            instance.questionWaitingStartTime = 0;
+            instance.lastWaitingQuestion = "";
             instance.loopHandler.removeCallbacks(instance.solveLoopRunnable);
         }
         if (!currentStatus.contains("25 GEMS")) {
@@ -503,6 +527,10 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             // 4. Safe Ad Watching & Smart Progressive Ad Dismissal
             if (isAd) {
                 lastProgressTime = now; // Actively watching ad - NOT a stall!
+                collectGemScreenStartTime = 0;
+                collectGemTapCount = 0;
+                questionWaitingStartTime = 0;
+                lastWaitingQuestion = "";
                 if (adStartTime == 0) adStartTime = now;
                 long adElapsed = (now - adStartTime) / 1000;
                 if (isCollecting25thGem) {
@@ -640,12 +668,13 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
-            // 5. Game Stall Auto-Recovery (Only when in game and completely frozen with no questions or ads for > 120s)
-            if (pkg.equals("com.quiz.earn.money.game") && lastProgressTime > 0 && now - lastProgressTime > 120000) {
-                Log.w(TAG, "Quiz & Earn stuck without questions or ads (>120s). Soft-refreshing to front...");
-                currentStatus = "Stall: Refreshing...";
-                bringQuizAppToFront();
+            // 5. Game Stall Auto-Recovery (Only when in game and completely frozen with no questions or ads for > 35s)
+            if (pkg.equals("com.quiz.earn.money.game") && lastProgressTime > 0 && now - lastProgressTime > 35000) {
+                Log.w(TAG, "Quiz & Earn stuck without questions or ads (>35s). Restarting app cleanly...");
+                currentStatus = "Stall: Restarting App...";
+                restartQuizApp();
                 lastProgressTime = now;
+                lastTapTime = now + 3500;
                 return;
             }
 
@@ -844,15 +873,63 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
             // 4. Check for "Collect Gem", "Claim", "Verify Usage", or Reward collection buttons (Normal Solving Loop)
             if (!is25GemsOnScreen && offerState == OFFER_STATE_IDLE) {
+                // Check if we are on the Quiz Complete / Gem Collection Screen (Waiting for Ad)
+                boolean isQuizCompleteCollectGemScreen = false;
+                boolean hasAdLoadErrorToast = false;
+                for (NodeItem n : allNodes) {
+                    String nt = n.text.toLowerCase();
+                    String nd = n.contentDesc.toLowerCase();
+                    if (nt.contains("congratulations") || nd.contains("congratulations") ||
+                        nt.contains("+1 gem") || nd.contains("+1 gem") ||
+                        nt.contains("watch an ad to collect your gem") || nd.contains("watch an ad to collect your gem") ||
+                        nt.contains("gems to unlock super offer") || nd.contains("gems to unlock super offer") ||
+                        nt.contains("collect gem") || nd.contains("collect gem")) {
+                        isQuizCompleteCollectGemScreen = true;
+                    }
+                    if (nt.contains("please watch the full ad") || nd.contains("please watch the full ad")) {
+                        hasAdLoadErrorToast = true;
+                    }
+                }
+
+                if (isQuizCompleteCollectGemScreen) {
+                    if (collectGemScreenStartTime == 0) {
+                        collectGemScreenStartTime = now;
+                        collectGemTapCount = 0;
+                    }
+
+                    long elapsedOnCollectScreen = now - collectGemScreenStartTime;
+
+                    // Watchdog: If the ad does not load after completing quiz within 9s (or toast appears and > 5s elapsed):
+                    // Automatically restart the app cleanly as requested by user!
+                    if ((collectGemTapCount >= 2 && elapsedOnCollectScreen > 6000) ||
+                        (hasAdLoadErrorToast && elapsedOnCollectScreen > 5000) ||
+                        (elapsedOnCollectScreen > 9000)) {
+                        Log.w(TAG, "Ad not loading after completing quiz (" + (elapsedOnCollectScreen / 1000) + "s on Collect Gem screen, taps=" + collectGemTapCount + "). Restarting app cleanly as requested...");
+                        currentStatus = "Ad not loading -> Restarting App";
+                        collectGemScreenStartTime = 0;
+                        collectGemTapCount = 0;
+                        restartQuizApp();
+                        lastTapTime = now + 3500;
+                        lastProgressTime = now;
+                        return;
+                    }
+                } else {
+                    collectGemScreenStartTime = 0;
+                    collectGemTapCount = 0;
+                }
+
                 for (NodeItem item : allNodes) {
                     if (isForbiddenElement(item)) continue;
                     String t = item.text.trim().toLowerCase();
                     String d = item.contentDesc.trim().toLowerCase();
                     String combined = (t + " " + d).trim();
-                    if (combined.contains("collect gem") || combined.contains("collect reward") || 
-                        t.equals("collect") || t.startsWith("claim") || d.startsWith("claim") ||
-                        t.contains("verify usage") || t.equals("verify") || d.contains("verify usage")) {
-                        
+                    if (combined.contains("collect gem") || combined.contains("collect reward")) {
+                        // Debounce: Wait 3.5s after tapping Collect Gem for the ad to launch
+                        if (collectGemTapCount > 0 && (now - lastTapTime < 3500)) {
+                            return;
+                        }
+                        collectGemTapCount++;
+
                         // If we are at 24+ gems, this collection action starts the final ad for the 25th gem!
                         boolean is24thGem = (liveGems >= 24);
                         if (!is24thGem) {
@@ -865,15 +942,26 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                                 }
                             }
                         }
-                        if (is24thGem && (combined.contains("collect gem") || combined.contains("collect reward"))) {
+                        if (is24thGem) {
                             isCollecting25thGem = true;
                             finalAdStarted = false;
                             Log.i(TAG, "Collecting 25th Gem! Final ad will play now. Bot remains ACTIVE to close the ad before stopping on the 25 gems page.");
                         }
 
+                        Log.i(TAG, "Found Action/Claim/Verify button: " + item.text + " (Tap #" + collectGemTapCount + ") at " + item.rect);
+                        tapNode(item);
+                        lastTapTime = now + 3000;
+                        lastProgressTime = now;
+                        lastSolvedTarget = "";
+                        lastSolveTime = 0;
+                        currentStatus = "Collecting Gem (Waiting for ad)...";
+                        adStartTime = 0;
+                        return;
+                    } else if (t.equals("collect") || t.startsWith("claim") || d.startsWith("claim") ||
+                               t.contains("verify usage") || t.equals("verify") || d.contains("verify usage")) {
                         Log.i(TAG, "Found Action/Claim/Verify button: " + item.text + " at " + item.rect);
                         tapNode(item);
-                        lastTapTime = now;
+                        lastTapTime = now + 1500;
                         lastProgressTime = now;
                         lastSolvedTarget = "";
                         lastSolveTime = 0;
@@ -1086,6 +1174,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                         return;
                     }
 
+                    questionWaitingStartTime = 0;
+                    lastWaitingQuestion = "";
                     Log.i(TAG, "⚡ SOLVING ANSWER: " + detectedTarget + " -> Tapping option button '" + targetAnsStr + "' at " + answerButton.rect);
                     tapNode(answerButton);
 
@@ -1098,7 +1188,22 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     return;
                 } else {
                     Log.d(TAG, "Target detected (" + detectedTarget + "), but option button not yet visible in Options Zone.");
+                    if (questionWaitingStartTime == 0 || !detectedTarget.equals(lastWaitingQuestion)) {
+                        questionWaitingStartTime = now;
+                        lastWaitingQuestion = detectedTarget;
+                    } else if (now - questionWaitingStartTime > 10000) {
+                        Log.w(TAG, "Quiz question options stuck on '...' for >10s! Restarting app cleanly...");
+                        questionWaitingStartTime = 0;
+                        lastWaitingQuestion = "";
+                        restartQuizApp();
+                        lastTapTime = now + 3500;
+                        lastProgressTime = now;
+                        return;
+                    }
                 }
+            } else {
+                questionWaitingStartTime = 0;
+                lastWaitingQuestion = "";
             }
 
             currentStatus = "Scanning...";
