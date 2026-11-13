@@ -241,6 +241,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         } catch (Exception e) {
             Log.e(TAG, "Error loading super_offer_enabled pref", e);
         }
+        baselinePackages = snapshotInstalledPackages();
         Log.i(TAG, "Quiz Math Assistant connected successfully. isUserRunning=" + isUserRunning);
         if (isUserRunning) {
             startSolving();
@@ -1783,14 +1784,19 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     }
 
     private String detectNewlyInstalledPackage(List<String> baseline) {
+        if (baseline == null || baseline.isEmpty()) {
+            return null;
+        }
         try {
             PackageManager pm = getPackageManager();
             List<PackageInfo> installed = pm.getInstalledPackages(0);
             for (PackageInfo pi : installed) {
-                if (baseline != null && !baseline.contains(pi.packageName)) {
-                    // Check if it's not a google system update
-                    if (!pi.packageName.startsWith("com.google.android.gms") &&
+                if (!baseline.contains(pi.packageName)) {
+                    // Check if it's not a google or system service
+                    if (!pi.packageName.startsWith("com.google.android.") &&
                         !pi.packageName.startsWith("com.android.") &&
+                        !pi.packageName.startsWith("com.bluestacks.") &&
+                        !pi.packageName.contains("location.provider") &&
                         !pi.packageName.equals("com.quiz.earn.money.game") &&
                         !pi.packageName.equals("com.quizearn.assistant")) {
                         return pi.packageName;
