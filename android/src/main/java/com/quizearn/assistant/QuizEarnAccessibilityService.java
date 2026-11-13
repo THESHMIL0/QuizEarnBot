@@ -1396,12 +1396,15 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         if (text == null) return false;
         String t = text.trim().toLowerCase();
         if (t.isEmpty()) return false;
-        return t.equals("close") || t.equals("skip") || t.equals("dismiss") ||
+        if ((t.contains(" in ") || t.contains(" in:") || t.contains("seconds") || t.contains("sec")) &&
+            !t.contains("in 0")) return false;
+        return t.equals("close") || t.equals("skip") || t.contains("skip") || t.equals("dismiss") ||
                t.equals("x") || t.equals("✕") || t.equals("✖") || t.equals("×") ||
                t.equals("<") || t.equals("‹") || t.equals("«") || t.equals("back") ||
                t.equals("done") || t.equals("exit") || t.equals("no thanks") ||
-               t.equals("not now") || t.equals(">>") || t.equals("››") || t.equals("»") ||
-               t.equals("▶▶") || t.equals("⏭") || t.equals("⏩") || t.equals(">|");
+               t.equals("not now") || t.contains(">>") || t.contains("\u203A\u203A") || t.contains("\u00BB") ||
+               t.contains("\u276F\u276F") || t.contains("▶▶") || t.contains("⏭") || 
+               t.contains("⏩") || t.contains(">|");
     }
 
     private boolean isCloseOrSkipDesc(String desc) {
@@ -1441,6 +1444,22 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     private boolean isForbiddenElement(NodeItem item) {
         if (item == null || item.rect == null) return true;
 
+        String t = item.text.toLowerCase().trim();
+        String d = item.contentDesc.toLowerCase().trim();
+        String id = item.resId.toLowerCase().trim();
+
+        // CRITICAL EXCEPTION: Explicit Skip buttons (e.g. ">> Skip to Google Play", "Skip Ad", "Skip >>") are NEVER forbidden!
+        if (t.contains("skip") || d.contains("skip") || id.contains("skip") || 
+            t.contains(">>") || d.contains(">>") ||
+            t.contains("\u203A\u203A") || t.contains("\u00BB") || t.contains("\u276F\u276F") ||
+            d.contains("\u203A\u203A") || d.contains("\u00BB") || d.contains("\u276F\u276F") ||
+            t.contains("\u23ED") || t.contains("\u23E9") || d.contains("\u23ED") || d.contains("\u23E9")) {
+            if (!t.contains(" in ") && !d.contains(" in ") && !t.contains("seconds") && !d.contains("seconds") &&
+                !t.contains(" in:") && !d.contains(" in:")) {
+                return false;
+            }
+        }
+
         // CRITICAL GUARD: Fullscreen and oversized touch overlays are ad-traps!
         int w = item.rect.width();
         int h = item.rect.height();
@@ -1448,9 +1467,6 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             return true;
         }
 
-        String t = item.text.toLowerCase().trim();
-        String d = item.contentDesc.toLowerCase().trim();
-        String id = item.resId.toLowerCase().trim();
         String combined = (t + " " + d + " " + id);
 
         // Deceptive full-screen / CTA overlay layers
@@ -1534,7 +1550,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
         int w = item.rect.width();
         int h = item.rect.height();
-        if (w < 8 || h < 8 || w > 400 || h > 250) {
+        if (w < 8 || h < 8 || w > 550 || h > 250) {
             return false;
         }
 
@@ -1547,31 +1563,31 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         }
 
         // Do not tap active countdown timers (e.g. "Skip in 5s", "You can skip in 3 seconds")
-        if ((t.contains(" in ") || d.contains(" in ") || t.contains("seconds") || d.contains("seconds")) &&
+        if ((t.contains(" in ") || d.contains(" in ") || t.contains(" in:") || d.contains(" in:") ||
+             t.contains("seconds") || d.contains("seconds") || t.matches(".*skip.*\\d+\\s*s.*")) &&
             !t.contains("in 0") && !d.contains("in 0")) {
             return false;
         }
 
-        // Explicit skip text or description
-        if (t.equals("skip") || t.equals("skip ad") || t.startsWith("skip ") || t.endsWith(" skip") ||
-            t.contains("skip ad") || t.contains("skip video") ||
-            d.equals("skip") || d.equals("skip ad") || d.startsWith("skip ") || d.endsWith(" skip") ||
-            d.contains("skip ad") || d.contains("skip video")) {
+        // Explicit skip text or description (e.g. "Skip", "Skip Ad", ">> Skip to Google Play", "Skip to Play Store")
+        if (t.contains("skip") || d.contains("skip")) {
             return true;
         }
 
-        // Visible skip arrows: >>, ››, », >|, ▶▶, ⏭, ⏩
+        // Visible skip arrows: >>, ››, », ❯❯, >|, ▶▶, ⏭, ⏩
         if (t.contains(">>") || t.contains("\u203A\u203A") || t.contains("\u00BB") || 
-            t.contains(">|") || t.contains("\u25B6\u25B6") || t.contains("\u23ED") || t.contains("\u23E9") ||
+            t.contains("\u276F\u276F") || t.contains(">|") || t.contains("\u25B6\u25B6") || 
+            t.contains("\u23ED") || t.contains("\u23E9") ||
             d.contains(">>") || d.contains("\u203A\u203A") || d.contains("\u00BB") || 
-            d.contains("fast forward") || d.contains("skip")) {
+            d.contains("\u276F\u276F") || d.contains("fast forward")) {
             return true;
         }
 
         // Exact skip resource IDs
         if (id.contains("skip_button") || id.contains("btn_skip") || 
             id.contains("close-or-skip-button") || id.contains("skip_ad") || 
-            id.contains("skipbutton") || id.contains("skip-button")) {
+            id.contains("skipbutton") || id.contains("skip-button") ||
+            id.contains("mbridge_skip") || id.contains("skip_cta")) {
             return true;
         }
 
