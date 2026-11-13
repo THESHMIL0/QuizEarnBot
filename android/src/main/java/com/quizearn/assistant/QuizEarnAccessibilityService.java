@@ -165,6 +165,26 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         }
     }
 
+    public static void bringQuizAppToFront() {
+        Log.i(TAG, "bringQuizAppToFront called (soft resume without clearing task).");
+        Context ctx = (instance != null) ? instance : null;
+        if (ctx != null) {
+            try {
+                Intent intent = ctx.getPackageManager().getLaunchIntentForPackage("com.quiz.earn.money.game");
+                if (intent != null) {
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                    ctx.startActivity(intent);
+                    if (instance != null) {
+                        instance.lastProgressTime = System.currentTimeMillis();
+                        instance.adStartTime = 0;
+                    }
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to bring Quiz & Earn to front", e);
+            }
+        }
+    }
+
     public static void stopSolving() {
         isRunning = false;
         isUserRunning = false;
@@ -496,14 +516,18 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     }
                 }
 
+                // Keep progress active while ad is running (so stall timer never triggers upon ad completion)
+                lastProgressTime = now;
+
                 // After 20s+: Progressive Universal Close taps (top-right corner, top-left corner, and Back key)
                 if (adElapsed >= 20 && (now - lastTapTime > 1800)) {
-                    // After 50s+: Ad is stuck or unresponsive -> Auto-recover cleanly by relaunching Quiz & Earn
-                    if (adElapsed >= 50) {
-                        Log.w(TAG, "Ad stuck (" + adElapsed + "s): Relaunching Quiz & Earn to recover cleanly...");
-                        restartQuizApp();
+                    // Only after 120s+ of total ad unresponsiveness: soft-bring Quiz & Earn to front (NEVER kill app)
+                    if (adElapsed >= 120) {
+                        Log.w(TAG, "Ad exceeded 120s timeout without dismissing. Bringing Quiz & Earn to front...");
+                        bringQuizAppToFront();
                         lastTapTime = now + 3000;
                         lastProgressTime = now;
+                        adStartTime = 0;
                         return;
                     }
 
@@ -544,14 +568,18 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
                 return;
             } else {
-                adStartTime = 0;
+                if (adStartTime > 0) {
+                    // Ad just completed: reset stall timer so return to quiz is never flagged as a freeze!
+                    lastProgressTime = now;
+                    adStartTime = 0;
+                }
             }
 
-            // 5. Game Stall Auto-Restart (Only when in game and no ads load after rounds for > 50s)
-            if (pkg.equals("com.quiz.earn.money.game") && lastProgressTime > 0 && now - lastProgressTime > 50000) {
-                Log.w(TAG, "Quiz & Earn stuck without ads (>50s). Auto-restarting...");
-                currentStatus = "Stall: Restarting...";
-                restartQuizApp();
+            // 5. Game Stall Auto-Recovery (Only when in game and completely frozen with no questions or ads for > 120s)
+            if (pkg.equals("com.quiz.earn.money.game") && lastProgressTime > 0 && now - lastProgressTime > 120000) {
+                Log.w(TAG, "Quiz & Earn stuck without questions or ads (>120s). Soft-refreshing to front...");
+                currentStatus = "Stall: Refreshing...";
+                bringQuizAppToFront();
                 lastProgressTime = now;
                 return;
             }
@@ -704,7 +732,9 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     String d = item.contentDesc.toLowerCase().trim();
                     if (t.contains("super offer") || d.contains("super offer") ||
                         t.contains("verify installation") || d.contains("verify installation") ||
-                        t.contains("app usage progress") || d.contains("app usage progress")) {
+                        t.contains("app usage progress") || d.contains("app usage progress") ||
+                        t.contains("duplicate") || t.contains("try different") ||
+                        t.contains("initial install reward") || t.contains("approved")) {
                         isOfferScreen = true;
                         break;
                     }
@@ -1649,6 +1679,25 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
+            // Check A2: Offer details page with "Approved" status -> Press Back to reach Home
+            boolean isOfferApprovedPage = false;
+            for (NodeItem item : allNodes) {
+                String t = item.text.toLowerCase();
+                if ((t.contains("approved") && t.contains("✓")) || 
+                    (t.contains("initial install reward") && t.contains("approved")) ||
+                    t.contains("upload proof screenshot")) {
+                    isOfferApprovedPage = true;
+                    break;
+                }
+            }
+            if (isOfferApprovedPage) {
+                Log.i(TAG, "⚡ Offer Initial Install Reward is Approved! Pressing Back to reach Home...");
+                performGlobalAction(GLOBAL_ACTION_BACK);
+                lastTapTime = now + 1500;
+                currentStatus = "Reward Approved! Returning...";
+                return true;
+            }
+
             // Check B: "My Super Offers" page -> Go back to Home to claim
             boolean isMyOffersPage = false;
             for (NodeItem item : allNodes) {
@@ -1687,7 +1736,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 if (t.contains("super offer") || t.contains("guaranteed")) {
                     hasSuperOfferCard = true;
                 }
-                if (t.equalsIgnoreCase("claim") || t.equals("claim now")) {
+                if (t.equalsIgnoreCase("claim") || t.equals("claim now") || t.startsWith("claim") || t.contains("claim")) {
                     // Check if it's the 1,000 coins card (left half of screen)
                     if (item.rect.centerX() < getResources().getDisplayMetrics().widthPixels / 2) {
                         claimBtn = item;
@@ -1767,22 +1816,25 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 verifyBtn = item;
             }
             if (t.contains("app not detected") || d.contains("app not detected") || 
-                t.contains("verification failed") || t.contains("duplicated app") ||
+                t.contains("verification failed") || t.contains("duplicate") ||
+                t.contains("already in your pending offers") ||
                 t.contains("already on our phone") || t.contains("not recognized")) {
                 isAppNotDetected = true;
             }
-            if (t.contains("restart offer") || d.contains("restart offer")) {
+            if (t.equals("restart offer") || d.equals("restart offer") ||
+                t.equals("try different app") || d.equals("try different app") ||
+                (t.contains("try different app") && !t.contains("⚠️") && !t.contains("pending offer"))) {
                 restartOfferBtn = item;
             }
-            if (t.equals("go back") || d.equals("go back")) {
+            if (t.equals("go back") || d.equals("go back") || t.contains("go back")) {
                 goBackBtn = item;
             }
         }
 
-        // Case A: App Not Detected or Duplicate app confirmed failed (User Rule: Tap Restart / Go Back to try a new app)
-        if ((isAppNotDetected || appIsDuplicate) && (restartOfferBtn != null || goBackBtn != null)) {
+        // Case A: App Not Detected or Duplicate app confirmed failed (User Rule: Tap Restart / Try Different App / Go Back)
+        if ((isAppNotDetected || appIsDuplicate || restartOfferBtn != null) && (restartOfferBtn != null || goBackBtn != null)) {
             NodeItem retryBtn = (restartOfferBtn != null) ? restartOfferBtn : goBackBtn;
-            Log.w(TAG, "⚠️ App Not Detected / Duplicate on Super Offer screen! (User Rule: Tap " + retryBtn.text + " to retry with new app)");
+            Log.w(TAG, "⚠️ Duplicate App / Retry on Super Offer screen! Tapping " + retryBtn.text + " to retry with new app...");
             currentStatus = "Restarting Offer...";
             tapNode(retryBtn);
             offerState = OFFER_STATE_IDLE;

@@ -4859,15 +4859,29 @@ public class QuizEarnApp : Form
                     continue;
                 }
 
+                string focus = GetCurrentFocus();
+                bool isAdPlaying = !string.IsNullOrEmpty(focus) && (
+                    focus.Contains("AdActivity") || focus.Contains("UnityPlayerActivity") || 
+                    focus.Contains("IronSource") || focus.Contains("Vungle") || 
+                    focus.Contains("AppLovin") || focus.Contains("mbridge") || 
+                    focus.Contains("com.google.android.gms") || focus.Contains("com.tapjoy") ||
+                    focus.Contains("FullScreenAd") || focus.Contains("RewardedAd") ||
+                    focus.Contains("com.android.vending") || focus.Contains("google.android.finsky")
+                );
+
+                if (isAdPlaying || isAutoOffering || isBoosting)
+                {
+                    lastProgressTime = DateTime.Now; // Postpone watchdog while ads or offers are actively running
+                }
+
                 double idleSec = (DateTime.Now - lastProgressTime).TotalSeconds;
-                if (idleSec > 45)
+                if (idleSec > 120 && !isAdPlaying)
                 {
                     RecoverFromFreeze();
                     lastProgressTime = DateTime.Now;
                     continue;
                 }
 
-                string focus = GetCurrentFocus();
                 if (string.IsNullOrEmpty(focus) && autoRecoverBlueStacks && !IsBlueStacksProcessRunning())
                 {
                     EnsureBlueStacksAliveAndReady("Quiz Solver Loop");

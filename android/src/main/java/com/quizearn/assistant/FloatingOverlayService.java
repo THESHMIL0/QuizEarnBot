@@ -89,6 +89,12 @@ public class FloatingOverlayService extends Service {
             } else if ("com.quizearn.assistant.STOP".equals(act)) {
                 QuizEarnAccessibilityService.stopSolving();
                 updateUiState();
+            } else if ("com.quizearn.assistant.AUTO_OFFER_ON".equals(act)) {
+                QuizEarnAccessibilityService.setSuperOfferEnabled(this, true);
+                updateUiState();
+            } else if ("com.quizearn.assistant.AUTO_OFFER_OFF".equals(act)) {
+                QuizEarnAccessibilityService.setSuperOfferEnabled(this, false);
+                updateUiState();
             } else if ("com.quizearn.assistant.RESTART_APP".equals(act)) {
                 QuizEarnAccessibilityService.restartQuizApp();
             }
@@ -145,6 +151,12 @@ public class FloatingOverlayService extends Service {
 
     private void createFloatingWidget() {
         windowManager = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
+        if (floatView != null && windowManager != null) {
+            try {
+                windowManager.removeView(floatView);
+            } catch (Exception ignored) {}
+            floatView = null;
+        }
 
         int layoutFlag = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
             ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
