@@ -467,6 +467,24 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
+            // Check if Super Offer milestone page is visible (Start Offer, 25 gems, instructions, etc.)
+            boolean hasSuperOfferMilestone = false;
+            for (NodeItem item : allNodes) {
+                String t = item.text.trim().toLowerCase();
+                String d = item.contentDesc.trim().toLowerCase();
+                if (t.contains("start offer") || d.contains("start offer") ||
+                    t.contains("gems collected") || d.contains("gems collected") ||
+                    t.contains("guaranteed 1000") || d.contains("guaranteed 1000") ||
+                    t.contains("app usage progress") || d.contains("app usage progress") ||
+                    t.contains("my super offers") || d.contains("my super offers") ||
+                    t.contains("claim 1000 coins") || d.contains("claim 1000 coins") ||
+                    t.contains("watch a video ad") || d.contains("watch a video ad") ||
+                    t.contains("restart offer") || d.contains("restart offer")) {
+                    hasSuperOfferMilestone = true;
+                    break;
+                }
+            }
+
             // 1. Detect Ad State & Countdowns (Ad 1 of 2, Ad 2 of 2, etc.)
             boolean hasAdCountdown = false;
             boolean isAd = false;
@@ -499,12 +517,15 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     isAd = true;
                 }
 
-                if (!isAd && (t.startsWith("ad ") || t.contains("seconds after") || 
-                    t.contains("will be taken to the website") || t.contains("install") ||
-                    t.contains("download") || t.contains("play store") || t.contains("advertisement") ||
+                boolean isAdCta = (t.equals("install") || t.equals("install now") || (t.startsWith("install") && t.length() <= 15) ||
+                    t.equals("download") || t.equals("download now") || (t.startsWith("download") && t.length() <= 15) ||
+                    t.contains("play store") || t.contains("advertisement") ||
                     t.contains("reward will be") || t.contains("you can skip in") ||
                     t.contains("shop now") || t.contains("claim bonus") || t.contains("play now") ||
-                    t.contains("get it on") || t.equals("get") || t.equals("open") ||
+                    t.contains("get it on") || t.equals("get") || t.equals("open"));
+
+                if (!isAd && (t.startsWith("ad ") || t.contains("seconds after") || 
+                    t.contains("will be taken to the website") || isAdCta ||
                     d.contains("liftoff") || id.contains("adjs") || id.contains("moloco") || 
                     id.contains("endcard") || id.contains("watermark") || id.contains("advert") || 
                     id.contains("unity3d") || id.contains("applovin") || id.contains("mbridge") || 
@@ -517,11 +538,11 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
-            // Game screen override: ONLY override isAd = false if actual quiz questions or Collect Gem are visible in foreground!
-            // Background fragment text (like "super offer" or "my offers") must NEVER cancel isAd during video ads!
-            if (hasActiveQuiz || hasCollectGem) {
+            // Game screen override: If actual quiz questions, Collect Gem, OR Super Offer milestone page are visible, this is NOT an ad!
+            if (hasActiveQuiz || hasCollectGem || hasSuperOfferMilestone) {
                 isAd = false;
                 hasAdCountdown = false;
+                adStartTime = 0;
             }
 
             // 2. OFFICIAL SKIP ARROW CHECK (Tapped as soon as network provides Skip)
