@@ -66,6 +66,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     private static long lastUsageGestureTime = 0;
     private static boolean appIsDuplicate = false;
     private static List<String> baselinePackages = new ArrayList<>();
+    private static int offerAppLaunchAttempts = 0;
 
     // User Toggle for 25-Gem Super Offer Auto-Install
     public static volatile boolean isSuperOfferEnabled = true;
@@ -276,6 +277,26 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 restorePortraitOrientation();
             }
 
+            // 0. System ANR / Crash Dialog Dismissal & Uninstall Confirmation
+            for (NodeItem item : allNodes) {
+                String t = item.text.trim().toLowerCase();
+                String d = item.contentDesc.trim().toLowerCase();
+                if (t.equals("close app") || d.equals("close app") || t.equals("wait") || d.equals("wait") ||
+                    t.contains("close app") || (t.equals("ok") && (t.contains("stopping") || d.contains("stopping")))) {
+                    Log.w(TAG, "Dismissing system ANR/Crash dialog via '" + item.text + "' at " + item.rect);
+                    tapNode(item);
+                    lastTapTime = now + 1200;
+                    return;
+                }
+                if ((t.equals("ok") || t.equals("uninstall") || d.equals("ok")) &&
+                    (pkg.contains("packageinstaller") || pkg.contains("settings"))) {
+                    Log.i(TAG, "Confirming app uninstall dialog via '" + item.text + "' at " + item.rect);
+                    tapNode(item);
+                    lastTapTime = now + 1200;
+                    return;
+                }
+            }
+
             // 0. Universal Auto-Dismiss: Return immediately if an ad launched Chrome or unexpected external app
             boolean isQuizApp = pkg.equals("com.quiz.earn.money.game");
             boolean isAssistantApp = pkg.equals("com.quizearn.assistant");
@@ -294,11 +315,55 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 return;
             }
 
-            // While in 2-minute App Active state, the target offer app is EXPECTED and required!
+            // While in 2-minute App Active state:
             if (offerState == OFFER_STATE_APP_ACTIVE) {
-                externalAppBackCount = 0;
-                handleActiveAppUsage(now);
-                return;
+                if (pkg.equals(offerTargetPackage) || (!offerTargetPackage.isEmpty() && pkg.contains(offerTargetPackage))) {
+                    externalAppBackCount = 0;
+                    offerAppLaunchAttempts = 0;
+                    handleActiveAppUsage(now);
+                    return;
+                } else if (isQuizApp) {
+                    boolean isProgressScreen = false;
+                    NodeItem stuckRestartBtn = null;
+                    for (NodeItem item : allNodes) {
+                        String t = item.text.trim().toLowerCase();
+                        if (t.contains("app usage progress") || t.contains("progress updates automatically") || t.contains("more needed")) {
+                            isProgressScreen = true;
+                        }
+                        if (t.contains("restart offer") || t.contains("stuck? restart offer")) {
+                            stuckRestartBtn = item;
+                        }
+                    }
+                    if (isProgressScreen) {
+                        if (offerAppLaunchAttempts < 2) {
+                            Log.w(TAG, "Offer app not in foreground (" + pkg + ") during 2-min usage. Attempting relaunch (" + offerAppLaunchAttempts + ")...");
+                            offerAppLaunchAttempts++;
+                            boolean launched = launchOfferApp();
+                            if (!launched) {
+                                Log.w(TAG, "Offer app failed to launch. Tapping 'Stuck? Restart Offer'...");
+                                if (offerTargetPackage != null && !offerTargetPackage.isEmpty()) {
+                                    uninstallApp(offerTargetPackage);
+                                    offerTargetPackage = "";
+                                }
+                                if (stuckRestartBtn != null) tapNode(stuckRestartBtn);
+                                offerState = OFFER_STATE_IDLE;
+                            }
+                            lastTapTime = now + 2000;
+                            return;
+                        } else {
+                            Log.e(TAG, "Offer app failed to stay open / crashed repeatedly! Restarting offer...");
+                            if (offerTargetPackage != null && !offerTargetPackage.isEmpty()) {
+                                uninstallApp(offerTargetPackage);
+                                offerTargetPackage = "";
+                            }
+                            if (stuckRestartBtn != null) tapNode(stuckRestartBtn);
+                            offerState = OFFER_STATE_IDLE;
+                            offerAppLaunchAttempts = 0;
+                            lastTapTime = now + 1500;
+                            return;
+                        }
+                    }
+                }
             }
 
             if (!isQuizApp && !isAssistantApp && !isSystemOrSettings && !isAdActivity && !pkg.isEmpty()) {
@@ -1626,7 +1691,58 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         }
     }
 
-    private void launchOfferApp() {
+    private String findMostRecentInstalledPackage() {
+        try {
+            PackageManager pm = getPackageManager();
+            List<PackageInfo> pkgs = pm.getInstalledPackages(0);
+            long newestTime = 0;
+            String newestPkg = null;
+            long now = System.currentTimeMillis();
+
+            for (PackageInfo p : pkgs) {
+                if (p.packageName.equals("com.quiz.earn.money.game") || 
+                    p.packageName.equals("com.quizearn.assistant") ||
+                    p.packageName.startsWith("com.android.") ||
+                    p.packageName.startsWith("com.google.android.") ||
+                    p.packageName.startsWith("com.bluestacks.")) {
+                    continue;
+                }
+                if (now - p.firstInstallTime < 45 * 60 * 1000L) {
+                    if (p.firstInstallTime > newestTime) {
+                        newestTime = p.firstInstallTime;
+                        newestPkg = p.packageName;
+                    }
+                }
+            }
+            return newestPkg != null ? newestPkg : "";
+        } catch (Exception e) {
+            Log.e(TAG, "Error finding newest package", e);
+            return "";
+        }
+    }
+
+    private void uninstallApp(String packageName) {
+        if (packageName == null || packageName.isEmpty()) return;
+        Log.i(TAG, "🗑️ Uninstalling broken/incompatible app: " + packageName);
+        try {
+            Runtime.getRuntime().exec("pm uninstall " + packageName);
+        } catch (Exception e) {
+            Log.e(TAG, "Error executing pm uninstall", e);
+        }
+        try {
+            Intent uninstallIntent = new Intent(Intent.ACTION_DELETE);
+            uninstallIntent.setData(Uri.parse("package:" + packageName));
+            uninstallIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(uninstallIntent);
+        } catch (Exception e) {
+            Log.e(TAG, "Error launching ACTION_DELETE intent", e);
+        }
+    }
+
+    private boolean launchOfferApp() {
+        if (offerTargetPackage == null || offerTargetPackage.isEmpty()) {
+            offerTargetPackage = findMostRecentInstalledPackage();
+        }
         if (offerTargetPackage != null && !offerTargetPackage.isEmpty()) {
             try {
                 Intent launchIntent = getPackageManager().getLaunchIntentForPackage(offerTargetPackage);
@@ -1634,7 +1750,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                     startActivity(launchIntent);
                     Log.i(TAG, "Launched offer app: " + offerTargetPackage);
-                    return;
+                    return true;
                 }
             } catch (Exception e) {
                 Log.e(TAG, "Failed to launch " + offerTargetPackage, e);
@@ -1651,7 +1767,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                     startActivity(launchIntent);
                     Log.i(TAG, "Launched detected newly installed offer app: " + newlyInstalled);
-                    return;
+                    return true;
                 }
             } catch (Exception e) {
                 Log.e(TAG, "Failed to launch fallback app " + newlyInstalled, e);
@@ -1659,6 +1775,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         }
 
         Log.w(TAG, "Could not find launch intent for offer app! Will remain on screen.");
+        return false;
     }
 
     private boolean handleSuperOfferScreen(AccessibilityNodeInfo root, List<NodeItem> allNodes, long now) {
@@ -1782,24 +1899,63 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         // 2. ACTIVE USAGE PROGRESS PHASE
         // Triggered ONLY by the live progress screen (e.g. "more needed", "progress updates automatically", "app usage progress", or "open app" button)
         boolean isUsageProgressActive = false;
+        NodeItem stuckRestartBtn = null;
         for (NodeItem item : allNodes) {
             String t = item.text.trim().toLowerCase();
             String d = item.contentDesc.trim().toLowerCase();
             if (t.contains("app usage progress") || t.contains("progress updates automatically") ||
                 t.contains("more needed") || (t.equals("open app") && item.rect.centerY() > 1000)) {
                 isUsageProgressActive = true;
-                break;
+            }
+            if (t.contains("restart offer") || t.contains("stuck? restart offer") || d.contains("restart offer")) {
+                stuckRestartBtn = item;
             }
         }
         if (isUsageProgressActive) {
-            Log.i(TAG, "🎉 APP VERIFIED BY QUIZ APP! 'App Usage Progress' active. (User Rule: Never tap Restart/Go Back). Launching offer app for 125s...");
-            offerState = OFFER_STATE_APP_ACTIVE;
-            appUsageStartTime = now;
-            lastUsageGestureTime = now;
-            currentStatus = "Launching App...";
-            launchOfferApp();
-            lastTapTime = now + 2000;
-            return true;
+            if (offerState == OFFER_STATE_REWARD_CLAIM) {
+                long waitElapsed = (now - offerStateStartTime) / 1000;
+                if (waitElapsed > 15) {
+                    Log.w(TAG, "App usage was not credited after 15s wait. Tapping 'Stuck? Restart Offer' to retry...");
+                    if (offerTargetPackage != null && !offerTargetPackage.isEmpty()) {
+                        uninstallApp(offerTargetPackage);
+                        offerTargetPackage = "";
+                    }
+                    if (stuckRestartBtn != null) {
+                        tapNode(stuckRestartBtn);
+                    } else {
+                        performGlobalAction(GLOBAL_ACTION_BACK);
+                    }
+                    offerState = OFFER_STATE_IDLE;
+                    lastTapTime = now + 1500;
+                    return true;
+                } else {
+                    currentStatus = "Waiting for reward confirmation (" + waitElapsed + "s)...";
+                    return true;
+                }
+            } else {
+                Log.i(TAG, "🎉 APP VERIFIED BY QUIZ APP! 'App Usage Progress' active. (User Rule: Never tap Restart/Go Back). Launching offer app for 125s...");
+                offerState = OFFER_STATE_APP_ACTIVE;
+                appUsageStartTime = now;
+                lastUsageGestureTime = now;
+                offerAppLaunchAttempts = 0;
+                currentStatus = "Launching App...";
+                boolean launched = launchOfferApp();
+                if (!launched) {
+                    Log.w(TAG, "Target offer app failed to launch or crashed! Restarting offer...");
+                    if (offerTargetPackage != null && !offerTargetPackage.isEmpty()) {
+                        uninstallApp(offerTargetPackage);
+                        offerTargetPackage = "";
+                    }
+                    if (stuckRestartBtn != null) {
+                        tapNode(stuckRestartBtn);
+                    }
+                    offerState = OFFER_STATE_IDLE;
+                    lastTapTime = now + 1500;
+                    return true;
+                }
+                lastTapTime = now + 2000;
+                return true;
+            }
         }
 
         // 3. VERIFICATION & RETRY BUTTONS PHASE
@@ -1832,25 +1988,56 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         }
 
         // Case A: App Not Detected or Duplicate app confirmed failed (User Rule: Tap Restart / Try Different App / Go Back)
-        if ((isAppNotDetected || appIsDuplicate || restartOfferBtn != null) && (restartOfferBtn != null || goBackBtn != null)) {
+        if (isAppNotDetected || appIsDuplicate) {
             NodeItem retryBtn = (restartOfferBtn != null) ? restartOfferBtn : goBackBtn;
-            Log.w(TAG, "⚠️ Duplicate App / Retry on Super Offer screen! Tapping " + retryBtn.text + " to retry with new app...");
-            currentStatus = "Restarting Offer...";
-            tapNode(retryBtn);
-            offerState = OFFER_STATE_IDLE;
-            appIsDuplicate = false;
-            lastTapTime = now + 1500;
-            return true;
+            if (retryBtn != null) {
+                Log.w(TAG, "⚠️ Duplicate App / App Not Detected on Super Offer screen! Tapping " + retryBtn.text + " to retry with new app...");
+                currentStatus = "Restarting Offer...";
+                if (offerTargetPackage != null && !offerTargetPackage.isEmpty()) {
+                    uninstallApp(offerTargetPackage);
+                    offerTargetPackage = "";
+                }
+                tapNode(retryBtn);
+                offerState = OFFER_STATE_IDLE;
+                appIsDuplicate = false;
+                lastTapTime = now + 1500;
+                return true;
+            }
         }
 
-        // Case B: Verify button is present -> Tap it!
+        // Case B: Verify button is present
         if (verifyBtn != null) {
-            Log.i(TAG, "⚡ Tapping 'Verify Installation' on Super Offer page at " + verifyBtn.rect);
-            currentStatus = "Verifying Offer...";
-            tapNode(verifyBtn);
-            offerState = OFFER_STATE_VERIFYING;
-            lastTapTime = now + 2000;
-            return true;
+            boolean hasInstalledApp = (offerTargetPackage != null && !offerTargetPackage.isEmpty()) ||
+                                      detectNewlyInstalledPackage(baselinePackages) != null ||
+                                      !findMostRecentInstalledPackage().isEmpty();
+
+            if (hasInstalledApp || appIsDuplicate) {
+                Log.i(TAG, "⚡ App ready/checked! Tapping 'Verify Installation' on Super Offer page at " + verifyBtn.rect);
+                currentStatus = "Verifying Offer...";
+                tapNode(verifyBtn);
+                offerState = OFFER_STATE_VERIFYING;
+                offerStateStartTime = now;
+                lastTapTime = now + 2000;
+                return true;
+            } else {
+                // If on install step but no app is installed yet:
+                // If 12 seconds have passed without opening Play Store, tap Go Back to return to 25 gems page and restart ad
+                if (now - offerStateStartTime > 12000) {
+                    NodeItem backBtn = (goBackBtn != null) ? goBackBtn : restartOfferBtn;
+                    if (backBtn != null) {
+                        Log.w(TAG, "On Install step but no app installed after 12s. Tapping " + backBtn.text + " to retry ad...");
+                        tapNode(backBtn);
+                    } else {
+                        Log.w(TAG, "On Install step but no app installed after 12s. Pressing Back to retry ad...");
+                        performGlobalAction(GLOBAL_ACTION_BACK);
+                    }
+                    offerState = OFFER_STATE_IDLE;
+                    lastTapTime = now + 1500;
+                    return true;
+                }
+                currentStatus = "Waiting for app install...";
+                return true;
+            }
         }
 
         // 4. START OFFER PHASE (Works for both Milestone card & Detail page)
@@ -1878,15 +2065,26 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
         // 5. If on offer detail page and Start button is scrolled off screen, scroll down!
         boolean isOfferDetailPage = false;
+        boolean hasLoadingButton = false;
+        boolean hasBottomAction = false;
         for (NodeItem item : allNodes) {
             String t = item.text.trim().toLowerCase();
             if (t.contains("watch a video ad") || t.contains("download and install the advertised app")) {
                 isOfferDetailPage = true;
-                break;
+            }
+            if (t.contains("loading")) {
+                hasLoadingButton = true;
+            }
+            if (item.rect.centerY() > 1000 && ((item.node != null && item.node.getClassName() != null && item.node.getClassName().toString().contains("Button")) || (item.text != null && item.text.trim().length() > 0))) {
+                hasBottomAction = true;
             }
         }
-        if (isOfferDetailPage && verifyBtn == null) {
-            Log.i(TAG, "On Offer Detail Page but 'Start Offer' button not in view: Scrolling down...");
+        if (hasLoadingButton) {
+            currentStatus = "Loading Ad...";
+            return true;
+        }
+        if (isOfferDetailPage && startOfferBtn == null && verifyBtn == null && restartOfferBtn == null && !hasBottomAction) {
+            Log.i(TAG, "On Offer Detail Page but action button not in view: Scrolling down...");
             swipeCoordinates(450, 1200, 450, 500, 400);
             lastTapTime = now + 1000;
             return true;
