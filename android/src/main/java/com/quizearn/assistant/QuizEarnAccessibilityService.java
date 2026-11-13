@@ -784,33 +784,27 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     if (step % 4 == 0) {
                         // Center of top-right Skip pill button (e.g. ">> Skip to Google Play")
                         int targetX = Math.max(50, screenW - 120);
-                        int targetY = 60;
-                        if (!isPointInForbiddenElement(targetX, targetY, allNodes)) {
-                            Log.i(TAG, "Ad running (" + adElapsed + "s): Tapping top-right Skip pill button at (" + targetX + ", " + targetY + ")...");
-                            tapCoordinates(targetX, targetY);
-                            lastTapTime = now;
-                            return;
-                        }
+                        int targetY = 65;
+                        Log.i(TAG, "Ad running (" + adElapsed + "s): Tapping top-right Skip pill button at (" + targetX + ", " + targetY + ")...");
+                        tapCoordinates(targetX, targetY);
+                        lastTapTime = now;
+                        return;
                     } else if (step % 4 == 1) {
                         // Extreme top-right corner close X / chevron
                         int targetX = screenW - 55;
                         int targetY = 55;
-                        if (!isPointInForbiddenElement(targetX, targetY, allNodes)) {
-                            Log.i(TAG, "Ad running (" + adElapsed + "s): Tapping top-right corner close coordinate at (" + targetX + ", " + targetY + ")...");
-                            tapCoordinates(targetX, targetY);
-                            lastTapTime = now;
-                            return;
-                        }
+                        Log.i(TAG, "Ad running (" + adElapsed + "s): Tapping top-right corner close coordinate at (" + targetX + ", " + targetY + ")...");
+                        tapCoordinates(targetX, targetY);
+                        lastTapTime = now;
+                        return;
                     } else if (step % 4 == 2) {
                         // Top-left corner fallback close
                         int targetX = 55;
                         int targetY = 55;
-                        if (!isPointInForbiddenElement(targetX, targetY, allNodes)) {
-                            Log.i(TAG, "Ad running (" + adElapsed + "s): Tapping top-left corner close coordinate at (" + targetX + ", " + targetY + ")...");
-                            tapCoordinates(targetX, targetY);
-                            lastTapTime = now;
-                            return;
-                        }
+                        Log.i(TAG, "Ad running (" + adElapsed + "s): Tapping top-left corner close coordinate at (" + targetX + ", " + targetY + ")...");
+                        tapCoordinates(targetX, targetY);
+                        lastTapTime = now;
+                        return;
                     }
                     Log.i(TAG, "Ad running (" + adElapsed + "s): Pressing Back key to return to Quiz...");
                     performGlobalAction(GLOBAL_ACTION_BACK);
@@ -1727,11 +1721,14 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             return true;
         }
 
-        // Exact skip resource IDs
+        // Exact skip resource IDs (InMobi, Google, Unity, AppLovin, Vungle, Liftoff)
         if (id.contains("skip_button") || id.contains("btn_skip") || 
             id.contains("close-or-skip-button") || id.contains("skip_ad") || 
             id.contains("skipbutton") || id.contains("skip-button") ||
-            id.contains("mbridge_skip") || id.contains("skip_cta")) {
+            id.contains("skip-btn") || id.contains("skip_btn") ||
+            id.contains("skip-close") || id.contains("skip_close") ||
+            id.contains("mbridge_skip") || id.contains("skip_cta") ||
+            id.contains("skip")) {
             return true;
         }
 
@@ -1807,6 +1804,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             id.contains("close_ad") || id.contains("ad_close") || id.contains("btn_back") || 
             id.contains("iv_back") || id.contains("button_back") || id.contains("al_close") ||
             id.contains("unity_close") || id.contains("vungle_close") || 
+            id.contains("skip-close") || id.contains("skip_close") ||
+            id.contains("skip-btn") || id.contains("skip_btn") ||
             id.contains("closebutton") || id.contains("close-button")) {
             return true;
         }
