@@ -432,6 +432,41 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 externalAppBackCount = 0;
             }
 
+            // Pre-scan for active quiz solving elements and collect gem buttons
+            boolean hasCollectGem = false;
+            for (NodeItem item : allNodes) {
+                if (isForbiddenElement(item)) continue;
+                String t = item.text.trim().toLowerCase();
+                String d = item.contentDesc.trim().toLowerCase();
+                String combined = (t + " " + d).trim();
+                if (combined.contains("collect gem") || combined.contains("collect reward")) {
+                    hasCollectGem = true;
+                    break;
+                }
+            }
+
+            // Check if active quiz elements exist on screen (question or answer options)
+            boolean hasActiveQuiz = false;
+            for (NodeItem item : allNodes) {
+                int cy = item.rect.centerY();
+                // Question Card Zone (math equation or captcha number)
+                if (cy >= (int)(screenH * 0.10) && cy <= (int)(screenH * 0.42)) {
+                    String raw = item.text.trim();
+                    if (mathPattern.matcher(raw).find() || numPattern.matcher(cleanNumText(raw)).matches()) {
+                        hasActiveQuiz = true;
+                        break;
+                    }
+                }
+                // Options Grid Zone: answer button checking
+                if (cy >= (int)(screenH * 0.26) && cy <= (int)(screenH * 0.65)) {
+                    String raw = cleanNumText(item.text.trim());
+                    if (numPattern.matcher(raw).matches()) {
+                        hasActiveQuiz = true;
+                        break;
+                    }
+                }
+            }
+
             // 1. Detect Ad State & Countdowns (Ad 1 of 2, Ad 2 of 2, etc.)
             boolean hasAdCountdown = false;
             boolean isAd = false;
@@ -442,9 +477,11 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             }
 
             for (NodeItem item : allNodes) {
-                String t = item.text.toLowerCase();
-                String d = item.contentDesc.toLowerCase();
+                String t = item.text.toLowerCase().trim();
+                String d = item.contentDesc.toLowerCase().trim();
                 String id = item.resId.toLowerCase();
+                boolean isWebView = (item.node != null && item.node.getClassName() != null && 
+                    item.node.getClassName().toString().toLowerCase().contains("webview"));
 
                 if (t.contains("reward in") || t.contains("video ends in") || 
                     t.contains("video will end in") || t.contains("seconds after") || 
@@ -463,32 +500,28 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
 
                 if (!isAd && (t.startsWith("ad ") || t.contains("seconds after") || 
-                    t.contains("will be taken to the website") || t.contains("install now") ||
-                    t.contains("play store") || t.contains("advertisement") ||
+                    t.contains("will be taken to the website") || t.contains("install") ||
+                    t.contains("download") || t.contains("play store") || t.contains("advertisement") ||
                     t.contains("reward will be") || t.contains("you can skip in") ||
+                    t.contains("shop now") || t.contains("claim bonus") || t.contains("play now") ||
+                    t.contains("get it on") || t.equals("get") || t.equals("open") ||
                     d.contains("liftoff") || id.contains("adjs") || id.contains("moloco") || 
                     id.contains("endcard") || id.contains("watermark") || id.contains("advert") || 
                     id.contains("unity3d") || id.contains("applovin") || id.contains("mbridge") || 
-                    id.contains("tt_") || id.contains("close-or-skip-button") ||
+                    id.contains("tt_") || id.contains("ia_") || id.contains("close-or-skip-button") ||
                     id.contains("app-interstitial") || id.contains("ad-interstitial") ||
                     id.contains("mys-creative") || id.contains("mys-content") ||
                     id.contains("mys-wrapper") || id.contains("mys-progress-bar") ||
-                    t.contains("moloco") || t.contains("liftoff"))) {
+                    isWebView || t.contains("moloco") || t.contains("liftoff"))) {
                     isAd = true;
                 }
             }
 
-            // Game screen override: If quiz game elements (Collect Gem, Super Offer, etc.) are visible, this is NOT an ad!
-            for (NodeItem item : allNodes) {
-                String t = item.text.toLowerCase();
-                String d = item.contentDesc.toLowerCase();
-                if (t.contains("collect gem") || d.contains("collect gem") || 
-                    t.contains("super offer") || t.contains("keep going") ||
-                    t.contains("my offers") || t.equals("verify") || t.contains("verify usage")) {
-                    isAd = false;
-                    hasAdCountdown = false;
-                    break;
-                }
+            // Game screen override: ONLY override isAd = false if actual quiz questions or Collect Gem are visible in foreground!
+            // Background fragment text (like "super offer" or "my offers") must NEVER cancel isAd during video ads!
+            if (hasActiveQuiz || hasCollectGem) {
+                isAd = false;
+                hasAdCountdown = false;
             }
 
             // 2. OFFICIAL SKIP ARROW CHECK (Tapped as soon as network provides Skip)
@@ -682,9 +715,9 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
-            // 5. Game Stall Auto-Recovery (Only when in game and completely frozen with no questions or ads for > 35s)
-            if (pkg.equals("com.quiz.earn.money.game") && lastProgressTime > 0 && now - lastProgressTime > 35000) {
-                Log.w(TAG, "Quiz & Earn stuck without questions or ads (>35s). Restarting app cleanly...");
+            // 5. Game Stall Auto-Recovery (Only when in game, completely frozen with no questions or ads for > 75s, and no ad active)
+            if (pkg.equals("com.quiz.earn.money.game") && adStartTime == 0 && lastProgressTime > 0 && now - lastProgressTime > 75000) {
+                Log.w(TAG, "Quiz & Earn stuck without questions or ads (>75s). Restarting app cleanly...");
                 currentStatus = "Stall: Restarting App...";
                 restartQuizApp();
                 lastProgressTime = now;
@@ -774,40 +807,6 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
             if (detectedGems >= 0) {
                 liveGems = detectedGems;
-            }
-
-            boolean hasCollectGem = false;
-            for (NodeItem item : allNodes) {
-                if (isForbiddenElement(item)) continue;
-                String t = item.text.trim().toLowerCase();
-                String d = item.contentDesc.trim().toLowerCase();
-                String combined = (t + " " + d).trim();
-                if (combined.contains("collect gem") || combined.contains("collect reward")) {
-                    hasCollectGem = true;
-                    break;
-                }
-            }
-
-            // Check if active quiz elements exist on screen (question or answer options)
-            boolean hasActiveQuiz = false;
-            for (NodeItem item : allNodes) {
-                int cy = item.rect.centerY();
-                // Question Card Zone (math equation or captcha number)
-                if (cy >= (int)(screenH * 0.10) && cy <= (int)(screenH * 0.42)) {
-                    String raw = item.text.trim();
-                    if (mathPattern.matcher(raw).find() || numPattern.matcher(cleanNumText(raw)).matches()) {
-                        hasActiveQuiz = true;
-                        break;
-                    }
-                }
-                // Options Grid Zone: answer button checking
-                if (cy >= (int)(screenH * 0.26) && cy <= (int)(screenH * 0.65)) {
-                    String raw = cleanNumText(item.text.trim());
-                    if (numPattern.matcher(raw).matches()) {
-                        hasActiveQuiz = true;
-                        break;
-                    }
-                }
             }
 
             boolean is25GemsOnScreen = (detectedGems >= 25);
