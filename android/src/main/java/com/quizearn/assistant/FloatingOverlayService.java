@@ -6,6 +6,8 @@ import android.app.NotificationManager;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
+import android.content.pm.ActivityInfo;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
 import android.graphics.Typeface;
@@ -46,6 +48,7 @@ public class FloatingOverlayService extends Service {
     private TextView menuGemText;
     private TextView menuStatusText;
     private Button btnToggle;
+    private Button btnOfferToggle;
     private Button btnRestart;
     private Button btnMinimize;
     private Button btnClose;
@@ -104,6 +107,10 @@ public class FloatingOverlayService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        try {
+            SharedPreferences prefs = getSharedPreferences("QuizEarnPrefs", Context.MODE_PRIVATE);
+            QuizEarnAccessibilityService.isSuperOfferEnabled = prefs.getBoolean("super_offer_enabled", true);
+        } catch (Exception ignored) {}
         startForegroundServiceNotification();
         createFloatingWidget();
         uiHandler.post(refreshRunnable);
@@ -150,6 +157,7 @@ public class FloatingOverlayService extends Service {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         );
+        params.screenOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;
         params.gravity = Gravity.TOP | Gravity.START;
         params.x = 30;
         params.y = dp(280);
@@ -411,6 +419,24 @@ public class FloatingOverlayService extends Service {
             }
         });
 
+        // --- 25-GEM SUPER OFFER TOGGLE (PLAYER 1 = ON, PLAYER 2/3 = OFF) ---
+        btnOfferToggle = new Button(this);
+        updateOfferToggleBtn();
+        LinearLayout.LayoutParams offerLp = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(34));
+        offerLp.setMargins(0, 0, 0, dp(8));
+        btnOfferToggle.setLayoutParams(offerLp);
+
+        btnOfferToggle.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                boolean newState = !QuizEarnAccessibilityService.isSuperOfferEnabled;
+                QuizEarnAccessibilityService.setSuperOfferEnabled(FloatingOverlayService.this, newState);
+                Log.i(TAG, "SUPER OFFER FEATURE TOGGLED: " + newState);
+                updateOfferToggleBtn();
+            }
+        });
+
         // --- SECONDARY ACTION ROW (RESTART APP & MINIMIZE) ---
         LinearLayout bottomRow = new LinearLayout(this);
         bottomRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -463,6 +489,7 @@ public class FloatingOverlayService extends Service {
         menuView.addView(divider);
         menuView.addView(statsCard);
         menuView.addView(btnToggle);
+        menuView.addView(btnOfferToggle);
         menuView.addView(bottomRow);
     }
 
@@ -554,6 +581,27 @@ public class FloatingOverlayService extends Service {
                 btnToggle.setTextColor(Color.BLACK);
             }
         }
+
+        updateOfferToggleBtn();
+    }
+
+    private void updateOfferToggleBtn() {
+        if (btnOfferToggle == null) return;
+        boolean enabled = QuizEarnAccessibilityService.isSuperOfferEnabled;
+        btnOfferToggle.setText(enabled ? "⚡ AUTO-OFFER 25💎: [ON]" : "⚡ AUTO-OFFER 25💎: [OFF]");
+        btnOfferToggle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
+        btnOfferToggle.setTypeface(Typeface.DEFAULT_BOLD);
+
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(dp(10));
+        if (enabled) {
+            bg.setColor(Color.parseColor("#059669")); // Emerald Green
+            btnOfferToggle.setTextColor(Color.WHITE);
+        } else {
+            bg.setColor(Color.parseColor("#374151")); // Dark Slate
+            btnOfferToggle.setTextColor(Color.parseColor("#9CA3AF")); // Muted Gray
+        }
+        btnOfferToggle.setBackground(bg);
     }
 
     private int dp(int value) {

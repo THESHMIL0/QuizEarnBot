@@ -43,12 +43,7 @@ Write-Host ">>> [3/7] Linking manifest & generating R.java..."
 & $aapt2 link -I $androidJar --manifest $manifest --min-sdk-version 24 --target-sdk-version 34 --version-code 1 --version-name "1.0" --java $genDir -o $unalignedApk --auto-add-overlay $compiledRes
 
 Write-Host ">>> [4/7] Compiling Java sources with JDK 17..."
-$javaFiles = @(
-    "$genDir\com\quizearn\assistant\R.java",
-    "$androidDir\src\main\java\com\quizearn\assistant\MainActivity.java",
-    "$androidDir\src\main\java\com\quizearn\assistant\FloatingOverlayService.java",
-    "$androidDir\src\main\java\com\quizearn\assistant\QuizEarnAccessibilityService.java"
-)
+$javaFiles = @("$genDir\com\quizearn\assistant\R.java") + (Get-ChildItem -Path "$androidDir\src\main\java" -Recurse -Filter "*.java").FullName
 & $javac -encoding UTF-8 -cp $androidJar -d $classesDir -source 17 -target 17 @javaFiles
 
 Write-Host ">>> [5/7] Converting bytecode to classes.dex with D8..."

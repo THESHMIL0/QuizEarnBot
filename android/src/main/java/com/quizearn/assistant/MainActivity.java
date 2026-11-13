@@ -84,6 +84,46 @@ public class MainActivity extends Activity {
         cardAccess.addView(btnAccess);
         root.addView(cardAccess);
 
+        LinearLayout cardOffer = createCard("3. 25-GEM SUPER OFFER AUTOMATION", "Auto-install offer app, 2-min usage & 1000 coins claim. Set ON for Player 1, OFF for Players 2/3.");
+        final Button btnMainOffer = new Button(this);
+        btnMainOffer.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f);
+        btnMainOffer.setTypeface(null, Typeface.BOLD);
+        btnMainOffer.setPadding(dp(14), dp(12), dp(14), dp(12));
+        LinearLayout.LayoutParams offerBtnLp = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        offerBtnLp.setMargins(0, dp(8), 0, 0);
+        btnMainOffer.setLayoutParams(offerBtnLp);
+
+        final Runnable updateMainOfferBtn = new Runnable() {
+            @Override
+            public void run() {
+                boolean on = QuizEarnAccessibilityService.isSuperOfferEnabled;
+                btnMainOffer.setText(on ? "⚡ AUTO-OFFER: [ON] (Player 1)" : "⚡ AUTO-OFFER: [OFF] (Player 2/3)");
+                GradientDrawable b = new GradientDrawable();
+                b.setCornerRadius(dp(10));
+                if (on) {
+                    b.setColor(Color.parseColor("#059669"));
+                    btnMainOffer.setTextColor(Color.WHITE);
+                } else {
+                    b.setColor(Color.parseColor("#374151"));
+                    btnMainOffer.setTextColor(Color.parseColor("#9CA3AF"));
+                }
+                btnMainOffer.setBackground(b);
+            }
+        };
+        updateMainOfferBtn.run();
+
+        btnMainOffer.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                boolean newState = !QuizEarnAccessibilityService.isSuperOfferEnabled;
+                QuizEarnAccessibilityService.setSuperOfferEnabled(MainActivity.this, newState);
+                updateMainOfferBtn.run();
+            }
+        });
+        cardOffer.addView(btnMainOffer);
+        root.addView(cardOffer);
+
         btnLaunch = new Button(this);
         btnLaunch.setText("LAUNCH FLOATING HUD");
         btnLaunch.setTextColor(Color.BLACK);

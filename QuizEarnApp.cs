@@ -40,6 +40,31 @@ public class QuizEarnApp : Form
     [DllImport("user32.dll")]
     private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern int GetWindowThreadProcessId(IntPtr hWnd, out int processId);
+
+    [DllImport("user32.dll")]
+    private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
     private const int DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1 = 19;
@@ -104,6 +129,7 @@ public class QuizEarnApp : Form
     private Button btnToggle;
     private Button btnRestartApp;
     private Button btnResetAdId;
+    private Button btnSendLastSS;
     private Button btnTimerToggle;
     private Label lblTodaySolved;
     private Label lblGems;
@@ -391,35 +417,49 @@ public class QuizEarnApp : Form
         btnToggle.Click += new EventHandler(BtnToggle_Click);
         pnlHomeView.Controls.Add(btnToggle);
 
-        // Utility Buttons Row: App Restart & Reset Ad ID (Pure Dark++, Ad Timer hidden per user request)
+        // Utility Buttons Row: App Restart, Reset Ad ID & Send Last SS
         int btnY = 108;
         btnRestartApp = new Button();
         btnRestartApp.Text = "Restart App";
-        btnRestartApp.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
+        btnRestartApp.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
         btnRestartApp.ForeColor = Color.FromArgb(120, 120, 125);
         btnRestartApp.BackColor = Color.FromArgb(6, 6, 6);
         btnRestartApp.FlatStyle = FlatStyle.Flat;
         btnRestartApp.FlatAppearance.BorderColor = Color.FromArgb(18, 18, 18);
         btnRestartApp.FlatAppearance.BorderSize = 1;
         btnRestartApp.Location = new Point(20, btnY);
-        btnRestartApp.Size = new Size(248, 36);
+        btnRestartApp.Size = new Size(158, 36);
         btnRestartApp.Cursor = Cursors.Hand;
         btnRestartApp.Click += new EventHandler(BtnRestartApp_Click);
         pnlHomeView.Controls.Add(btnRestartApp);
 
         btnResetAdId = new Button();
         btnResetAdId.Text = "Reset Ad ID";
-        btnResetAdId.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
+        btnResetAdId.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
         btnResetAdId.ForeColor = Color.FromArgb(120, 120, 125);
         btnResetAdId.BackColor = Color.FromArgb(6, 6, 6);
         btnResetAdId.FlatStyle = FlatStyle.Flat;
         btnResetAdId.FlatAppearance.BorderColor = Color.FromArgb(18, 18, 18);
         btnResetAdId.FlatAppearance.BorderSize = 1;
-        btnResetAdId.Location = new Point(277, btnY);
-        btnResetAdId.Size = new Size(248, 36);
+        btnResetAdId.Location = new Point(186, btnY);
+        btnResetAdId.Size = new Size(158, 36);
         btnResetAdId.Cursor = Cursors.Hand;
         btnResetAdId.Click += new EventHandler(BtnResetAdId_Click);
         pnlHomeView.Controls.Add(btnResetAdId);
+
+        btnSendLastSS = new Button();
+        btnSendLastSS.Text = "Auto SS to Gallery";
+        btnSendLastSS.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
+        btnSendLastSS.ForeColor = Color.FromArgb(80, 175, 255);
+        btnSendLastSS.BackColor = Color.FromArgb(14, 26, 42);
+        btnSendLastSS.FlatStyle = FlatStyle.Flat;
+        btnSendLastSS.FlatAppearance.BorderColor = Color.FromArgb(42, 90, 150);
+        btnSendLastSS.FlatAppearance.BorderSize = 1;
+        btnSendLastSS.Location = new Point(352, btnY);
+        btnSendLastSS.Size = new Size(172, 36);
+        btnSendLastSS.Cursor = Cursors.Hand;
+        btnSendLastSS.Click += new EventHandler(BtnSendLastSS_Click);
+        pnlHomeView.Controls.Add(btnSendLastSS);
 
         // Timer toggle button instance kept in memory for events but not shown
         btnTimerToggle = new Button();
@@ -1252,6 +1292,250 @@ public class QuizEarnApp : Form
         })).Start();
     }
 
+    private void BtnSendLastSS_Click(object sender, EventArgs e)
+    {
+        Log("[Screenshot] Auto-capturing BlueStacks screen and syncing to Gallery...");
+        new Thread(new ThreadStart(delegate {
+            SendLastScreenshotToBlueStacks();
+        })).Start();
+    }
+
+    private Image CaptureBlueStacksWindow(out string methodUsed)
+    {
+        methodUsed = "Windows Desktop Capture";
+        try
+        {
+            Process[] bstkProcs = Process.GetProcessesByName("HD-Player");
+            IntPtr targetHwnd = IntPtr.Zero;
+
+            // 1. Match by window title containing "BlueStacks"
+            EnumWindows(delegate(IntPtr hWnd, IntPtr lParam) {
+                if (!IsWindowVisible(hWnd)) return true;
+                StringBuilder sb = new StringBuilder(256);
+                GetWindowText(hWnd, sb, 256);
+                string title = sb.ToString();
+                if (title.IndexOf("BlueStacks", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                    title.IndexOf("Multi-Instance", StringComparison.OrdinalIgnoreCase) < 0)
+                {
+                    RECT r;
+                    if (GetWindowRect(hWnd, out r) && (r.Right - r.Left) > 200 && (r.Bottom - r.Top) > 200)
+                    {
+                        targetHwnd = hWnd;
+                        return false;
+                    }
+                }
+                return true;
+            }, IntPtr.Zero);
+
+            // 2. Match by process ID of HD-Player
+            if (targetHwnd == IntPtr.Zero && bstkProcs.Length > 0)
+            {
+                EnumWindows(delegate(IntPtr hWnd, IntPtr lParam) {
+                    if (!IsWindowVisible(hWnd)) return true;
+                    int pid = 0;
+                    GetWindowThreadProcessId(hWnd, out pid);
+                    foreach (Process p in bstkProcs)
+                    {
+                        if (p.Id == pid)
+                        {
+                            RECT r;
+                            if (GetWindowRect(hWnd, out r) && (r.Right - r.Left) > 250 && (r.Bottom - r.Top) > 300)
+                            {
+                                targetHwnd = hWnd;
+                                return false;
+                            }
+                        }
+                    }
+                    return true;
+                }, IntPtr.Zero);
+            }
+
+            if (targetHwnd != IntPtr.Zero)
+            {
+                ShowWindow(targetHwnd, 9); // SW_RESTORE
+                SetForegroundWindow(targetHwnd);
+                Thread.Sleep(130);
+
+                RECT rect;
+                if (GetWindowRect(targetHwnd, out rect))
+                {
+                    int w = rect.Right - rect.Left;
+                    int h = rect.Bottom - rect.Top;
+                    if (w > 100 && h > 100)
+                    {
+                        Rectangle screenBounds = Screen.PrimaryScreen.Bounds;
+                        int x = Math.Max(0, rect.Left);
+                        int y = Math.Max(0, rect.Top);
+                        int capW = Math.Min(w, screenBounds.Width - x);
+                        int capH = Math.Min(h, screenBounds.Height - y);
+
+                        if (capW > 100 && capH > 100)
+                        {
+                            Bitmap bmp = new Bitmap(capW, capH);
+                            using (Graphics g = Graphics.FromImage(bmp))
+                            {
+                                g.CopyFromScreen(x, y, 0, 0, new Size(capW, capH));
+                            }
+                            return CropBlueStacksChrome(bmp);
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log("[Screenshot Debug] Window capture error: " + ex.Message);
+        }
+        return null;
+    }
+
+    private static Bitmap CropBlueStacksChrome(Bitmap src)
+    {
+        if (src == null) return null;
+        try
+        {
+            if (src.Width < 250 || src.Height < 400) return src;
+
+            int cropLeft = 6;
+            int cropTop = 72;
+            int cropRight = 43;
+            int cropBottom = 12;
+
+            // Adaptive refinement: scan right edge for dark BlueStacks toolbar (R < 60, G < 60, B < 95)
+            for (int x = src.Width - 1; x >= src.Width - 70 && x > 150; x--)
+            {
+                int midY = src.Height / 2;
+                Color c = src.GetPixel(x, midY);
+                if (!(c.R < 60 && c.G < 60 && c.B < 95))
+                {
+                    cropRight = Math.Max(40, src.Width - 1 - x);
+                    break;
+                }
+            }
+
+            int targetW = src.Width - cropLeft - cropRight;
+            int targetH = src.Height - cropTop - cropBottom;
+
+            if (targetW > 150 && targetH > 250)
+            {
+                Rectangle rect = new Rectangle(cropLeft, cropTop, targetW, targetH);
+                Bitmap cropped = src.Clone(rect, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                src.Dispose();
+                return cropped;
+            }
+        }
+        catch { }
+        return src;
+    }
+
+    private void SendLastScreenshotToBlueStacks()
+    {
+        try
+        {
+            string screenshotPath = null;
+            string destFileName = string.Format("Screenshot_{0:yyyyMMdd_HHmmss}.png", DateTime.Now);
+            string remotePath = "/sdcard/Pictures/Screenshots/" + destFileName;
+
+            // 1. PRIMARY: Capture the LIVE BlueStacks screen RIGHT NOW with edges trimmed
+            string methodUsed;
+            Image liveImg = CaptureBlueStacksWindow(out methodUsed);
+            if (liveImg != null)
+            {
+                string tempDir = Path.Combine(Path.GetTempPath(), "BlueStacksSS");
+                if (!Directory.Exists(tempDir)) Directory.CreateDirectory(tempDir);
+                string tFile = Path.Combine(tempDir, destFileName);
+                liveImg.Save(tFile, System.Drawing.Imaging.ImageFormat.Png);
+                liveImg.Dispose();
+                screenshotPath = tFile;
+                Log("[Screenshot] Captured LIVE BlueStacks screen (edges cleanly trimmed).");
+            }
+
+            EnsureConnected();
+
+            // Find all connected devices
+            List<string> targetDevices = new List<string>();
+            string devicesRaw = RunAdb("devices");
+            if (!string.IsNullOrEmpty(devicesRaw))
+            {
+                foreach (string line in devicesRaw.Split('\n'))
+                {
+                    string tr = line.Trim();
+                    if (tr.EndsWith("device") && !tr.StartsWith("List"))
+                    {
+                        string id = tr.Split('\t')[0].Trim();
+                        if (!string.IsNullOrEmpty(id) && !targetDevices.Contains(id))
+                        {
+                            targetDevices.Add(id);
+                        }
+                    }
+                }
+            }
+
+            if (targetDevices.Count == 0 && !string.IsNullOrEmpty(adbPort))
+            {
+                targetDevices.Add(adbPort);
+            }
+
+            // 2. FALLBACK: If window was minimized or not captured, take live screencap via ADB
+            if (string.IsNullOrEmpty(screenshotPath) || !File.Exists(screenshotPath))
+            {
+                Log("[Screenshot] Capturing live screen directly via ADB screencap...");
+                foreach (string dev in targetDevices)
+                {
+                    RunAdb(string.Format("-s {0} shell mkdir -p /sdcard/Pictures/Screenshots", dev));
+                    RunAdb(string.Format("-s {0} shell screencap -p {1}", dev, remotePath));
+                    RunAdb(string.Format("-s {0} shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d \"file://{1}\"", dev, remotePath));
+                }
+                Log("[SUCCESS] Live screen captured & pushed directly to BlueStacks Gallery!");
+            }
+            else
+            {
+                // Push fresh live trimmed image to all target devices
+                int sentCount = 0;
+                foreach (string dev in targetDevices)
+                {
+                    RunAdb(string.Format("-s {0} shell mkdir -p /sdcard/Pictures/Screenshots", dev));
+                    RunAdb(string.Format("-s {0} push \"{1}\" {2}", dev, screenshotPath, remotePath));
+                    RunAdb(string.Format("-s {0} shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d \"file://{1}\"", dev, remotePath));
+                    sentCount++;
+                }
+                Log(string.Format("[SUCCESS] Sent LIVE '{0}' to BlueStacks Gallery ({1} device(s))!", Path.GetFileName(screenshotPath), sentCount));
+            }
+
+            // Visual feedback on button (Green toast animation)
+            if (this.InvokeRequired)
+            {
+                this.BeginInvoke(new Action(delegate {
+                    btnSendLastSS.Text = "✓ Saved to Gallery!";
+                    btnSendLastSS.ForeColor = Color.FromArgb(100, 255, 160);
+                    btnSendLastSS.BackColor = Color.FromArgb(12, 38, 24);
+                    btnSendLastSS.FlatAppearance.BorderColor = Color.FromArgb(40, 160, 80);
+                }));
+
+                Thread.Sleep(2500);
+
+                this.BeginInvoke(new Action(delegate {
+                    btnSendLastSS.Text = "Auto SS to Gallery";
+                    btnSendLastSS.ForeColor = Color.FromArgb(80, 175, 255);
+                    btnSendLastSS.BackColor = Color.FromArgb(14, 26, 42);
+                    btnSendLastSS.FlatAppearance.BorderColor = Color.FromArgb(42, 90, 150);
+                }));
+            }
+
+            try
+            {
+                System.Media.SystemSounds.Asterisk.Play();
+            }
+            catch { }
+
+            Log("[Ready] Open Quiz & Earn -> Upload Screenshot -> Pick the top image in Gallery!");
+        }
+        catch (Exception ex)
+        {
+            Log("[Screenshot Error] Failed to capture/send screenshot: " + ex.Message);
+        }
+    }
+
     private void BtnTimerToggle_Click(object sender, EventArgs e)
     {
         if (!isTimerRunning)
@@ -1353,6 +1637,16 @@ public class QuizEarnApp : Form
         {
             SilenceAudio(true);
         }
+
+        new Thread(new ThreadStart(delegate {
+            try
+            {
+                RunAdb("shell settings put system accelerometer_rotation 0");
+                RunAdb("shell settings put system user_rotation 0");
+                RunAdb("shell cmd window user-rotation lock 0");
+            }
+            catch {}
+        })).Start();
 
         botThread = new Thread(new ThreadStart(BotWorkerLoop));
         botThread.IsBackground = true;
@@ -4100,23 +4394,59 @@ public class QuizEarnApp : Form
         }
     }
 
+    private void EnsurePortraitOrientation()
+    {
+        try
+        {
+            string disp = RunAdb("shell dumpsys display");
+            if (disp.Contains("real 1600 x 900") || disp.Contains("rotation 1") || disp.Contains("rotation 3"))
+            {
+                Log("[🛡️ Orientation Guard] Landscape orientation detected! Locking BlueStacks back to Portrait (900x1600)...");
+                RunAdb("shell settings put system accelerometer_rotation 0");
+                RunAdb("shell settings put system user_rotation 0");
+                RunAdb("shell cmd window user-rotation lock 0");
+            }
+        }
+        catch {}
+    }
+
     private bool CheckAndEscapeForeignApp()
     {
+        EnsurePortraitOrientation();
         if (isBoosting || isAutoOffering) return false;
         string focus = GetCurrentFocus();
         if (string.IsNullOrEmpty(focus)) return false;
 
-        // 1. Google Play Store or Chrome browser redirect
-        if (focus.Contains("com.android.vending") || focus.Contains("google.android.finsky") || focus.Contains("com.android.chrome"))
+        // 1. Chrome browser redirect
+        if (focus.Contains("com.android.chrome"))
         {
-            Log("[Guard] Play Store / Browser overlay detected! Closing and returning to Quiz & Earn...");
+            Log("[Guard] Browser overlay detected! Closing and returning to Quiz & Earn...");
             AdbKey(4);
             Thread.Sleep(400);
-            RunAdb("shell am force-stop com.android.vending");
             RunAdb("shell am force-stop com.android.chrome");
             Thread.Sleep(400);
             RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
             Thread.Sleep(3000); // 3-second cooldown to let the ad UI settle without clicking overlays
+            return true;
+        }
+
+        // 1b. Google Play Store redirect - Allow during Super Offer or APK assistant
+        if (focus.Contains("com.android.vending") || focus.Contains("google.android.finsky"))
+        {
+            if (isAutoOffering || isBoosting) return false;
+            string accCheck = RunAdb("shell dumpsys accessibility | grep quizearn.assistant");
+            if (accCheck.Contains("quizearn.assistant"))
+            {
+                return false; // Let APK Assistant handle Play Store offer installation
+            }
+
+            Log("[Guard] Play Store overlay detected! Closing and returning to Quiz & Earn...");
+            AdbKey(4);
+            Thread.Sleep(400);
+            RunAdb("shell am force-stop com.android.vending");
+            Thread.Sleep(400);
+            RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
+            Thread.Sleep(3000);
             return true;
         }
 
