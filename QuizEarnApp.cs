@@ -1244,6 +1244,29 @@ public class QuizEarnApp : Form
     private void BtnRestartApp_Click(object sender, EventArgs e)
     {
         Log("[Action] Manual App Restart requested.");
+        if (btnRestartApp != null)
+        {
+            btnRestartApp.Text = "Restarting...";
+            btnRestartApp.ForeColor = Color.FromArgb(56, 189, 248);
+            System.Threading.Tasks.Task.Delay(1500).ContinueWith(t => {
+                try
+                {
+                    if (this.InvokeRequired)
+                    {
+                        SafeBeginInvoke(new Action(() => {
+                            btnRestartApp.Text = "Restart App";
+                            btnRestartApp.ForeColor = Color.FromArgb(120, 120, 125);
+                        }));
+                    }
+                    else
+                    {
+                        btnRestartApp.Text = "Restart App";
+                        btnRestartApp.ForeColor = Color.FromArgb(120, 120, 125);
+                    }
+                }
+                catch { }
+            });
+        }
         RestartApp();
     }
 
@@ -1260,11 +1283,59 @@ public class QuizEarnApp : Form
                 {
                     EnsureConnected();
                 }
-                RunAdb("shell am force-stop com.quiz.earn.money.game");
-                RunAdb("shell am force-stop com.rayole.cashmafia2");
+
+                // Discover all connected devices so restart works across multi-instance BlueStacks & phones
+                List<string> targetDevices = new List<string>();
+                string devicesRaw = RunAdb("devices");
+                if (!string.IsNullOrEmpty(devicesRaw))
+                {
+                    foreach (string line in devicesRaw.Split('\n'))
+                    {
+                        string tr = line.Trim();
+                        if (tr.EndsWith("device") && !tr.StartsWith("List") && !tr.StartsWith("*"))
+                        {
+                            string id = tr.Split(new char[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries)[0].Trim();
+                            if (!string.IsNullOrEmpty(id) && !targetDevices.Contains(id))
+                            {
+                                targetDevices.Add(id);
+                            }
+                        }
+                    }
+                }
+                if (targetDevices.Count == 0 && !string.IsNullOrEmpty(adbPort))
+                {
+                    targetDevices.Add(adbPort);
+                }
+
+                string[] targetPkgs = new string[] { "com.quiz.earn.money.game", "com.rayole.cashmafia2" };
+                foreach (string dev in targetDevices)
+                {
+                    foreach (string pkg in targetPkgs)
+                    {
+                        RunAdb(string.Format("-s {0} shell am force-stop {1}", dev, pkg));
+                    }
+                }
                 Thread.Sleep(800);
-                RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
-                Log("[App] Quiz & Earn restarted cleanly.");
+
+                foreach (string dev in targetDevices)
+                {
+                    bool launched = false;
+                    foreach (string pkg in targetPkgs)
+                    {
+                        string check = RunAdb(string.Format("-s {0} shell pm path {1}", dev, pkg));
+                        if (!string.IsNullOrEmpty(check) && check.Contains("package:"))
+                        {
+                            RunAdb(string.Format("-s {0} shell monkey -p {1} -c android.intent.category.LAUNCHER 1", dev, pkg));
+                            launched = true;
+                            break;
+                        }
+                    }
+                    if (!launched)
+                    {
+                        RunAdb(string.Format("-s {0} shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1", dev));
+                    }
+                }
+                Log(string.Format("[App] Quiz & Earn / Cash Mafia restarted cleanly on {0} device(s).", targetDevices.Count));
             }
             catch (Exception ex)
             {

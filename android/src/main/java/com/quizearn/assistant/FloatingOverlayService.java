@@ -470,7 +470,18 @@ public class FloatingOverlayService extends Service {
             @Override
             public void onClick(View v) {
                 Log.i(TAG, "RESTART APP CLICKED");
-                QuizEarnAccessibilityService.restartQuizApp();
+                btnRestart.setText("✓ Restarting...");
+                btnRestart.setTextColor(Color.parseColor("#10B981"));
+                v.postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            btnRestart.setText("⟳ Restart App");
+                            btnRestart.setTextColor(Color.parseColor("#38BDF8"));
+                        } catch (Exception ignored) {}
+                    }
+                }, 1500);
+                QuizEarnAccessibilityService.restartQuizApp(FloatingOverlayService.this);
             }
         });
 

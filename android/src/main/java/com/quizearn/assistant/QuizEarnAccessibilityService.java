@@ -177,8 +177,12 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     }
 
     public static void restartQuizApp() {
+        restartQuizApp(null);
+    }
+
+    public static void restartQuizApp(Context callerCtx) {
         Log.i(TAG, "restartQuizApp called.");
-        Context ctx = (instance != null) ? instance : null;
+        Context ctx = (callerCtx != null) ? callerCtx : ((instance != null) ? instance : null);
         if (ctx != null) {
             try {
                 final String targetPkg = getQuizAppPackage(ctx);
@@ -189,23 +193,38 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     } catch (Throwable ignored) {}
                 }).start();
 
-                Intent intent = ctx.getPackageManager().getLaunchIntentForPackage(targetPkg);
-                if (intent != null) {
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                    ctx.startActivity(intent);
-                    Log.i(TAG, "Quiz & Earn (" + targetPkg + ") relaunched cleanly.");
-                    if (instance != null) {
-                        instance.lastSolvedTarget = "";
-                        instance.lastSolveTime = 0;
-                        instance.lastProgressTime = System.currentTimeMillis();
-                        instance.adStartTime = 0;
-                        instance.collectGemScreenStartTime = 0;
-                        instance.collectGemTapCount = 0;
-                        instance.questionWaitingStartTime = 0;
-                        instance.lastWaitingQuestion = "";
-                    }
-                    currentStatus = "App Restarted";
+                // Press Home to dismiss any stuck foreground ad/dialog window
+                if (instance != null) {
+                    try {
+                        instance.performGlobalAction(GLOBAL_ACTION_HOME);
+                    } catch (Throwable ignored) {}
                 }
+
+                // Relaunch with FLAG_ACTIVITY_CLEAR_TASK to ensure the activity is forcefully recreated
+                new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                    try {
+                        Intent intent = ctx.getPackageManager().getLaunchIntentForPackage(targetPkg);
+                        if (intent != null) {
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                            ctx.startActivity(intent);
+                            Log.i(TAG, "Quiz & Earn (" + targetPkg + ") relaunched cleanly with CLEAR_TASK.");
+                        }
+                    } catch (Throwable ex) {
+                        Log.e(TAG, "Failed to start activity in restartQuizApp", ex);
+                    }
+                }, 300);
+
+                if (instance != null) {
+                    instance.lastSolvedTarget = "";
+                    instance.lastSolveTime = 0;
+                    instance.lastProgressTime = System.currentTimeMillis();
+                    instance.adStartTime = 0;
+                    instance.collectGemScreenStartTime = 0;
+                    instance.collectGemTapCount = 0;
+                    instance.questionWaitingStartTime = 0;
+                    instance.lastWaitingQuestion = "";
+                }
+                currentStatus = "App Restarted";
             } catch (Exception e) {
                 Log.e(TAG, "Failed to restart Quiz & Earn", e);
             }
