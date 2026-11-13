@@ -321,6 +321,20 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
+            // 0A. Network Error / Disconnect Recovery ("Try Again", "Retry", "No Internet Connection")
+            for (NodeItem item : allNodes) {
+                String t = item.text.trim().toLowerCase();
+                String d = item.contentDesc.trim().toLowerCase();
+                if (t.equals("try again") || d.equals("try again") || t.equals("retry") || d.equals("retry") || t.contains("reload")) {
+                    Log.w(TAG, "⚡ Network error screen detected ('" + item.text + "'). Tapping Try Again at " + item.rect);
+                    tapNode(item);
+                    lastTapTime = now + 2500;
+                    lastProgressTime = now;
+                    currentStatus = "Retrying Connection...";
+                    return;
+                }
+            }
+
             // 0. Universal Auto-Dismiss: Return immediately if an ad launched Chrome or unexpected external app
             boolean isQuizApp = pkg.equals("com.quiz.earn.money.game");
             boolean isAssistantApp = pkg.equals("com.quizearn.assistant");
@@ -835,6 +849,47 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
+            // Check if we are on the Main Home Screen (User greeting, Task Partners, Leaderboard, Super/Mega Offer cards)
+            boolean isHomeScreen = false;
+            NodeItem homeSuperOfferClaimBtn = null;
+            for (NodeItem item : allNodes) {
+                String t = item.text.trim().toLowerCase();
+                String d = item.contentDesc.trim().toLowerCase();
+                if (t.contains("hi, ") || d.contains("hi, ") ||
+                    t.contains("daily win") || t.contains("task partners") ||
+                    t.contains("weekly leaderboard") || t.contains("refer & earn") ||
+                    t.contains("go to wallet")) {
+                    isHomeScreen = true;
+                }
+                if (t.equals("claim") || t.equals("claim >") || d.equals("claim") || t.startsWith("claim")) {
+                    if (item.rect.centerX() < screenW / 2) {
+                        homeSuperOfferClaimBtn = item;
+                    }
+                }
+            }
+
+            if (isHomeScreen) {
+                if (homeSuperOfferClaimBtn != null) {
+                    Log.i(TAG, "On Home Screen: Tapping Super Offer 'Claim >' button at " + homeSuperOfferClaimBtn.rect);
+                    tapNode(homeSuperOfferClaimBtn);
+                    lastTapTime = now + 2500;
+                    lastProgressTime = now;
+                    currentStatus = "Entering Super Offer / Quiz...";
+                    return;
+                } else {
+                    for (NodeItem item : allNodes) {
+                        String t = item.text.trim().toLowerCase();
+                        if (t.contains("claim") || t.contains("quiz")) {
+                            tapNode(item);
+                            lastTapTime = now + 2000;
+                            lastProgressTime = now;
+                            return;
+                        }
+                    }
+                }
+                return;
+            }
+
             // SUPER OFFER AUTOMATION: Automates the 25-Gems 1000 Coins Super Offer end-to-end
             if (!isAd && pkg.equals("com.quiz.earn.money.game")) {
                 if (isSuperOfferEnabled) {
@@ -1037,7 +1092,20 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             }
 
             // --- 5B. NUMBER CAPTCHA QUIZ DETECTION ---
-            if (detectedTarget == null) {
+            boolean hasCaptchaContext = false;
+            for (NodeItem item : allNodes) {
+                String t = item.text.toLowerCase();
+                String d = item.contentDesc.toLowerCase();
+                if (t.contains("select the correct") || d.contains("select the correct") ||
+                    t.contains("attempt") || d.contains("attempt") ||
+                    t.contains("/2") || d.contains("/2") ||
+                    t.contains("/ 2") || d.contains("/ 2")) {
+                    hasCaptchaContext = true;
+                    break;
+                }
+            }
+
+            if (detectedTarget == null && hasCaptchaContext) {
                 // Find target number in Question Zone (e.g. 3983)
                 NodeItem bestQNode = null;
                 int maxArea = -1;
