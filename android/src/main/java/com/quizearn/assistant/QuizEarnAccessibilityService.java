@@ -516,28 +516,6 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
-            // Check if active quiz elements exist on screen (question or answer options)
-            boolean hasActiveQuiz = false;
-            for (NodeItem item : allNodes) {
-                int cy = item.rect.centerY();
-                // Question Card Zone (math equation or captcha number)
-                if (cy >= (int)(screenH * 0.10) && cy <= (int)(screenH * 0.42)) {
-                    String raw = item.text.trim();
-                    if (mathPattern.matcher(raw).find() || numPattern.matcher(cleanNumText(raw)).matches()) {
-                        hasActiveQuiz = true;
-                        break;
-                    }
-                }
-                // Options Grid Zone: answer button checking
-                if (cy >= (int)(screenH * 0.26) && cy <= (int)(screenH * 0.65)) {
-                    String raw = cleanNumText(item.text.trim());
-                    if (numPattern.matcher(raw).matches()) {
-                        hasActiveQuiz = true;
-                        break;
-                    }
-                }
-            }
-
             // Check if Super Offer milestone page is visible (Start Offer, 25 gems, instructions, etc.)
             boolean hasSuperOfferMilestone = false;
             for (NodeItem item : allNodes) {
@@ -550,9 +528,35 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     t.contains("my super offers") || d.contains("my super offers") ||
                     t.contains("claim 1000 coins") || d.contains("claim 1000 coins") ||
                     t.contains("watch a video ad") || d.contains("watch a video ad") ||
+                    t.contains("install the app") || d.contains("install the app") ||
                     t.contains("restart offer") || d.contains("restart offer")) {
                     hasSuperOfferMilestone = true;
                     break;
+                }
+            }
+
+            // Check if active quiz elements exist on screen (question or answer options)
+            // (Cannot be an active quiz if Super Offer milestone page is visible)
+            boolean hasActiveQuiz = false;
+            if (!hasSuperOfferMilestone) {
+                for (NodeItem item : allNodes) {
+                    int cy = item.rect.centerY();
+                    // Question Card Zone (math equation or captcha number)
+                    if (cy >= (int)(screenH * 0.10) && cy <= (int)(screenH * 0.42)) {
+                        String raw = item.text.trim();
+                        if (mathPattern.matcher(raw).find() || numPattern.matcher(cleanNumText(raw)).matches()) {
+                            hasActiveQuiz = true;
+                            break;
+                        }
+                    }
+                    // Options Grid Zone: answer button checking
+                    if (cy >= (int)(screenH * 0.26) && cy <= (int)(screenH * 0.65)) {
+                        String raw = cleanNumText(item.text.trim());
+                        if (numPattern.matcher(raw).matches()) {
+                            hasActiveQuiz = true;
+                            break;
+                        }
+                    }
                 }
             }
 
@@ -903,12 +907,29 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                             try {
                                 int val = Integer.parseInt(cleaned);
                                 // The gem badge is always the rightmost element in the header (gifts are on the left)
-                                if (cx > maxCx && val >= 0 && val <= 25) {
+                                if (cx > maxCx && val >= 0 && val <= 99) {
                                     maxCx = cx;
                                     detectedGems = val;
                                 }
                             } catch (Exception ignored) {}
                         }
+                    }
+                }
+            }
+
+            // Pattern D: "X Gems Collected!" card (e.g. "26 Gems Collected!")
+            if (detectedGems < 0) {
+                Pattern gemsCollectedPattern = Pattern.compile("(\\d+)\\s*gems?\\s*collected", Pattern.CASE_INSENSITIVE);
+                for (NodeItem item : allNodes) {
+                    Matcher m = gemsCollectedPattern.matcher(item.text);
+                    if (!m.find() && !item.contentDesc.isEmpty()) {
+                        m = gemsCollectedPattern.matcher(item.contentDesc);
+                    }
+                    if (m.find()) {
+                        try {
+                            detectedGems = Integer.parseInt(m.group(1));
+                            break;
+                        } catch (Exception ignored) {}
                     }
                 }
             }
@@ -940,12 +961,17 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             // Check if final ad for 25th gem has finished and returned to Quiz app
             boolean finalAdCompleted = (isCollecting25thGem && finalAdStarted && !isAd && (now - lastTapTime > 1500));
 
-            boolean isOfferScreen = is25GemsOnScreen || (offerState != OFFER_STATE_IDLE) || finalAdCompleted;
+            boolean isOfferScreen = is25GemsOnScreen || hasSuperOfferMilestone || (offerState != OFFER_STATE_IDLE) || finalAdCompleted;
             if (!isOfferScreen) {
                 for (NodeItem item : allNodes) {
                     String t = item.text.toLowerCase().trim();
                     String d = item.contentDesc.toLowerCase().trim();
                     if (t.contains("super offer") || d.contains("super offer") ||
+                        t.contains("start offer") || d.contains("start offer") ||
+                        t.contains("gems collected") || d.contains("gems collected") ||
+                        t.contains("guaranteed 1000") || d.contains("guaranteed 1000") ||
+                        t.contains("watch a video ad") || d.contains("watch a video ad") ||
+                        t.contains("install the app") || d.contains("install the app") ||
                         t.contains("verify installation") || d.contains("verify installation") ||
                         t.contains("app usage progress") || d.contains("app usage progress") ||
                         t.contains("duplicate") || t.contains("try different") ||
@@ -2325,6 +2351,10 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 ? offerTargetPackage 
                 : detectNewlyInstalledPackage(baselinePackages);
 
+            if (newPkg == null || newPkg.isEmpty()) {
+                newPkg = findMostRecentInstalledPackage();
+            }
+
             if (newPkg != null && !newPkg.isEmpty()) {
                 offerTargetPackage = newPkg;
                 Log.i(TAG, "⚡ App ready/checked (" + offerTargetPackage + ")! Tapping 'Verify Installation' on Super Offer page at " + verifyBtn.rect);
@@ -2335,23 +2365,46 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 lastTapTime = now + 2000;
                 return true;
             } else {
-                // If on install step but no app is installed yet for this offer session:
-                // Tap Go Back immediately to return to the Start Offer screen and play a fresh ad
-                NodeItem backBtn = (goBackBtn != null) ? goBackBtn : restartOfferBtn;
-                if (backBtn != null) {
-                    Log.w(TAG, "⚠️ No app installed for this offer! Tapping " + backBtn.text + " to retry and play offer ad...");
-                    currentStatus = "Retrying Offer Ad...";
-                    tapNode(backBtn);
-                    offerState = OFFER_STATE_IDLE;
-                    lastTapTime = now + 2000;
+                // Check if there is an Install or Download button to open Play Store
+                NodeItem installBtn = null;
+                for (NodeItem item : allNodes) {
+                    if (isForbiddenElement(item)) continue;
+                    String t = item.text.trim().toLowerCase();
+                    String d = item.contentDesc.trim().toLowerCase();
+                    if (t.equals("install") || t.equals("install now") || t.equals("download") || 
+                        d.equals("install") || d.equals("download") || t.contains("install the app")) {
+                        installBtn = item;
+                        break;
+                    }
+                }
+                if (installBtn != null && (now - lastTapTime > 3000)) {
+                    Log.i(TAG, "Tapping Install button to open Play Store for Super Offer at " + installBtn.rect);
+                    tapNode(installBtn);
+                    offerState = OFFER_STATE_PLAYSTORE;
+                    offerStateStartTime = now;
+                    lastTapTime = now + 2500;
                     return true;
-                } else {
-                    Log.w(TAG, "⚠️ No app installed for this offer! Pressing Back to retry ad...");
-                    performGlobalAction(GLOBAL_ACTION_BACK);
+                }
+
+                // If no app installed yet:
+                // Wait at least 35s for the app to be installed from Play Store before giving up and retrying
+                if (offerStateStartTime > 0 && (now - offerStateStartTime > 35000)) {
+                    NodeItem backBtn = (goBackBtn != null) ? goBackBtn : restartOfferBtn;
+                    if (backBtn != null) {
+                        Log.w(TAG, "⚠️ No app installed after 35s! Tapping " + backBtn.text + " to retry and play offer ad...");
+                        currentStatus = "Retrying Offer Ad...";
+                        tapNode(backBtn);
+                    } else {
+                        Log.w(TAG, "⚠️ No app installed after 35s! Pressing Back to retry ad...");
+                        performGlobalAction(GLOBAL_ACTION_BACK);
+                    }
                     offerState = OFFER_STATE_IDLE;
                     lastTapTime = now + 2000;
                     return true;
                 }
+
+                currentStatus = "Waiting for app install...";
+                return true;
             }
         }
 
