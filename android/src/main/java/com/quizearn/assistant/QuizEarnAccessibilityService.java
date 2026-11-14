@@ -2035,6 +2035,25 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         boolean isPlayStoreActiveInstall = false;
         String activeStatusText = "";
 
+        // 1. First, find Y cutoff for "Sponsored" or "Suggested for you" section dividers
+        int suggestionDividerY = Integer.MAX_VALUE;
+        for (NodeItem item : allNodes) {
+            String t = item.text.trim().toLowerCase();
+            String d = item.contentDesc.trim().toLowerCase();
+            if (t.contains("suggested for you") || d.contains("suggested for you") ||
+                t.contains("sponsored") || d.contains("sponsored") ||
+                t.contains("similar apps") || d.contains("similar apps") ||
+                t.contains("related to this app") || d.contains("related to this app") ||
+                t.contains("recommended for you") || d.contains("recommended for you") ||
+                t.contains("more apps like this") || d.contains("more apps like this")) {
+                if (item.rect.centerY() < suggestionDividerY) {
+                    suggestionDividerY = item.rect.centerY();
+                }
+            }
+        }
+        int heroCutoffY = Math.min((int)(screenH * 0.45), suggestionDividerY);
+        boolean isTargetAppAlreadyInstalled = false;
+
         for (NodeItem item : allNodes) {
             String t = item.text.trim().toLowerCase();
             String d = item.contentDesc.trim().toLowerCase();
@@ -2057,8 +2076,13 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 activeStatusText = !t.isEmpty() ? item.text.trim() : item.contentDesc.trim();
             }
 
-            // In top 65% of screen (main app hero section, ignoring suggested/sponsored apps)
-            if (item.rect.centerY() < (int)(screenH * 0.65)) {
+            // ONLY look for target app action buttons within the main hero section (STRICTLY ABOVE suggestions)
+            if (item.rect.centerY() < heroCutoffY) {
+                // Check if target app explicitly shows "Installed" label
+                if (t.equals("installed") || d.equals("installed")) {
+                    isTargetAppAlreadyInstalled = true;
+                }
+
                 // Check for Open, Play, or Uninstall (Genuine wide action buttons only)
                 if (item.rect.width() >= 140) {
                     if (t.equals("open") || d.equals("open") ||
@@ -2068,7 +2092,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     }
                 }
 
-                // Check for Install button (e.g. "Install", "Install (15 MB)")
+                // Check for Install button of the TARGET app (Never suggested apps)
                 if (t.equals("install") || d.equals("install") || 
                     t.startsWith("install ") || d.startsWith("install ") ||
                     (t.contains("install") && t.length() <= 20)) {
@@ -2100,15 +2124,17 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             return;
         }
 
-        // Case 2: App is ALREADY installed before we ever tapped Install (Duplicate app)
-        if (openButton != null && installButton == null && offerState == OFFER_STATE_PLAYSTORE && (now - offerStateStartTime >= 3000)) {
-            Log.i(TAG, "⚠️ App in Play Store is ALREADY INSTALLED on this device! ('" + openButton.text + "' / '" + openButton.contentDesc + "' at " + openButton.rect + "). (User Rule: Skip & Restart Offer)");
+        // Case 2: Target app is ALREADY installed before we ever tapped Install (Duplicate app)
+        boolean isDuplicate = (isTargetAppAlreadyInstalled || (openButton != null && installButton == null));
+        if (isDuplicate && offerState == OFFER_STATE_PLAYSTORE && (now - offerStateStartTime >= 3000)) {
+            Log.i(TAG, "⚠️ Target App in Play Store is ALREADY INSTALLED on this device! ('" + 
+                (openButton != null ? openButton.text : "Installed label") + "' in hero section). (User Rule: Skip & Restart Offer)");
             currentStatus = "Duplicate App: Restarting Offer...";
             appIsDuplicate = true;
             offerState = OFFER_STATE_WAIT_AD_RETURN;
             offerStateStartTime = now;
 
-            // Close Play Store to return to ad
+            // Close Play Store to return to ad or Quiz app
             if (closeSheetButton != null) {
                 tapNode(closeSheetButton);
             } else {
