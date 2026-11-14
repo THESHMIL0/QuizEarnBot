@@ -91,6 +91,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     private long lastTapTime = 0;
     private long adStartTime = 0;
     private long lastProgressTime = 0;
+    private long lastOfferCheckTime = 0;
     private String lastSolvedTarget = "";
     private long lastSolveTime = 0;
     private int externalAppBackCount = 0;
@@ -140,6 +141,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         currentStatus = "Scanning...";
         Log.i(TAG, "startSolving called! instance = " + instance);
         if (instance != null) {
+            instance.lastOfferCheckTime = 0;
             instance.lastSolvedTarget = "";
             instance.lastSolveTime = 0;
             instance.lastProgressTime = System.currentTimeMillis();
@@ -261,6 +263,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         appIsDuplicate = false;
         Log.i(TAG, "stopSolving called.");
         if (instance != null) {
+            instance.lastOfferCheckTime = 0;
             instance.lastSolvedTarget = "";
             instance.lastSolveTime = 0;
             instance.collectGemScreenStartTime = 0;
@@ -628,6 +631,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     (t.contains("play store") && !t.contains("rate") && !t.contains("stars")) || t.contains("advertisement") ||
                     t.contains("reward will be") || t.contains("you can skip in") ||
                     t.contains("shop now") || t.contains("claim bonus") || t.contains("play now") ||
+                    t.contains("learn more") || t.contains("skip to google play") || d.contains("skip to google play") ||
                     t.contains("get it on") || t.equals("get") || t.equals("open"));
 
                 if (!isAd && (t.startsWith("ad ") || t.contains("seconds after") || 
@@ -913,12 +917,12 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 for (NodeItem item : allNodes) {
                     int cx = item.rect.centerX();
                     int cy = item.rect.centerY();
-                    // Header row: top 12% of screen, right 30% of screen
-                    if (cx > (int)(screenW * 0.70) && cy < (int)(screenH * 0.12)) {
-                        String cleaned = item.text.trim();
-                        if (cleaned.matches("^\\d{1,2}$")) {
+                    // Header row: top 12% of screen, right 35% of screen
+                    if (cx > (int)(screenW * 0.65) && cy < (int)(screenH * 0.12)) {
+                        String digits = item.text.replaceAll("[^0-9]", "").trim();
+                        if (digits.length() >= 1 && digits.length() <= 2) {
                             try {
-                                int val = Integer.parseInt(cleaned);
+                                int val = Integer.parseInt(digits);
                                 // The gem badge is always the rightmost element in the header (gifts are on the left)
                                 if (cx > maxCx && val >= 0 && val <= 99) {
                                     maxCx = cx;
@@ -933,7 +937,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             // Pattern D: "X Gems Collected!" card (e.g. "26 Gems Collected!")
             if (detectedGems < 0) {
                 Pattern gemsCollectedPattern = Pattern.compile("(\\d+)\\s*gems?\\s*collected", Pattern.CASE_INSENSITIVE);
-                for (NodeItem item : allNodes) {
+                for (int i = 0; i < allNodes.size(); i++) {
+                    NodeItem item = allNodes.get(i);
                     Matcher m = gemsCollectedPattern.matcher(item.text);
                     if (!m.find() && !item.contentDesc.isEmpty()) {
                         m = gemsCollectedPattern.matcher(item.contentDesc);
@@ -944,7 +949,26 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                             break;
                         } catch (Exception ignored) {}
                     }
+                    // Multi-node case: current node has "Gems Collected!", previous node has "26" / "💎 26"
+                    String t = item.text.trim().toLowerCase();
+                    if (t.contains("gems collected")) {
+                        if (i > 0) {
+                            NodeItem prev = allNodes.get(i - 1);
+                            String prevDigits = prev.text.replaceAll("[^0-9]", "").trim();
+                            if (prevDigits.length() >= 1 && prevDigits.length() <= 2) {
+                                try {
+                                    detectedGems = Integer.parseInt(prevDigits);
+                                    break;
+                                } catch (Exception ignored) {}
+                            }
+                        }
+                    }
                 }
+            }
+
+            // Milestone override: If Super Offer milestone elements ("Start Offer", "Gems Collected", "Guaranteed 1000") are visible, gems MUST be >= 25!
+            if (hasSuperOfferMilestone && detectedGems < 25) {
+                detectedGems = 25;
             }
 
             if (detectedGems >= 0) {
@@ -1016,12 +1040,32 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
             if (isHomeScreen) {
                 if (homeSuperOfferClaimBtn != null) {
-                    Log.i(TAG, "On Home Screen: Tapping Super Offer 'Claim >' button at " + homeSuperOfferClaimBtn.rect);
-                    tapNode(homeSuperOfferClaimBtn);
-                    lastTapTime = now + 2500;
-                    lastProgressTime = now;
-                    currentStatus = "Entering Super Offer / Quiz...";
-                    return;
+                    if (isSuperOfferEnabled) {
+                        Log.i(TAG, "On Home Screen: Auto-Offer ON -> Tapping Super Offer 'Claim >' button at " + homeSuperOfferClaimBtn.rect);
+                        tapNode(homeSuperOfferClaimBtn);
+                        lastTapTime = now + 2500;
+                        lastProgressTime = now;
+                        currentStatus = "Entering Super Offer / Quiz...";
+                        return;
+                    } else {
+                        // Auto-Offer is OFF: User requested 5s interval check
+                        long elapsedSinceCheck = now - lastOfferCheckTime;
+                        if (elapsedSinceCheck >= 5000) {
+                            Log.i(TAG, "⚡ 5s Offer Check interval reached: Tapping 'Claim >' to check Super Offer page...");
+                            tapNode(homeSuperOfferClaimBtn);
+                            lastOfferCheckTime = now;
+                            lastTapTime = now + 1500;
+                            lastProgressTime = now;
+                            currentStatus = "Checking 25-Gem Offer (5s)...";
+                            return;
+                        } else {
+                            // Waiting on Home Screen until 5s interval passes
+                            lastProgressTime = now;
+                            long remainingSec = Math.max(1, (5000 - elapsedSinceCheck) / 1000);
+                            currentStatus = "25💎 Hit (Auto-Offer OFF) - Checking in " + remainingSec + "s...";
+                            return;
+                        }
+                    }
                 } else {
                     for (NodeItem item : allNodes) {
                         String t = item.text.trim().toLowerCase();
@@ -1038,7 +1082,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
             // SUPER OFFER AUTOMATION: Automates the 25-Gems 1000 Coins Super Offer end-to-end
             if (!isAd && isQuizApp) {
-                if (isSuperOfferEnabled) {
+                if (isSuperOfferEnabled || offerState != OFFER_STATE_IDLE) {
                     if (isOfferScreen) {
                         if (isCollecting25thGem && finalAdCompleted) {
                             isCollecting25thGem = false;
@@ -1054,19 +1098,38 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                         }
                     }
                 } else {
-                    // Super Offer is DISABLED on this player instance (Player 2 / Player 3):
-                    // Safely pause on the 25 gems milestone page without downloading or installing any apps
-                    if (!hasActiveQuiz && !hasCollectGem && (is25GemsOnScreen || finalAdCompleted)) {
+                    // Super Offer is DISABLED on this player instance (Player 2 / Player 3 / Player 4):
+                    // When on the 25 gems milestone / Super Offer detail page:
+                    if (!hasActiveQuiz && !hasCollectGem && (is25GemsOnScreen || hasSuperOfferMilestone || isOfferScreen || finalAdCompleted)) {
                         isCollecting25thGem = false;
                         finalAdStarted = false;
-                        liveGems = 25;
-                        Log.i(TAG, "🎉 25 GEMS TARGET REACHED (Auto-Offer OFF for this player). Stopping bot on 25 Gems Page.");
-                        currentStatus = "25 GEMS HIT! (Auto-Offer Off)";
+                        liveGems = Math.max(liveGems, 25);
                         if (!hasAlerted25Gems) {
                             hasAlerted25Gems = true;
                             play25GemsMilestoneAlert();
                         }
-                        stopSolving();
+                        Log.i(TAG, "⚡ 25 Gems Page Reached (Auto-Offer OFF): Tapping Back to return to Home screen (will check every 5s)...");
+                        currentStatus = "Auto-Offer OFF: Back to Home (5s Check)...";
+
+                        // Find top-left back arrow if available
+                        NodeItem backBtn = null;
+                        for (NodeItem item : allNodes) {
+                            String t = item.text.trim();
+                            String d = item.contentDesc.trim().toLowerCase();
+                            String id = item.resId.trim().toLowerCase();
+                            if (t.equals("←") || t.equals("<") || d.contains("back") || d.contains("navigate up") || id.contains("back") || id.contains("btn_back")) {
+                                backBtn = item;
+                                break;
+                            }
+                        }
+                        if (backBtn != null) {
+                            tapNode(backBtn);
+                        } else {
+                            performGlobalAction(GLOBAL_ACTION_BACK);
+                        }
+                        lastOfferCheckTime = now;
+                        lastTapTime = now + 1500;
+                        lastProgressTime = now;
                         return;
                     }
                 }
@@ -1707,7 +1770,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
         int w = item.rect.width();
         int h = item.rect.height();
-        if (w < 8 || h < 8 || w > 550 || h > 250) {
+        if (w < 8 || h < 8 || w > 850 || h > 300) {
             return false;
         }
 
