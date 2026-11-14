@@ -92,6 +92,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     private long adStartTime = 0;
     private long lastProgressTime = 0;
     private long lastOfferCheckTime = 0;
+    private long playStoreOpenSeenTime = 0;
+    private int verifyAttempts = 0;
     private String lastSolvedTarget = "";
     private long lastSolveTime = 0;
     private int externalAppBackCount = 0;
@@ -142,6 +144,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         Log.i(TAG, "startSolving called! instance = " + instance);
         if (instance != null) {
             instance.lastOfferCheckTime = 0;
+            instance.playStoreOpenSeenTime = 0;
+            instance.verifyAttempts = 0;
             instance.lastSolvedTarget = "";
             instance.lastSolveTime = 0;
             instance.lastProgressTime = System.currentTimeMillis();
@@ -264,6 +268,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         Log.i(TAG, "stopSolving called.");
         if (instance != null) {
             instance.lastOfferCheckTime = 0;
+            instance.playStoreOpenSeenTime = 0;
+            instance.verifyAttempts = 0;
             instance.lastSolvedTarget = "";
             instance.lastSolveTime = 0;
             instance.collectGemScreenStartTime = 0;
@@ -1990,25 +1996,20 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         if (offerState == OFFER_STATE_AD_PLAYING) {
             offerState = OFFER_STATE_PLAYSTORE;
             offerStateStartTime = now;
+            playStoreOpenSeenTime = 0;
             Log.i(TAG, "Opened Google Play Store for Super Offer app!");
         }
 
-        currentStatus = "Play Store: Checking app...";
+        // Keep stall watchdog fed while in Play Store
+        lastProgressTime = now;
 
-        // Check if app has already finished installing (e.g. state was INSTALLING)
-        String newPkg = detectNewlyInstalledPackage(baselinePackages);
-        if (newPkg != null) {
-            offerTargetPackage = newPkg;
-            Log.i(TAG, "Detected newly installed package from Play Store: " + newPkg);
-            finishInstallationAndReturnToQuiz(now);
-            return;
-        }
-
-        // Search for action buttons in Play Store
+        // Search for action buttons and active installation status in Play Store
         int screenH = getResources().getDisplayMetrics().heightPixels;
         NodeItem installButton = null;
         NodeItem openButton = null;
         NodeItem closeSheetButton = null;
+        boolean isPlayStoreActiveInstall = false;
+        String activeStatusText = "";
 
         for (NodeItem item : allNodes) {
             String t = item.text.trim().toLowerCase();
@@ -2018,10 +2019,24 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 closeSheetButton = item;
             }
 
+            // Detect if Play Store is actively downloading, verifying with Play Protect, or installing
+            if (t.contains("installing") || d.contains("installing") ||
+                t.contains("verifying") || d.contains("verifying") ||
+                t.contains("downloading") || d.contains("downloading") ||
+                t.contains("pending") || d.contains("pending") ||
+                t.contains("waiting for download") || d.contains("waiting for download") ||
+                t.contains("play protect") || d.contains("play protect") ||
+                (t.contains("%") && !t.contains("off") && !t.contains("discount")) ||
+                (d.contains("%") && !d.contains("off") && !d.contains("discount"))) {
+                isPlayStoreActiveInstall = true;
+                activeStatusText = !t.isEmpty() ? item.text.trim() : item.contentDesc.trim();
+            }
+
             // In top 65% of screen (main app hero section, ignoring suggested/sponsored apps)
             if (item.rect.centerY() < (int)(screenH * 0.65)) {
-                // Check for Open or Uninstall (app already installed on this phone)
-                if (t.equals("open") || d.equals("open") || t.equals("uninstall") || d.equals("uninstall")) {
+                // Check for Open, Play, or Uninstall
+                if (t.equals("open") || d.equals("open") || t.equals("play") || d.equals("play") ||
+                    t.equals("uninstall") || d.equals("uninstall")) {
                     openButton = item;
                 }
 
@@ -2032,8 +2047,25 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             }
         }
 
-        // Case 1: App is ALREADY installed on phone
-        if (openButton != null && installButton == null) {
+        // Update target package detection if already completed
+        String newPkg = detectNewlyInstalledPackage(baselinePackages);
+        if (newPkg != null && !newPkg.isEmpty()) {
+            offerTargetPackage = newPkg;
+        }
+
+        // Case 1: Actively Downloading / Verifying / Installing in Play Store
+        // USER FEEDBACK RULE: NEVER leave Play Store while it is verifying or installing!
+        if (isPlayStoreActiveInstall) {
+            offerState = OFFER_STATE_INSTALLING;
+            playStoreOpenSeenTime = 0; // Reset stabilization timer until verification completes
+            long installElapsed = (now - offerStateStartTime) / 1000;
+            currentStatus = "Play Store: " + (activeStatusText.isEmpty() ? "Installing..." : activeStatusText) + " (" + installElapsed + "s)";
+            Log.i(TAG, "Play Store busy: " + currentStatus + " - Waiting for verification to complete...");
+            return;
+        }
+
+        // Case 2: App is ALREADY installed before we ever tapped Install (Duplicate app)
+        if (openButton != null && installButton == null && offerState != OFFER_STATE_INSTALLING) {
             Log.i(TAG, "⚠️ App in Play Store is ALREADY INSTALLED on this device! (User Rule: Skip & Restart Offer)");
             currentStatus = "Duplicate App: Restarting Offer...";
             appIsDuplicate = true;
@@ -2050,28 +2082,46 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             return;
         }
 
-        // Case 2: App is NOT yet installed -> Tap "Install"
+        // Case 3: App is NOT yet installed -> Tap "Install"
         if (installButton != null && offerState != OFFER_STATE_INSTALLING) {
             Log.i(TAG, "⚡ Tapping 'Install' in Play Store for Super Offer app...");
             currentStatus = "Installing App...";
             tapNode(installButton);
             offerState = OFFER_STATE_INSTALLING;
             offerStateStartTime = now;
+            playStoreOpenSeenTime = 0;
             lastTapTime = now + 2000;
             return;
         }
 
-        // Case 3: We are in INSTALLING state, waiting for download
+        // Case 4: We are in INSTALLING state, waiting for installation to fully stabilize & show "Open"
         if (offerState == OFFER_STATE_INSTALLING) {
             long installElapsed = (now - offerStateStartTime) / 1000;
-            currentStatus = "Installing (" + installElapsed + "s)...";
 
-            // If "Open" button appears, installation finished!
+            // If "Open" button is visible and NO active installing/verifying text remains:
             if (openButton != null) {
-                Log.i(TAG, "Play Store shows 'Open' button! App installed successfully.");
+                if (playStoreOpenSeenTime == 0) {
+                    playStoreOpenSeenTime = now;
+                    Log.i(TAG, "Play Store shows 'Open' button! Waiting 2.5s for OS and Quiz app to fully register package...");
+                    currentStatus = "Finalizing Install (2s)...";
+                    return;
+                }
+
+                long openElapsed = now - playStoreOpenSeenTime;
+                if (openElapsed < 2500) {
+                    long remaining = Math.max(1, (2500 - openElapsed) / 1000);
+                    currentStatus = "Finalizing Install (" + remaining + "s)...";
+                    return;
+                }
+
+                // 2.5s stabilization complete: OS has fully processed the new package!
+                Log.i(TAG, "✅ Play Store installation 100% verified & stabilized! Returning to Quiz app...");
+                playStoreOpenSeenTime = 0;
                 finishInstallationAndReturnToQuiz(now);
                 return;
             }
+
+            currentStatus = "Installing (" + installElapsed + "s)...";
 
             // Timeout after 180s (3 minutes) if download fails or hangs
             if (installElapsed > 180) {
@@ -2410,9 +2460,27 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
         // Case A: App Not Detected or Duplicate app confirmed failed (User Rule: Tap Restart / Try Different App / Go Back)
         if (isAppNotDetected || appIsDuplicate) {
+            // Check if target app IS actually installed in OS
+            boolean isInstalledInOs = false;
+            if (offerTargetPackage != null && !offerTargetPackage.isEmpty()) {
+                try {
+                    isInstalledInOs = (getPackageManager().getLaunchIntentForPackage(offerTargetPackage) != null);
+                } catch (Exception ignored) {}
+            }
+            // If the package is actually installed and we have a verify button, retry up to 3 times with 3.5s delay
+            if (isInstalledInOs && verifyBtn != null && verifyAttempts < 3 && !appIsDuplicate) {
+                verifyAttempts++;
+                Log.w(TAG, "⚠️ Quiz & Earn says 'App not detected', but package " + offerTargetPackage + " IS installed in OS! Retrying verification (" + verifyAttempts + "/3) in 3.5s...");
+                currentStatus = "Retrying Verification (" + verifyAttempts + "/3)...";
+                lastTapTime = now + 3500;
+                lastProgressTime = now;
+                tapNode(verifyBtn);
+                return true;
+            }
+
             NodeItem retryBtn = (restartOfferBtn != null) ? restartOfferBtn : goBackBtn;
             if (retryBtn != null) {
-                Log.w(TAG, "⚠️ Duplicate App / App Not Detected on Super Offer screen! Tapping " + retryBtn.text + " to retry with new app...");
+                Log.w(TAG, "⚠️ Duplicate App / Verification failed permanently! Tapping " + retryBtn.text + " to retry with new app...");
                 currentStatus = "Restarting Offer...";
                 if (offerTargetPackage != null && !offerTargetPackage.isEmpty()) {
                     uninstallApp(offerTargetPackage);
@@ -2421,6 +2489,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 tapNode(retryBtn);
                 offerState = OFFER_STATE_IDLE;
                 appIsDuplicate = false;
+                verifyAttempts = 0;
                 lastTapTime = now + 1500;
                 return true;
             }
@@ -2438,12 +2507,19 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
             if (newPkg != null && !newPkg.isEmpty()) {
                 offerTargetPackage = newPkg;
+
+                // Allow 2 seconds after returning from Play Store before tapping Verify
+                if (offerState == OFFER_STATE_VERIFYING && (now - offerStateStartTime < 2000)) {
+                    currentStatus = "Verifying App (" + ((now - offerStateStartTime) / 1000) + "s)...";
+                    return true;
+                }
+
                 Log.i(TAG, "⚡ App ready/checked (" + offerTargetPackage + ")! Tapping 'Verify Installation' on Super Offer page at " + verifyBtn.rect);
                 currentStatus = "Verifying Offer...";
                 tapNode(verifyBtn);
                 offerState = OFFER_STATE_VERIFYING;
                 offerStateStartTime = now;
-                lastTapTime = now + 2000;
+                lastTapTime = now + 2500;
                 return true;
             } else {
                 // Check if there is an Install or Download button to open Play Store
