@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -127,6 +127,7 @@ public class QuizEarnApp : Form
     private Label lblStatus;
     private Label lblPort;
     private Button btnToggle;
+    private Button btnWatchdog;
     private Button btnRestartApp;
     private Button btnResetAdId;
     private Button btnSendLastSS;
@@ -395,6 +396,21 @@ public class QuizEarnApp : Form
         lblTitle.Location = new Point(56, 14);
         lblTitle.AutoSize = true;
         pnlHomeView.Controls.Add(lblTitle);
+
+        // Dedicated Watchdog Toggle Button on Home View
+        btnWatchdog = new Button();
+        btnWatchdog.Text = autoRecoverBlueStacks ? "[ 🛡️ WATCHDOG: ON ]" : "[ 🛡️ WATCHDOG: OFF ]";
+        btnWatchdog.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
+        btnWatchdog.ForeColor = autoRecoverBlueStacks ? Color.FromArgb(76, 175, 80) : Color.FromArgb(140, 140, 145);
+        btnWatchdog.BackColor = autoRecoverBlueStacks ? Color.FromArgb(10, 24, 14) : Color.FromArgb(12, 12, 14);
+        btnWatchdog.FlatStyle = FlatStyle.Flat;
+        btnWatchdog.FlatAppearance.BorderColor = autoRecoverBlueStacks ? Color.FromArgb(46, 125, 50) : Color.FromArgb(28, 28, 32);
+        btnWatchdog.FlatAppearance.BorderSize = 1;
+        btnWatchdog.Location = new Point(335, 12);
+        btnWatchdog.Size = new Size(190, 32);
+        btnWatchdog.Cursor = Cursors.Hand;
+        btnWatchdog.Click += new EventHandler(BtnWatchdog_Click);
+        pnlHomeView.Controls.Add(btnWatchdog);
 
         // Internal Status & Port instances (Hidden from UI per user request)
         lblStatus = new Label();
@@ -1070,6 +1086,7 @@ public class QuizEarnApp : Form
         chkSettingsAutoRecoverBst.Checked = autoRecoverBlueStacks;
         CreateToggleRow(pnlPrefsCard, "Auto-Watchdog: Restore BlueStacks + APK Bot on crash", chkSettingsAutoRecoverBst, 162, () => {
             autoRecoverBlueStacks = chkSettingsAutoRecoverBst.Checked;
+            UpdateWatchdogButtonState();
             SaveStatsToFile();
         });
 
@@ -1382,6 +1399,42 @@ public class QuizEarnApp : Form
             }
             catch {}
             Thread.Sleep(12000);
+        }
+    }
+
+    private void BtnWatchdog_Click(object sender, EventArgs e)
+    {
+        autoRecoverBlueStacks = !autoRecoverBlueStacks;
+        UpdateWatchdogButtonState();
+        if (chkSettingsAutoRecoverBst != null)
+        {
+            chkSettingsAutoRecoverBst.Checked = autoRecoverBlueStacks;
+        }
+        SaveStatsToFile();
+        Log(string.Format("[🛡️ Watchdog] APK Bot Watchdog {0} by user.", autoRecoverBlueStacks ? "ACTIVATED" : "PAUSED"));
+    }
+
+    private void UpdateWatchdogButtonState()
+    {
+        if (btnWatchdog == null) return;
+        if (this.InvokeRequired)
+        {
+            SafeBeginInvoke(new Action(UpdateWatchdogButtonState));
+            return;
+        }
+        if (autoRecoverBlueStacks)
+        {
+            btnWatchdog.Text = "[ 🛡️ WATCHDOG: ON ]";
+            btnWatchdog.ForeColor = Color.FromArgb(76, 175, 80);
+            btnWatchdog.BackColor = Color.FromArgb(10, 24, 14);
+            btnWatchdog.FlatAppearance.BorderColor = Color.FromArgb(46, 125, 50);
+        }
+        else
+        {
+            btnWatchdog.Text = "[ 🛡️ WATCHDOG: OFF ]";
+            btnWatchdog.ForeColor = Color.FromArgb(140, 140, 145);
+            btnWatchdog.BackColor = Color.FromArgb(12, 12, 14);
+            btnWatchdog.FlatAppearance.BorderColor = Color.FromArgb(28, 28, 32);
         }
     }
 
