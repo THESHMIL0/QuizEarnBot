@@ -2,6 +2,7 @@ package com.quizearn.assistant;
 
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.GestureDescription;
+import android.app.ActivityManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -171,12 +172,11 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         if (ctx == null) return "com.quiz.earn.money.game";
         try {
             PackageManager pm = ctx.getPackageManager();
-            String[] candidates = new String[]{"com.quiz.earn.money.game", "com.rayole.cashmafia2"};
-            for (String p : candidates) {
-                try {
-                    pm.getPackageInfo(p, 0);
-                    return p;
-                } catch (PackageManager.NameNotFoundException ignored) {}
+            List<PackageInfo> installed = pm.getInstalledPackages(0);
+            for (PackageInfo pi : installed) {
+                if (pi.packageName != null && isQuizAppPackage(pi.packageName)) {
+                    return pi.packageName;
+                }
             }
         } catch (Exception ignored) {}
         return "com.quiz.earn.money.game";
@@ -192,6 +192,15 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         if (ctx != null) {
             try {
                 final String targetPkg = getQuizAppPackage(ctx);
+
+                // 1. Kill background processes for clean memory reset
+                try {
+                    ActivityManager am = (ActivityManager) ctx.getSystemService(Context.ACTIVITY_SERVICE);
+                    if (am != null) {
+                        am.killBackgroundProcesses(targetPkg);
+                    }
+                } catch (Throwable ignored) {}
+
                 // Safe non-blocking force stop on background thread for rooted devices
                 new Thread(() -> {
                     try {
@@ -206,19 +215,19 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     } catch (Throwable ignored) {}
                 }
 
-                // Relaunch with FLAG_ACTIVITY_CLEAR_TASK to ensure the activity is forcefully recreated
+                // Relaunch with FLAG_ACTIVITY_CLEAR_TASK & FLAG_ACTIVITY_CLEAR_TOP to ensure activity is forcefully recreated
                 new Handler(Looper.getMainLooper()).postDelayed(() -> {
                     try {
                         Intent intent = ctx.getPackageManager().getLaunchIntentForPackage(targetPkg);
                         if (intent != null) {
-                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
                             ctx.startActivity(intent);
                             Log.i(TAG, "Quiz & Earn (" + targetPkg + ") relaunched cleanly with CLEAR_TASK.");
                         }
                     } catch (Throwable ex) {
                         Log.e(TAG, "Failed to start activity in restartQuizApp", ex);
                     }
-                }, 300);
+                }, 500);
 
                 if (instance != null) {
                     instance.lastSolvedTarget = "";
@@ -365,13 +374,15 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                             CharSequence wpSeq = winRoot.getPackageName();
                             if (wpSeq != null) {
                                 String wp = wpSeq.toString();
+                                // NEVER inspect or collect nodes from our own assistant overlay or system UI
+                                if (wp.equals("com.quizearn.assistant") || wp.equals("com.android.systemui")) {
+                                    continue;
+                                }
                                 if (isQuizAppPackage(wp)) {
                                     foundQuizInWindows = true;
                                 }
                                 if (pkg.isEmpty() && (win.isActive() || win.isFocused() || win.getType() == AccessibilityWindowInfo.TYPE_APPLICATION)) {
-                                    if (!wp.equals("com.quizearn.assistant") && !wp.equals("com.android.systemui")) {
-                                        pkg = wp;
-                                    }
+                                    pkg = wp;
                                 }
                             }
                             if (root == null || !winRoot.equals(root)) {
@@ -531,59 +542,66 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 externalAppBackCount = 0;
             }
 
-            // Pre-scan for active quiz solving elements and collect gem buttons
-            boolean hasCollectGem = false;
-            for (NodeItem item : allNodes) {
-                if (isForbiddenElement(item)) continue;
-                String t = item.text.trim().toLowerCase();
-                String d = item.contentDesc.trim().toLowerCase();
-                String combined = (t + " " + d).trim();
-                if (combined.contains("collect gem") || combined.contains("collect reward")) {
-                    hasCollectGem = true;
-                    break;
-                }
-            }
-
-            // Check if Super Offer milestone page is visible (Start Offer, 25 gems, instructions, etc.)
-            boolean hasSuperOfferMilestone = false;
-            for (NodeItem item : allNodes) {
-                String t = item.text.trim().toLowerCase();
-                String d = item.contentDesc.trim().toLowerCase();
-                if (t.contains("start offer") || d.contains("start offer") ||
-                    t.contains("gems collected") || d.contains("gems collected") ||
-                    t.contains("guaranteed 1000") || d.contains("guaranteed 1000") ||
-                    t.contains("app usage progress") || d.contains("app usage progress") ||
-                    t.contains("my super offers") || d.contains("my super offers") ||
-                    t.contains("claim 1000 coins") || d.contains("claim 1000 coins") ||
-                    t.contains("watch a video ad") || d.contains("watch a video ad") ||
-                    t.contains("install the app") || d.contains("install the app") ||
-                    t.contains("restart offer") || d.contains("restart offer")) {
-                    hasSuperOfferMilestone = true;
-                    break;
-                }
-            }
-
-            // Check if active quiz elements exist on screen (question or answer options)
-            // (Cannot be an active quiz if Super Offer milestone page is visible)
+            // 1. Check if active quiz elements exist on screen (question card or answer options)
             boolean hasActiveQuiz = false;
-            if (!hasSuperOfferMilestone) {
-                for (NodeItem item : allNodes) {
-                    int cy = item.rect.centerY();
-                    // Question Card Zone (math equation or captcha number)
-                    if (cy >= (int)(screenH * 0.10) && cy <= (int)(screenH * 0.42)) {
-                        String raw = item.text.trim();
-                        if (mathPattern.matcher(raw).find() || numPattern.matcher(cleanNumText(raw)).matches()) {
-                            hasActiveQuiz = true;
-                            break;
-                        }
+            for (NodeItem item : allNodes) {
+                String t = item.text.trim().toLowerCase();
+                String d = item.contentDesc.trim().toLowerCase();
+                if (t.contains("select the correct number") || d.contains("select the correct number") ||
+                    t.contains("attempts left") || d.contains("attempts left")) {
+                    hasActiveQuiz = true;
+                    break;
+                }
+                int cy = item.rect.centerY();
+                // Question Card Zone (math equation or captcha number)
+                if (cy >= (int)(screenH * 0.10) && cy <= (int)(screenH * 0.42)) {
+                    String raw = item.text.trim();
+                    if (mathPattern.matcher(raw).find() || numPattern.matcher(cleanNumText(raw)).matches()) {
+                        hasActiveQuiz = true;
+                        break;
                     }
-                    // Options Grid Zone: answer button checking
-                    if (cy >= (int)(screenH * 0.26) && cy <= (int)(screenH * 0.65)) {
-                        String raw = cleanNumText(item.text.trim());
-                        if (numPattern.matcher(raw).matches()) {
-                            hasActiveQuiz = true;
-                            break;
-                        }
+                }
+                // Options Grid Zone: answer button checking
+                if (cy >= (int)(screenH * 0.26) && cy <= (int)(screenH * 0.65)) {
+                    String raw = cleanNumText(item.text.trim());
+                    if (numPattern.matcher(raw).matches()) {
+                        hasActiveQuiz = true;
+                        break;
+                    }
+                }
+            }
+
+            // 2. Pre-scan for "Collect Gem" / "Collect Reward" button (gem reward collection screen)
+            boolean hasCollectGem = false;
+            if (!hasActiveQuiz) {
+                for (NodeItem item : allNodes) {
+                    if (isForbiddenElement(item)) continue;
+                    String t = item.text.trim().toLowerCase();
+                    String d = item.contentDesc.trim().toLowerCase();
+                    String combined = (t + " " + d).trim();
+                    if (combined.contains("collect gem") || combined.contains("collect reward")) {
+                        hasCollectGem = true;
+                        break;
+                    }
+                }
+            }
+
+            // 3. Check if Super Offer milestone page is visible (Start Offer, 25 gems collected, instructions, etc.)
+            // CRITICAL: CANNOT be milestone page if active quiz or collect gem screen is present!
+            boolean hasSuperOfferMilestone = false;
+            if (!hasActiveQuiz && !hasCollectGem) {
+                for (NodeItem item : allNodes) {
+                    String t = item.text.trim().toLowerCase();
+                    String d = item.contentDesc.trim().toLowerCase();
+                    if (t.contains("start offer") || d.contains("start offer") ||
+                        t.contains("gems collected") || d.contains("gems collected") ||
+                        t.contains("app usage progress") || d.contains("app usage progress") ||
+                        t.contains("watch a video ad") || d.contains("watch a video ad") ||
+                        t.contains("install the app") || d.contains("install the app") ||
+                        t.contains("verify installation") || d.contains("verify installation") ||
+                        t.contains("restart offer") || d.contains("restart offer")) {
+                        hasSuperOfferMilestone = true;
+                        break;
                     }
                 }
             }
@@ -654,8 +672,9 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
-            // Game screen override: If actual quiz questions, Collect Gem, Super Offer milestone page, OR Home Screen are visible, this is NOT an ad!
-            if (hasActiveQuiz || hasCollectGem || hasSuperOfferMilestone || hasHomeScreen) {
+            // Game screen override: If actual quiz questions, Collect Gem, OR Home Screen are visible, this is NOT an ad!
+            // Note: Super Offer milestone page is only an override if NOT playing an offer ad!
+            if (hasActiveQuiz || hasCollectGem || hasHomeScreen || (hasSuperOfferMilestone && offerState != OFFER_STATE_AD_PLAYING)) {
                 isAd = false;
                 hasAdCountdown = false;
                 adStartTime = 0;
@@ -738,6 +757,9 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                         if (t.equals("install") || t.equals("install now") || d.equals("install") ||
                             t.equals("open") || d.equals("open") || t.equals("get") || d.equals("get") ||
                             t.contains("download") || d.contains("download") ||
+                            t.contains("skip to google play") || d.contains("skip to google play") ||
+                            t.contains("learn more") || d.contains("learn more") ||
+                            t.contains("skip to play store") || d.contains("skip to play store") ||
                             id.contains("cta") || id.contains("action_button") || id.contains("install_button")) {
 
                             Log.i(TAG, "⚡ Super Offer Ad CTA detected: '" + t + "' / '" + d + "' at " + item.rect + ". Tapping to open Google Play Store...");
@@ -812,8 +834,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     int step = (int)((adElapsed - minAdElapsed) / 2);
                     if (step % 4 == 0) {
                         // Center of top-right Skip pill button (e.g. ">> Skip to Google Play")
-                        int targetX = Math.max(50, screenW - 120);
-                        int targetY = 65;
+                        int targetX = Math.max(50, screenW - 140);
+                        int targetY = Math.max(75, (int)(screenH * 0.055));
                         Log.i(TAG, "Ad running (" + adElapsed + "s): Tapping top-right Skip pill button at (" + targetX + ", " + targetY + ")...");
                         tapCoordinates(targetX, targetY);
                         lastTapTime = now;
@@ -972,8 +994,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
-            // Milestone override: If Super Offer milestone elements ("Start Offer", "Gems Collected", "Guaranteed 1000") are visible, gems MUST be >= 25!
-            if (hasSuperOfferMilestone && detectedGems < 25) {
+            // Milestone override: ONLY if NOT on active quiz and NOT on collect gem screen
+            if (!hasActiveQuiz && !hasCollectGem && hasSuperOfferMilestone && detectedGems < 25) {
                 detectedGems = 25;
             }
 
@@ -981,20 +1003,23 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 liveGems = detectedGems;
             }
 
-            boolean is25GemsOnScreen = (detectedGems >= 25);
-            if (!hasActiveQuiz) {
-                for (NodeItem item : allNodes) {
-                    String t = item.text.toLowerCase().trim();
-                    String d = item.contentDesc.toLowerCase().trim();
-                    if (t.contains("25/25") || d.contains("25/25") || t.contains("25 / 25") || d.contains("25 / 25") ||
-                        t.contains("gems collected") || d.contains("gems collected") ||
-                        t.contains("start offer") || d.contains("start offer") ||
-                        t.contains("claim 1000 coins") || d.contains("claim 1000 coins") ||
-                        t.contains("collect 1000 coins") || d.contains("collect 1000 coins") ||
-                        t.contains("my super offers") || d.contains("my super offers") ||
-                        t.contains("super offer unlocked") || t.contains("super task unlocked")) {
-                        is25GemsOnScreen = true;
-                        break;
+            boolean is25GemsOnScreen = false;
+            if (!hasActiveQuiz && !hasCollectGem) {
+                if (detectedGems >= 25) {
+                    is25GemsOnScreen = true;
+                } else {
+                    for (NodeItem item : allNodes) {
+                        String t = item.text.toLowerCase().trim();
+                        String d = item.contentDesc.toLowerCase().trim();
+                        if (t.contains("25/25") || d.contains("25/25") || t.contains("25 / 25") || d.contains("25 / 25") ||
+                            t.contains("gems collected") || d.contains("gems collected") ||
+                            t.contains("start offer") || d.contains("start offer") ||
+                            t.contains("claim 1000 coins") || d.contains("claim 1000 coins") ||
+                            t.contains("collect 1000 coins") || d.contains("collect 1000 coins") ||
+                            t.contains("super offer unlocked") || t.contains("super task unlocked")) {
+                            is25GemsOnScreen = true;
+                            break;
+                        }
                     }
                 }
             } else {
@@ -1004,15 +1029,13 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             // Check if final ad for 25th gem has finished and returned to Quiz app
             boolean finalAdCompleted = (isCollecting25thGem && finalAdStarted && !isAd && (now - lastTapTime > 1500));
 
-            boolean isOfferScreen = is25GemsOnScreen || hasSuperOfferMilestone || (offerState != OFFER_STATE_IDLE) || finalAdCompleted;
-            if (!isOfferScreen) {
+            boolean isOfferScreen = (!hasActiveQuiz && !hasCollectGem) && (is25GemsOnScreen || hasSuperOfferMilestone || (offerState != OFFER_STATE_IDLE) || finalAdCompleted);
+            if (!hasActiveQuiz && !hasCollectGem && !isOfferScreen) {
                 for (NodeItem item : allNodes) {
                     String t = item.text.toLowerCase().trim();
                     String d = item.contentDesc.toLowerCase().trim();
-                    if (t.contains("super offer") || d.contains("super offer") ||
-                        t.contains("start offer") || d.contains("start offer") ||
+                    if (t.contains("start offer") || d.contains("start offer") ||
                         t.contains("gems collected") || d.contains("gems collected") ||
-                        t.contains("guaranteed 1000") || d.contains("guaranteed 1000") ||
                         t.contains("watch a video ad") || d.contains("watch a video ad") ||
                         t.contains("install the app") || d.contains("install the app") ||
                         t.contains("verify installation") || d.contains("verify installation") ||
@@ -1142,7 +1165,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             }
 
             // 4. Check for "Collect Gem", "Claim", "Verify Usage", or Reward collection buttons (Normal Solving Loop)
-            if (!is25GemsOnScreen && offerState == OFFER_STATE_IDLE) {
+            if (hasCollectGem || (!is25GemsOnScreen && offerState == OFFER_STATE_IDLE)) {
                 // Check if we are on the Quiz Complete / Gem Collection Screen (Waiting for Ad)
                 boolean isQuizCompleteCollectGemScreen = false;
                 boolean hasAdLoadErrorToast = false;
@@ -1524,8 +1547,9 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         CharSequence pkgSeq = node.getPackageName();
         String nodePkg = (pkgSeq != null) ? pkgSeq.toString() : "";
 
-        // STRICT NOTIFICATION & LAUNCHER FILTER (Allow all ad SDKs, webviews, and app activities)
-        if (nodePkg.equals("com.android.systemui") || 
+        // STRICT NOTIFICATION, LAUNCHER, & ASSISTANT FLOATING OVERLAY FILTER
+        if (nodePkg.equals("com.quizearn.assistant") ||
+            nodePkg.equals("com.android.systemui") || 
             nodePkg.equals("com.android.launcher") || 
             nodePkg.contains("launcher") || 
             nodePkg.contains("systemui")) {
@@ -2026,6 +2050,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 t.contains("pending") || d.contains("pending") ||
                 t.contains("waiting for download") || d.contains("waiting for download") ||
                 t.contains("play protect") || d.contains("play protect") ||
+                t.equals("cancel") || d.equals("cancel") ||
                 (t.contains("%") && !t.contains("off") && !t.contains("discount")) ||
                 (d.contains("%") && !d.contains("off") && !d.contains("discount"))) {
                 isPlayStoreActiveInstall = true;
@@ -2034,14 +2059,19 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
             // In top 65% of screen (main app hero section, ignoring suggested/sponsored apps)
             if (item.rect.centerY() < (int)(screenH * 0.65)) {
-                // Check for Open, Play, or Uninstall
-                if (t.equals("open") || d.equals("open") || t.equals("play") || d.equals("play") ||
-                    t.equals("uninstall") || d.equals("uninstall")) {
-                    openButton = item;
+                // Check for Open, Play, or Uninstall (Genuine wide action buttons only)
+                if (item.rect.width() >= 140) {
+                    if (t.equals("open") || d.equals("open") ||
+                        ((t.equals("play") || d.equals("play")) && !d.contains("video") && !d.contains("trailer") && !d.contains("preview")) ||
+                        t.equals("uninstall") || d.equals("uninstall")) {
+                        openButton = item;
+                    }
                 }
 
-                // Check for Install button
-                if (t.equals("install") || d.equals("install")) {
+                // Check for Install button (e.g. "Install", "Install (15 MB)")
+                if (t.equals("install") || d.equals("install") || 
+                    t.startsWith("install ") || d.startsWith("install ") ||
+                    (t.contains("install") && t.length() <= 20)) {
                     installButton = item;
                 }
             }
@@ -2051,6 +2081,12 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         String newPkg = detectNewlyInstalledPackage(baselinePackages);
         if (newPkg != null && !newPkg.isEmpty()) {
             offerTargetPackage = newPkg;
+        }
+
+        // Give Play Store at least 3 seconds to fetch and render the app listing before deciding on duplicate app
+        if (offerState == OFFER_STATE_PLAYSTORE && (now - offerStateStartTime < 3000)) {
+            currentStatus = "Play Store: Loading listing (" + ((now - offerStateStartTime) / 1000) + "s)...";
+            return;
         }
 
         // Case 1: Actively Downloading / Verifying / Installing in Play Store
@@ -2065,8 +2101,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         }
 
         // Case 2: App is ALREADY installed before we ever tapped Install (Duplicate app)
-        if (openButton != null && installButton == null && offerState != OFFER_STATE_INSTALLING) {
-            Log.i(TAG, "⚠️ App in Play Store is ALREADY INSTALLED on this device! (User Rule: Skip & Restart Offer)");
+        if (openButton != null && installButton == null && offerState == OFFER_STATE_PLAYSTORE && (now - offerStateStartTime >= 3000)) {
+            Log.i(TAG, "⚠️ App in Play Store is ALREADY INSTALLED on this device! ('" + openButton.text + "' / '" + openButton.contentDesc + "' at " + openButton.rect + "). (User Rule: Skip & Restart Offer)");
             currentStatus = "Duplicate App: Restarting Offer...";
             appIsDuplicate = true;
             offerState = OFFER_STATE_WAIT_AD_RETURN;
@@ -2100,21 +2136,35 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
             // If "Open" button is visible and NO active installing/verifying text remains:
             if (openButton != null) {
+                // Ensure the package has physically installed in the Android OS
+                if (newPkg == null || newPkg.isEmpty()) {
+                    newPkg = detectNewlyInstalledPackage(baselinePackages);
+                    if (newPkg != null && !newPkg.isEmpty()) {
+                        offerTargetPackage = newPkg;
+                    }
+                }
+
+                // If OS hasn't confirmed installation yet, stay in Play Store
+                if (newPkg == null || newPkg.isEmpty()) {
+                    currentStatus = "Waiting for OS package registration (" + installElapsed + "s)...";
+                    return;
+                }
+
                 if (playStoreOpenSeenTime == 0) {
                     playStoreOpenSeenTime = now;
-                    Log.i(TAG, "Play Store shows 'Open' button! Waiting 2.5s for OS and Quiz app to fully register package...");
-                    currentStatus = "Finalizing Install (2s)...";
+                    Log.i(TAG, "Play Store shows 'Open' and package " + newPkg + " is registered! Waiting 3s for stabilization...");
+                    currentStatus = "Finalizing Install (3s)...";
                     return;
                 }
 
                 long openElapsed = now - playStoreOpenSeenTime;
-                if (openElapsed < 2500) {
-                    long remaining = Math.max(1, (2500 - openElapsed) / 1000);
+                if (openElapsed < 3000) {
+                    long remaining = Math.max(1, (3000 - openElapsed) / 1000);
                     currentStatus = "Finalizing Install (" + remaining + "s)...";
                     return;
                 }
 
-                // 2.5s stabilization complete: OS has fully processed the new package!
+                // 3s stabilization complete: OS has fully processed the new package!
                 Log.i(TAG, "✅ Play Store installation 100% verified & stabilized! Returning to Quiz app...");
                 playStoreOpenSeenTime = 0;
                 finishInstallationAndReturnToQuiz(now);
@@ -2464,14 +2514,14 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             boolean isInstalledInOs = false;
             if (offerTargetPackage != null && !offerTargetPackage.isEmpty()) {
                 try {
-                    isInstalledInOs = (getPackageManager().getLaunchIntentForPackage(offerTargetPackage) != null);
+                    isInstalledInOs = (getPackageManager().getPackageInfo(offerTargetPackage, 0) != null);
                 } catch (Exception ignored) {}
             }
-            // If the package is actually installed and we have a verify button, retry up to 3 times with 3.5s delay
-            if (isInstalledInOs && verifyBtn != null && verifyAttempts < 3 && !appIsDuplicate) {
+            // If package is installed and verify button is visible, retry up to 4 times with 3.5s delay (allows backend referrer sync)
+            if (isInstalledInOs && verifyBtn != null && verifyAttempts < 4 && !appIsDuplicate) {
                 verifyAttempts++;
-                Log.w(TAG, "⚠️ Quiz & Earn says 'App not detected', but package " + offerTargetPackage + " IS installed in OS! Retrying verification (" + verifyAttempts + "/3) in 3.5s...");
-                currentStatus = "Retrying Verification (" + verifyAttempts + "/3)...";
+                Log.w(TAG, "⚠️ Quiz & Earn says 'App not detected', but package " + offerTargetPackage + " IS installed in OS! Retrying verification (" + verifyAttempts + "/4) in 3.5s...");
+                currentStatus = "Retrying Verification (" + verifyAttempts + "/4)...";
                 lastTapTime = now + 3500;
                 lastProgressTime = now;
                 tapNode(verifyBtn);
