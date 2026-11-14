@@ -44,6 +44,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     public static volatile boolean isServiceActive = false;
     public static volatile int solvedCount = 0;
     public static volatile int liveGems = -1;
+    public static volatile boolean is25GemsOnScreen = false;
     public static volatile String currentStatus = "Standby";
     private static boolean hasAlerted25Gems = false;
     public static volatile boolean isCollecting25thGem = false;
@@ -188,6 +189,11 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
     public static void restartQuizApp(Context callerCtx) {
         Log.i(TAG, "restartQuizApp called.");
+        offerState = OFFER_STATE_IDLE;
+        isCollecting25thGem = false;
+        finalAdStarted = false;
+        hasAlerted25Gems = false;
+        is25GemsOnScreen = false;
         Context ctx = (callerCtx != null) ? callerCtx : ((instance != null) ? instance : null);
         if (ctx != null) {
             try {
@@ -465,10 +471,21 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             boolean isLauncher = pkg.contains("launcher") || pkg.contains("home") || pkg.equals("android");
 
             // While in Play Store state, Play Store is EXPECTED and required!
-            if (isPlayStore && (offerState == OFFER_STATE_AD_PLAYING || offerState == OFFER_STATE_PLAYSTORE || offerState == OFFER_STATE_INSTALLING)) {
-                externalAppBackCount = 0;
-                handlePlayStoreScreen(root, allNodes, now);
-                return;
+            // STRICT SAFETY: Only handle Play Store if Super Offer is in progress AND 25 gems reached!
+            if (isPlayStore) {
+                if (isSuperOfferEnabled && (liveGems >= 25 || is25GemsOnScreen) &&
+                    (offerState == OFFER_STATE_AD_PLAYING || offerState == OFFER_STATE_PLAYSTORE || offerState == OFFER_STATE_INSTALLING)) {
+                    externalAppBackCount = 0;
+                    handlePlayStoreScreen(root, allNodes, now);
+                    return;
+                } else {
+                    // Normal Gem Farming (< 25 gems): NEVER install anything! Dismiss Play Store immediately!
+                    Log.i(TAG, "Play Store opened while farming gems (" + liveGems + "/25, state=" + offerState + ")! Dismissing immediately...");
+                    performGlobalAction(GLOBAL_ACTION_BACK);
+                    lastTapTime = now + 1500;
+                    lastProgressTime = now;
+                    return;
+                }
             }
 
             // While in 2-minute App Active state:
@@ -833,13 +850,31 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
                     int step = (int)((adElapsed - minAdElapsed) / 2);
                     if (step % 4 == 0) {
-                        // Center of top-right Skip pill button (e.g. ">> Skip to Google Play")
-                        int targetX = Math.max(50, screenW - 140);
-                        int targetY = Math.max(75, (int)(screenH * 0.055));
-                        Log.i(TAG, "Ad running (" + adElapsed + "s): Tapping top-right Skip pill button at (" + targetX + ", " + targetY + ")...");
-                        tapCoordinates(targetX, targetY);
-                        lastTapTime = now;
-                        return;
+                        // Check if an Install or CTA button exists near the top-right before blind tapping!
+                        boolean hasCtaAtTopRight = false;
+                        for (NodeItem item : allNodes) {
+                            if (item.rect.centerX() > screenW / 2 && item.rect.centerY() < screenH * 0.20) {
+                                String t = item.text.trim().toLowerCase();
+                                String d = item.contentDesc.trim().toLowerCase();
+                                if (t.contains("install") || d.contains("install") ||
+                                    t.contains("download") || d.contains("download") ||
+                                    t.contains("get") || d.contains("get") ||
+                                    t.contains("open") || d.contains("open") ||
+                                    t.contains("shop now") || d.contains("shop now")) {
+                                    hasCtaAtTopRight = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!hasCtaAtTopRight) {
+                            // Center of top-right Skip pill button (e.g. ">> Skip to Google Play")
+                            int targetX = Math.max(50, screenW - 140);
+                            int targetY = Math.max(75, (int)(screenH * 0.055));
+                            Log.i(TAG, "Ad running (" + adElapsed + "s): Tapping top-right Skip pill button at (" + targetX + ", " + targetY + ")...");
+                            tapCoordinates(targetX, targetY);
+                            lastTapTime = now;
+                            return;
+                        }
                     } else if (step % 4 == 1) {
                         // Extreme top-right corner close X / chevron
                         int targetX = screenW - 55;
@@ -1003,7 +1038,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 liveGems = detectedGems;
             }
 
-            boolean is25GemsOnScreen = false;
+            is25GemsOnScreen = false;
             if (!hasActiveQuiz && !hasCollectGem) {
                 if (detectedGems >= 25) {
                     is25GemsOnScreen = true;
@@ -1096,15 +1131,15 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
             if (isHomeScreen) {
                 if (homeSuperOfferClaimBtn != null) {
-                    if (isSuperOfferEnabled) {
-                        Log.i(TAG, "On Home Screen: Auto-Offer ON -> Tapping Super Offer 'Claim >' button at " + homeSuperOfferClaimBtn.rect);
+                    if (isSuperOfferEnabled || liveGems < 25) {
+                        Log.i(TAG, "On Home Screen (" + (liveGems < 25 ? "Farming " + liveGems + "/25 gems" : "Doing Offer") + "): Tapping Super Offer 'Claim >' button at " + homeSuperOfferClaimBtn.rect);
                         tapNode(homeSuperOfferClaimBtn);
-                        lastTapTime = now + 2500;
+                        lastTapTime = now + 2000;
                         lastProgressTime = now;
-                        currentStatus = "Entering Super Offer / Quiz...";
+                        currentStatus = liveGems < 25 ? "Starting Quiz..." : "Entering Super Offer...";
                         return;
                     } else {
-                        // Auto-Offer is OFF: User requested 5s interval check
+                        // Auto-Offer is OFF & 25 gems already reached: 5-second check loop
                         long elapsedSinceCheck = now - lastOfferCheckTime;
                         if (elapsedSinceCheck >= 5000) {
                             Log.i(TAG, "⚡ 5s Offer Check interval reached: Tapping 'Claim >' to check Super Offer page...");
@@ -1122,16 +1157,6 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                             return;
                         }
                     }
-                } else {
-                    for (NodeItem item : allNodes) {
-                        String t = item.text.trim().toLowerCase();
-                        if (t.contains("claim") || t.contains("quiz")) {
-                            tapNode(item);
-                            lastTapTime = now + 2000;
-                            lastProgressTime = now;
-                            return;
-                        }
-                    }
                 }
                 return;
             }
@@ -1140,6 +1165,14 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             if (!isAd && isQuizApp) {
                 if (isSuperOfferEnabled || offerState != OFFER_STATE_IDLE) {
                     if (isOfferScreen) {
+                        // STRICT SAFETY GATE: Only start or progress Super Offer if 25 gems milestone is reached!
+                        if (offerState == OFFER_STATE_IDLE && liveGems < 25 && !is25GemsOnScreen && !finalAdCompleted) {
+                            Log.w(TAG, "On Super Offer screen but only " + liveGems + "/25 gems collected! Returning to farm gems...");
+                            performGlobalAction(GLOBAL_ACTION_BACK);
+                            lastTapTime = now + 1500;
+                            lastProgressTime = now;
+                            return;
+                        }
                         if (isCollecting25thGem && finalAdCompleted) {
                             isCollecting25thGem = false;
                             finalAdStarted = false;
@@ -2683,6 +2716,15 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         }
 
         if (startOfferBtn != null) {
+            // STRICT SAFETY GATE: Only start offer ad if 25 gems milestone is reached!
+            if (liveGems < 25 && !is25GemsOnScreen) {
+                Log.w(TAG, "Super Offer 'Start Offer' visible, but only " + liveGems + "/25 gems! Returning to quiz...");
+                performGlobalAction(GLOBAL_ACTION_BACK);
+                lastTapTime = now + 1500;
+                lastProgressTime = now;
+                return true;
+            }
+
             Log.i(TAG, "⚡ Super Offer 'Start Offer' button detected! Tapping at " + startOfferBtn.rect + " to play offer ad...");
             currentStatus = "Starting Offer Ad...";
             baselinePackages = snapshotInstalledPackages();
