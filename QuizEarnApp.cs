@@ -1293,10 +1293,15 @@ public class QuizEarnApp : Form
                 {
                     string targetDev = "127.0.0.1:" + inst.Port;
 
-                    // 1. Connect to this instance port
-                    RunAdb(string.Format("connect {0}", targetDev));
+                    // 1. Check state or connect if not online
                     string state = RunAdbDevice(targetDev, "get-state").Trim();
                     bool isDeviceOnline = state.Equals("device", StringComparison.OrdinalIgnoreCase);
+                    if (!isDeviceOnline)
+                    {
+                        RunAdb(string.Format("connect {0}", targetDev));
+                        state = RunAdbDevice(targetDev, "get-state").Trim();
+                        isDeviceOnline = state.Equals("device", StringComparison.OrdinalIgnoreCase);
+                    }
 
                     // If offline and auto-recovery is enabled:
                     if (!isDeviceOnline && autoRecoverBlueStacks)
@@ -1330,37 +1335,44 @@ public class QuizEarnApp : Form
                         // 2. ONLY run watchdog recovery actions if Watchdog is explicitly ON!
                         if (autoRecoverBlueStacks)
                         {
-                            string boot = RunAdbDevice(targetDev, "shell getprop sys.boot_completed").Trim();
-                            if (boot == "1")
+                            // Batched status query in ONE single ADB process to minimize PC CPU usage:
+                            string batchCmd = "shell \"getprop sys.boot_completed; echo '###'; settings get secure enabled_accessibility_services; echo '###'; pidof com.quiz.earn.money.game; echo '###'; pidof com.quizearn.assistant; echo '###'; dumpsys window | grep mCurrentFocus\"";
+                            string batchOut = RunAdbDevice(targetDev, batchCmd);
+                            string[] parts = batchOut.Split(new string[] { "###" }, StringSplitOptions.None);
+                            if (parts.Length >= 5)
                             {
-                                // A. Ensure Accessibility Service is enabled for APK Bot
-                                string secServices = RunAdbDevice(targetDev, "shell settings get secure enabled_accessibility_services");
-                                if (!secServices.Contains("com.quizearn.assistant/.QuizEarnAccessibilityService"))
-                                {
-                                    RunAdbDevice(targetDev, "shell settings put secure enabled_accessibility_services com.quizearn.assistant/.QuizEarnAccessibilityService");
-                                    RunAdbDevice(targetDev, "shell settings put secure accessibility_enabled 1");
-                                    Log(string.Format("[🛡️ APK Watchdog] Enabled Accessibility Service on {0} ({1}).", inst.DisplayName, targetDev));
-                                }
+                                string boot = parts[0].Trim();
+                                string secServices = parts[1].Trim();
+                                string pidQuiz = parts[2].Trim();
+                                string pidBot = parts[3].Trim();
+                                string curFocus = parts[4].Trim();
 
-                                // B. Ensure Quiz & Earn App is running (only if crashed/killed to launcher)
-                                string curFocus = RunAdbDevice(targetDev, "shell \"dumpsys window | grep mCurrentFocus\"");
-                                string pidQuiz = RunAdbDevice(targetDev, "shell pidof com.quiz.earn.money.game").Trim();
-                                bool isLauncher = curFocus.Contains("launcher") || curFocus.Contains("home") || curFocus.Contains("com.bluestacks");
-                                bool relaunchedApp = false;
-                                if (string.IsNullOrEmpty(pidQuiz) || isLauncher)
+                                if (boot == "1")
                                 {
-                                    RunAdbDevice(targetDev, "shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
-                                    Log(string.Format("[🛡️ APK Watchdog] Relaunched Quiz & Earn app on {0} ({1}).", inst.DisplayName, targetDev));
-                                    relaunchedApp = true;
-                                    Thread.Sleep(2000);
-                                }
+                                    // A. Ensure Accessibility Service is enabled for APK Bot
+                                    if (!secServices.Contains("com.quizearn.assistant/.QuizEarnAccessibilityService"))
+                                    {
+                                        RunAdbDevice(targetDev, "shell settings put secure enabled_accessibility_services com.quizearn.assistant/.QuizEarnAccessibilityService; settings put secure accessibility_enabled 1");
+                                        Log(string.Format("[🛡️ APK Watchdog] Enabled Accessibility Service on {0} ({1}).", inst.DisplayName, targetDev));
+                                    }
 
-                                // C. Ensure APK Bot is running in players (only if process died or app was freshly relaunched)
-                                string pidBot = RunAdbDevice(targetDev, "shell pidof com.quizearn.assistant").Trim();
-                                if (relaunchedApp || string.IsNullOrEmpty(pidBot))
-                                {
-                                    RunAdbDevice(targetDev, "shell am start-foreground-service -a com.quizearn.assistant.START com.quizearn.assistant/.FloatingOverlayService");
-                                    Log(string.Format("[🛡️ APK Watchdog] Turned ON and started APK Bot on {0} ({1})!", inst.DisplayName, targetDev));
+                                    // B. Ensure Quiz & Earn App is running (only if crashed/killed to launcher)
+                                    bool isLauncher = curFocus.Contains("launcher") || curFocus.Contains("home") || curFocus.Contains("com.bluestacks");
+                                    bool relaunchedApp = false;
+                                    if (string.IsNullOrEmpty(pidQuiz) || isLauncher)
+                                    {
+                                        RunAdbDevice(targetDev, "shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
+                                        Log(string.Format("[🛡️ APK Watchdog] Relaunched Quiz & Earn app on {0} ({1}).", inst.DisplayName, targetDev));
+                                        relaunchedApp = true;
+                                        Thread.Sleep(2000);
+                                    }
+
+                                    // C. Ensure APK Bot is running in players (only if process died or app was freshly relaunched)
+                                    if (relaunchedApp || string.IsNullOrEmpty(pidBot))
+                                    {
+                                        RunAdbDevice(targetDev, "shell am start-foreground-service -a com.quizearn.assistant.START com.quizearn.assistant/.FloatingOverlayService");
+                                        Log(string.Format("[🛡️ APK Watchdog] Turned ON and started APK Bot on {0} ({1})!", inst.DisplayName, targetDev));
+                                    }
                                 }
                             }
                         }

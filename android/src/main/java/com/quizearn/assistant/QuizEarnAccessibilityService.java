@@ -126,7 +126,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     Log.e(TAG, "FATAL error in solveScreen", t);
                 } finally {
                     if (isRunning) {
-                        loopHandler.postDelayed(this, 200);
+                        loopHandler.postDelayed(this, 120);
                     }
                 }
             }
@@ -439,14 +439,14 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     t.contains("close app") || (t.equals("ok") && (t.contains("stopping") || d.contains("stopping")))) {
                     Log.w(TAG, "Dismissing system ANR/Crash dialog via '" + item.text + "' at " + item.rect);
                     tapNode(item);
-                    lastTapTime = now + 1200;
+                    lastTapTime = now + 600;
                     return;
                 }
                 if ((t.equals("ok") || t.equals("uninstall") || d.equals("ok")) &&
                     (pkg.contains("packageinstaller") || pkg.contains("settings"))) {
                     Log.i(TAG, "Confirming app uninstall dialog via '" + item.text + "' at " + item.rect);
                     tapNode(item);
-                    lastTapTime = now + 1200;
+                    lastTapTime = now + 600;
                     return;
                 }
             }
@@ -458,7 +458,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 if (t.equals("try again") || d.equals("try again") || t.equals("retry") || d.equals("retry") || t.contains("reload")) {
                     Log.w(TAG, "⚡ Network error screen detected ('" + item.text + "'). Tapping Try Again at " + item.rect);
                     tapNode(item);
-                    lastTapTime = now + 2500;
+                    lastTapTime = now + 1200;
                     lastProgressTime = now;
                     currentStatus = "Retrying Connection...";
                     return;
@@ -1120,50 +1120,80 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             // Check if we are on the Main Home Screen (User greeting, Task Partners, Leaderboard, Super/Mega Offer cards)
             boolean isHomeScreen = false;
             NodeItem homeSuperOfferClaimBtn = null;
+            NodeItem startQuizBtn = null;
+            NodeItem rewardPopupBtn = null;
+
             for (NodeItem item : allNodes) {
                 String t = item.text.trim().toLowerCase();
                 String d = item.contentDesc.trim().toLowerCase();
                 if (t.contains("hi, ") || d.contains("hi, ") ||
                     t.contains("daily win") || t.contains("task partners") ||
                     t.contains("weekly leaderboard") || t.contains("refer & earn") ||
-                    t.contains("go to wallet")) {
+                    t.contains("go to wallet") || hasHomeScreen) {
                     isHomeScreen = true;
                 }
+                // Reward modal / dialog confirmation buttons (e.g. "Awesome!", "Collect", "Claim", "OK")
+                if (t.equals("awesome!") || t.equals("awesome") || t.equals("great!") || t.equals("great") || 
+                    (t.equals("ok") && !t.contains("stopping")) || t.equals("collect") || t.equals("collect reward")) {
+                    if (item.rect.centerY() > screenH * 0.30 && item.rect.centerY() < screenH * 0.90) {
+                        rewardPopupBtn = item;
+                    }
+                }
+                // Super Offer Claim Button on Home card (left half of screen)
                 if (t.equals("claim") || t.equals("claim >") || d.equals("claim") || t.startsWith("claim")) {
                     if (item.rect.centerX() < screenW / 2) {
                         homeSuperOfferClaimBtn = item;
                     }
                 }
+                // Start Quiz Button on Home screen
+                if (t.equals("start quiz") || t.equals("start math quiz") || t.contains("start quiz") || 
+                    t.equals("play quiz") || d.contains("start quiz") || d.contains("start math")) {
+                    startQuizBtn = item;
+                }
+            }
+
+            // A. Dismiss any coin reward claim popup immediately
+            if (rewardPopupBtn != null) {
+                Log.i(TAG, "⚡ Tapping reward confirmation popup button '" + rewardPopupBtn.text + "' at " + rewardPopupBtn.rect);
+                tapNode(rewardPopupBtn);
+                lastTapTime = now + 1000;
+                lastProgressTime = now;
+                currentStatus = "Reward Collected!";
+                return;
             }
 
             if (isHomeScreen) {
-                if (homeSuperOfferClaimBtn != null) {
-                    if (isSuperOfferEnabled || liveGems < 25) {
-                        Log.i(TAG, "On Home Screen (" + (liveGems < 25 ? "Farming " + liveGems + "/25 gems" : "Doing Offer") + "): Tapping Super Offer 'Claim >' button at " + homeSuperOfferClaimBtn.rect);
+                // B. If 25 gems reached or Super Offer finished: Claim 1,000 Coins / Enter Offer!
+                if (homeSuperOfferClaimBtn != null && (liveGems >= 25 || is25GemsOnScreen)) {
+                    if (isSuperOfferEnabled) {
+                        Log.i(TAG, "🎉 25 Gems Milestone / 1,000 Coins Ready (Auto-Offer ON): Tapping Super Offer 'Claim >' button at " + homeSuperOfferClaimBtn.rect);
                         tapNode(homeSuperOfferClaimBtn);
-                        lastTapTime = now + 2000;
+                        lastTapTime = now + 1500;
                         lastProgressTime = now;
-                        currentStatus = liveGems < 25 ? "Starting Quiz..." : "Entering Super Offer...";
+                        currentStatus = "Entering Super Offer...";
                         return;
                     } else {
-                        // Auto-Offer is OFF & 25 gems already reached: 5-second check loop
-                        long elapsedSinceCheck = now - lastOfferCheckTime;
-                        if (elapsedSinceCheck >= 5000) {
-                            Log.i(TAG, "⚡ 5s Offer Check interval reached: Tapping 'Claim >' to check Super Offer page...");
-                            tapNode(homeSuperOfferClaimBtn);
-                            lastOfferCheckTime = now;
-                            lastTapTime = now + 1500;
-                            lastProgressTime = now;
-                            currentStatus = "Checking 25-Gem Offer (5s)...";
-                            return;
-                        } else {
-                            // Waiting on Home Screen until 5s interval passes
-                            lastProgressTime = now;
-                            long remainingSec = Math.max(1, (5000 - elapsedSinceCheck) / 1000);
-                            currentStatus = "25💎 Hit (Auto-Offer OFF) - Checking in " + remainingSec + "s...";
-                            return;
-                        }
+                        // Auto-Offer is OFF: User will do offer or claim manually. Do NOT bounce in a loop!
+                        currentStatus = "25💎 Hit (Auto-Offer OFF) - Ready for manual claim";
+                        return;
                     }
+                }
+
+                // C. If gems < 25 (or coins already claimed): Start Quiz to farm gems continuously!
+                if (startQuizBtn != null) {
+                    Log.i(TAG, "⚡ On Home Screen (Gems=" + liveGems + "/25): Tapping '" + startQuizBtn.text + "' to start quiz cycle at " + startQuizBtn.rect);
+                    tapNode(startQuizBtn);
+                    lastTapTime = now + 1200;
+                    lastProgressTime = now;
+                    currentStatus = "Starting Quiz Cycle...";
+                    return;
+                } else if (homeSuperOfferClaimBtn != null && liveGems < 25) {
+                    Log.i(TAG, "⚡ On Home Screen (Gems=" + liveGems + "/25): Tapping Super Offer card to start quiz at " + homeSuperOfferClaimBtn.rect);
+                    tapNode(homeSuperOfferClaimBtn);
+                    lastTapTime = now + 1500;
+                    lastProgressTime = now;
+                    currentStatus = "Starting Quiz Cycle...";
+                    return;
                 }
                 return;
             }
@@ -1204,27 +1234,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                             hasAlerted25Gems = true;
                             play25GemsMilestoneAlert();
                         }
-                        Log.i(TAG, "⚡ 25 Gems Page Reached (Auto-Offer OFF): Tapping Back to return to Home screen (will check every 5s)...");
-                        currentStatus = "Auto-Offer OFF: Back to Home (5s Check)...";
-
-                        // Find top-left back arrow if available
-                        NodeItem backBtn = null;
-                        for (NodeItem item : allNodes) {
-                            String t = item.text.trim();
-                            String d = item.contentDesc.trim().toLowerCase();
-                            String id = item.resId.trim().toLowerCase();
-                            if (t.equals("←") || t.equals("<") || d.contains("back") || d.contains("navigate up") || id.contains("back") || id.contains("btn_back")) {
-                                backBtn = item;
-                                break;
-                            }
-                        }
-                        if (backBtn != null) {
-                            tapNode(backBtn);
-                        } else {
-                            performGlobalAction(GLOBAL_ACTION_BACK);
-                        }
-                        lastOfferCheckTime = now;
-                        lastTapTime = now + 1500;
+                        currentStatus = "25💎 Hit (Auto-Offer OFF) - Ready for manual offer/claim";
                         lastProgressTime = now;
                         return;
                     }
@@ -1302,8 +1312,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     String d = item.contentDesc.trim().toLowerCase();
                     String combined = (t + " " + d).trim();
                     if (combined.contains("collect gem") || combined.contains("collect reward")) {
-                        // Debounce: Wait 3.5s after tapping Collect Gem for the ad to launch
-                        if (collectGemTapCount > 0 && (now - lastTapTime < 3500)) {
+                        // Debounce: Wait 1.5s after tapping Collect Gem for the ad to launch
+                        if (collectGemTapCount > 0 && (now - lastTapTime < 1500)) {
                             return;
                         }
                         collectGemTapCount++;
@@ -1328,7 +1338,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
                         Log.i(TAG, "Found Action/Claim/Verify button: " + item.text + " (Tap #" + collectGemTapCount + ") at " + item.rect);
                         tapNode(item);
-                        lastTapTime = now + 3000;
+                        lastTapTime = now + 1500;
                         lastProgressTime = now;
                         lastSolvedTarget = "";
                         lastSolveTime = 0;
@@ -1342,7 +1352,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                                t.contains("verify usage") || t.equals("verify") || d.contains("verify usage")) {
                         Log.i(TAG, "Found Action/Claim/Verify button: " + item.text + " at " + item.rect);
                         tapNode(item);
-                        lastTapTime = now + 1500;
+                        lastTapTime = now + 800;
                         lastProgressTime = now;
                         lastSolvedTarget = "";
                         lastSolveTime = 0;
@@ -1530,7 +1540,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                         currentStatus = "Refreshing Quiz...";
                         return;
                     }
-                    if (now - lastSolveTime < 2500) {
+                    if (now - lastSolveTime < 1100) {
                         // Anti-Ghosting: Waiting for screen to update to next question
                         return;
                     }
@@ -1585,13 +1595,14 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     if (questionWaitingStartTime == 0 || !detectedTarget.equals(lastWaitingQuestion)) {
                         questionWaitingStartTime = now;
                         lastWaitingQuestion = detectedTarget;
-                    } else if (now - questionWaitingStartTime > 35000) {
-                        Log.w(TAG, "Quiz question options stuck on '...' for >35s! Bringing app cleanly to front...");
+                    } else if (now - questionWaitingStartTime > 12000) {
+                        Log.w(TAG, "Quiz question options stuck on '...' for >12s! Auto-backing to refresh quiz WebView...");
                         questionWaitingStartTime = 0;
                         lastWaitingQuestion = "";
-                        bringQuizAppToFront();
-                        lastTapTime = now + 2500;
+                        performGlobalAction(GLOBAL_ACTION_BACK);
+                        lastTapTime = now + 1200;
                         lastProgressTime = now;
+                        currentStatus = "Refreshing Stuck Options...";
                         return;
                     }
                 }
@@ -2428,7 +2439,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     }
 
     private boolean handleSuperOfferScreen(AccessibilityNodeInfo root, List<NodeItem> allNodes, long now) {
-        if (now - lastTapTime < 500) return false;
+        if (now - lastTapTime < 250) return false;
 
         // 1. REWARD CLAIM PHASE (OFFER_STATE_REWARD_CLAIM)
         if (offerState == OFFER_STATE_REWARD_CLAIM) {
