@@ -327,8 +327,16 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         }
     }
 
+    private static volatile String currentActivityName = "";
+
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
+        if (event != null && event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            CharSequence cls = event.getClassName();
+            if (cls != null) {
+                currentActivityName = cls.toString();
+            }
+        }
         if (!isRunning || event == null) return;
         long now = System.currentTimeMillis();
         if (now - lastTapTime > 350) {
@@ -649,6 +657,9 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     String d = item.contentDesc.trim().toLowerCase();
                     if (t.contains("start offer") || d.contains("start offer") ||
                         t.contains("gems collected") || d.contains("gems collected") ||
+                        t.contains("how to complete") || d.contains("how to complete") ||
+                        t.contains("super offer") || d.contains("super offer") ||
+                        t.contains("guaranteed 1,000 coins") || t.contains("guaranteed 1000 coins") ||
                         t.contains("app usage progress") || d.contains("app usage progress") ||
                         t.contains("watch a video ad") || d.contains("watch a video ad") ||
                         t.contains("install the app") || d.contains("install the app") ||
@@ -679,6 +690,12 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             if (pkg.contains("gms.ads") || pkg.contains("admob") || pkg.contains("unity3d") || 
                 pkg.contains("applovin") || pkg.contains("ironsource") || pkg.contains("vungle") || 
                 pkg.contains("mintegral") || pkg.contains("inmobi") || pkg.contains("fyber")) {
+                isAd = true;
+            }
+            String actName = currentActivityName.toLowerCase();
+            if (actName.contains("inmobi") || actName.contains("vungle") || actName.contains("adactivity") ||
+                actName.contains("unity3d") || actName.contains("ironsource") || actName.contains("applovin") ||
+                actName.contains("mintegral") || actName.contains("adview")) {
                 isAd = true;
             }
 
@@ -718,6 +735,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     d.contains("liftoff") || id.contains("adjs") || id.contains("moloco") || 
                     id.contains("endcard") || id.contains("watermark") || id.contains("advert") || 
                     id.contains("unity3d") || id.contains("applovin") || id.contains("mbridge") || 
+                    id.contains("inmobi") || id.startsWith("im_") || id.contains("miniplayer") ||
+                    id.contains("main-video") || id.contains("skip-close") ||
                     id.contains("tt_") || id.contains("ia_") || id.contains("close-or-skip-button") ||
                     id.contains("app-interstitial") || id.contains("ad-interstitial") ||
                     id.contains("mys-creative") || id.contains("mys-content") ||
@@ -727,9 +746,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
-            // Game screen override: If actual quiz questions, Collect Gem, OR Home Screen are visible, this is NOT an ad!
-            // Note: Super Offer milestone page is only an override if NOT playing an offer ad!
-            if (hasActiveQuiz || hasCollectGem || hasHomeScreen || (hasSuperOfferMilestone && offerState != OFFER_STATE_AD_PLAYING)) {
+            // Game screen override: If actual quiz questions, Collect Gem, Home Screen, OR Super Offer screens are visible, this is NOT an ad!
+            if (hasActiveQuiz || hasCollectGem || hasHomeScreen || hasSuperOfferMilestone) {
                 isAd = false;
                 hasAdCountdown = false;
                 adStartTime = 0;
@@ -808,10 +826,18 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                         String d = item.contentDesc.trim().toLowerCase();
                         String id = item.resId.trim().toLowerCase();
 
+                        // Guard: NEVER match long instruction sentences or warning text on Quiz app
+                        if (t.contains("advertised app") || t.contains("pending offer") || 
+                            t.contains("installing apps other") || t.length() > 30) {
+                            continue;
+                        }
+
                         // Check for Play Store CTA elements
                         if (t.equals("install") || t.equals("install now") || d.equals("install") ||
                             t.equals("open") || d.equals("open") || t.equals("get") || d.equals("get") ||
-                            t.contains("download") || d.contains("download") ||
+                            t.equals("download") || t.equals("download now") || 
+                            (t.startsWith("download") && t.length() <= 15) ||
+                            (t.startsWith("install") && t.length() <= 15) ||
                             t.contains("skip to google play") || d.contains("skip to google play") ||
                             t.contains("learn more") || d.contains("learn more") ||
                             t.contains("skip to play store") || d.contains("skip to play store") ||
@@ -2746,13 +2772,43 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         }
 
         // 4. START OFFER PHASE (Works for both Milestone card & Detail page)
+        boolean hasWatchTutorial = false;
+        for (NodeItem item : allNodes) {
+            String t = item.text.trim().toLowerCase();
+            if (t.contains("watch tutorial") || t.contains("how to complete") || 
+                t.contains("warning: installing")) {
+                hasWatchTutorial = true;
+                break;
+            }
+        }
+
         NodeItem startOfferBtn = null;
         for (NodeItem item : allNodes) {
             String t = item.text.trim().toLowerCase();
             String d = item.contentDesc.trim().toLowerCase();
             if (t.equals("start offer") || d.equals("start offer") || t.contains("start offer")) {
-                startOfferBtn = item;
-                break;
+                if (hasWatchTutorial) {
+                    if (item.rect.centerY() > 1100) {
+                        startOfferBtn = item;
+                        break;
+                    }
+                } else {
+                    if (item.rect.centerY() < 1100) {
+                        startOfferBtn = item;
+                        break;
+                    }
+                }
+            }
+        }
+        // Fallback: take any startOfferBtn if not found above
+        if (startOfferBtn == null) {
+            for (NodeItem item : allNodes) {
+                String t = item.text.trim().toLowerCase();
+                String d = item.contentDesc.trim().toLowerCase();
+                if (t.equals("start offer") || d.equals("start offer") || t.contains("start offer")) {
+                    startOfferBtn = item;
+                    break;
+                }
             }
         }
 
@@ -2766,17 +2822,30 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 return true;
             }
 
-            Log.i(TAG, "⚡ Super Offer 'Start Offer' button detected! Tapping at " + startOfferBtn.rect + " to play offer ad...");
-            currentStatus = "Starting Offer Ad...";
-            if (instance != null) {
-            baselinePackages = instance.snapshotInstalledPackages();
-        }
-            tapNode(startOfferBtn);
-            offerState = OFFER_STATE_AD_PLAYING;
-            adStartTime = now;
-            offerStateStartTime = now;
-            lastTapTime = now + 2000;
-            return true;
+            // Screen 1: Milestone Card -> Tapping opens Offer Details
+            if (!hasWatchTutorial && startOfferBtn.rect.centerY() < 1100) {
+                Log.i(TAG, "⚡ Super Offer Milestone 'Start Offer' detected! Tapping at " + startOfferBtn.rect + " to open Offer Details...");
+                currentStatus = "Opening Offer Details...";
+                tapNode(startOfferBtn);
+                offerState = OFFER_STATE_DETAIL_PAGE;
+                lastTapTime = now + 2000;
+                lastProgressTime = now;
+                return true;
+            } else {
+                // Screen 2: Offer Details -> Tapping bottom Start Offer plays offer ad!
+                Log.i(TAG, "⚡ Super Offer Detail Page 'Start Offer' detected! Tapping at " + startOfferBtn.rect + " to play offer ad...");
+                currentStatus = "Starting Offer Ad...";
+                if (instance != null) {
+                    baselinePackages = instance.snapshotInstalledPackages();
+                }
+                tapNode(startOfferBtn);
+                offerState = OFFER_STATE_AD_PLAYING;
+                adStartTime = now;
+                offerStateStartTime = now;
+                lastTapTime = now + 2500;
+                lastProgressTime = now;
+                return true;
+            }
         }
 
         // 5. If on offer detail page and Start button is scrolled off screen, scroll down!
