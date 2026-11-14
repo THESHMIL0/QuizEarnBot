@@ -630,13 +630,14 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
-            // Check if Home Screen is visible (Start Quiz, Tasks, Community, Wallet, Profile)
+            // Check if Home Screen is visible (Greeting, Refer & Earn, Daily Win, Leaderboard)
             boolean hasHomeScreen = false;
             for (NodeItem item : allNodes) {
                 String t = item.text.trim().toLowerCase();
-                if (t.equals("start quiz") || t.equals("start math quiz") || 
-                    t.equals("tasks") || t.equals("wallet") || t.equals("profile") ||
-                    t.contains("rate us 5 stars") || t.contains("daily win")) {
+                String d = item.contentDesc.trim().toLowerCase();
+                if (t.contains("hi, ") || d.contains("hi, ") ||
+                    t.contains("refer & earn") || t.contains("task partners") ||
+                    t.contains("weekly leaderboard") || t.contains("daily win")) {
                     hasHomeScreen = true;
                     break;
                 }
@@ -914,8 +915,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
-            // 5. Game Stall Auto-Recovery (Only when in game, completely frozen with no questions or ads for > 75s, and no ad active)
-            if (isQuizApp && adStartTime == 0 && lastProgressTime > 0 && now - lastProgressTime > 75000) {
+            // 5. Game Stall Auto-Recovery (Only during active quiz solving, frozen without questions or ads for > 75s)
+            if (isQuizApp && adStartTime == 0 && !hasHomeScreen && liveGems < 25 && offerState == OFFER_STATE_IDLE && lastProgressTime > 0 && now - lastProgressTime > 75000) {
                 Log.w(TAG, "Quiz & Earn stuck without questions or ads (>75s). Restarting app cleanly...");
                 currentStatus = "Stall: Restarting App...";
                 restartQuizApp();
@@ -1150,6 +1151,10 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     t.equals("play quiz") || d.contains("start quiz") || d.contains("start math")) {
                     startQuizBtn = item;
                 }
+            }
+
+            if (isOfferScreen || is25GemsOnScreen || hasSuperOfferMilestone) {
+                isHomeScreen = false;
             }
 
             // A. Dismiss any coin reward claim popup immediately
