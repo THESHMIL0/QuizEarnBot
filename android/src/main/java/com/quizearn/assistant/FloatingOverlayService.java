@@ -115,7 +115,7 @@ public class FloatingOverlayService extends Service {
         super.onCreate();
         try {
             SharedPreferences prefs = getSharedPreferences("QuizEarnPrefs", Context.MODE_PRIVATE);
-            QuizEarnAccessibilityService.isSuperOfferEnabled = prefs.getBoolean("super_offer_enabled", true);
+            QuizEarnAccessibilityService.isSuperOfferEnabled = prefs.getBoolean("super_offer_enabled", false);
         } catch (Exception ignored) {}
         startForegroundServiceNotification();
         createFloatingWidget();

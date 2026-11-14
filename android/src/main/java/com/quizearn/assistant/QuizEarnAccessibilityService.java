@@ -71,8 +71,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     private static List<String> baselinePackages = new ArrayList<>();
     private static int offerAppLaunchAttempts = 0;
 
-    // User Toggle for 25-Gem Super Offer Auto-Install
-    public static volatile boolean isSuperOfferEnabled = true;
+    // User Toggle for 25-Gem Super Offer Auto-Install (Default to false for safety so bots NEVER auto-download unless explicitly enabled)
+    public static volatile boolean isSuperOfferEnabled = false;
 
     public static void setSuperOfferEnabled(Context context, boolean enabled) {
         isSuperOfferEnabled = enabled;
@@ -317,7 +317,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         isServiceActive = true;
         try {
             SharedPreferences prefs = getSharedPreferences("QuizEarnPrefs", Context.MODE_PRIVATE);
-            isSuperOfferEnabled = prefs.getBoolean("super_offer_enabled", true);
+            isSuperOfferEnabled = prefs.getBoolean("super_offer_enabled", false);
             Log.i(TAG, "Loaded isSuperOfferEnabled preference: " + isSuperOfferEnabled);
         } catch (Exception e) {
             Log.e(TAG, "Error loading super_offer_enabled pref", e);
