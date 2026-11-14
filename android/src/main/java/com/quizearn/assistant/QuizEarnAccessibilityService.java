@@ -103,6 +103,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     // Ad loading watchdog after quiz completion & question option loading watchdog:
     private long collectGemScreenStartTime = 0;
     private int collectGemTapCount = 0;
+    private long lastSeenCollectionScreenTime = 0;
     private long questionWaitingStartTime = 0;
     private String lastWaitingQuestion = "";
     private long emptyNodesStartTime = 0;
@@ -160,6 +161,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             instance.adStartTime = 0;
             instance.collectGemScreenStartTime = 0;
             instance.collectGemTapCount = 0;
+            instance.lastSeenCollectionScreenTime = 0;
             instance.questionWaitingStartTime = 0;
             instance.lastWaitingQuestion = "";
             instance.emptyNodesStartTime = 0;
@@ -249,6 +251,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     instance.adStartTime = 0;
                     instance.collectGemScreenStartTime = 0;
                     instance.collectGemTapCount = 0;
+                    instance.lastSeenCollectionScreenTime = 0;
                     instance.questionWaitingStartTime = 0;
                     instance.lastWaitingQuestion = "";
                 }
@@ -296,6 +299,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             instance.lastSolveTime = 0;
             instance.collectGemScreenStartTime = 0;
             instance.collectGemTapCount = 0;
+            instance.lastSeenCollectionScreenTime = 0;
             instance.questionWaitingStartTime = 0;
             instance.lastWaitingQuestion = "";
             instance.emptyNodesStartTime = 0;
@@ -633,15 +637,16 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
-            // 2. Pre-scan for "Collect Gem" / "Collect Reward" button (gem reward collection screen)
+            // 2. Pre-scan for Gem Collection Screen ("Collect Gem", "Watch an ad", "Congratulations", "+1 Gem", "Loading...")
             boolean hasCollectGem = false;
             if (!hasActiveQuiz) {
                 for (NodeItem item : allNodes) {
-                    if (isForbiddenElement(item)) continue;
                     String t = item.text.trim().toLowerCase();
                     String d = item.contentDesc.trim().toLowerCase();
                     String combined = (t + " " + d).trim();
-                    if (combined.contains("collect gem") || combined.contains("collect reward")) {
+                    if (combined.contains("collect gem") || combined.contains("collect reward") ||
+                        combined.contains("watch an ad") || combined.contains("congratulations") ||
+                        combined.contains("+1 gem") || combined.contains("gems to unlock")) {
                         hasCollectGem = true;
                         break;
                     }
@@ -655,10 +660,14 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 for (NodeItem item : allNodes) {
                     String t = item.text.trim().toLowerCase();
                     String d = item.contentDesc.trim().toLowerCase();
+                    if (t.contains("unlock super offer") || t.contains("gems to unlock") || t.contains("watch an ad to collect")) {
+                        continue;
+                    }
                     if (t.contains("start offer") || d.contains("start offer") ||
                         t.contains("gems collected") || d.contains("gems collected") ||
                         t.contains("how to complete") || d.contains("how to complete") ||
-                        t.contains("super offer") || d.contains("super offer") ||
+                        (t.contains("super offer") && !t.contains("gems to unlock")) || 
+                        (d.contains("super offer") && !d.contains("gems to unlock")) ||
                         t.contains("guaranteed 1,000 coins") || t.contains("guaranteed 1000 coins") ||
                         t.contains("app usage progress") || d.contains("app usage progress") ||
                         t.contains("watch a video ad") || d.contains("watch a video ad") ||
@@ -752,6 +761,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 hasAdCountdown = false;
                 adStartTime = 0;
             }
+
 
             // 2. OFFICIAL SKIP ARROW CHECK (Tapped as soon as network provides Skip)
             for (NodeItem item : allNodes) {
@@ -1293,31 +1303,42 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             // 4. Check for "Collect Gem", "Claim", "Verify Usage", or Reward collection buttons (Normal Solving Loop)
             if (hasCollectGem || (!is25GemsOnScreen && offerState == OFFER_STATE_IDLE)) {
                 // Check if we are on the Quiz Complete / Gem Collection Screen (Waiting for Ad)
-                // Direct & Reliable Collect Gem Handler with Ad Load Failure Watchdog
+                boolean isGemCollectionScreen = false;
                 boolean hasCollectGemButton = false;
+                boolean isButtonLoading = false;
                 NodeItem collectGemNode = null;
+
                 for (NodeItem item : allNodes) {
                     if (isForbiddenElement(item)) continue;
                     String t = item.text.trim().toLowerCase();
                     String d = item.contentDesc.trim().toLowerCase();
                     String combined = (t + " " + d).trim();
+
+                    if (combined.contains("congratulations") || combined.contains("+1 gem") || 
+                        combined.contains("watch an ad to collect") || combined.contains("gems to unlock super offer")) {
+                        isGemCollectionScreen = true;
+                    }
+
                     if (combined.contains("collect gem") || combined.contains("collect reward")) {
                         hasCollectGemButton = true;
+                        isGemCollectionScreen = true;
                         collectGemNode = item;
-                        break;
+                    } else if (t.equals("loading...") || d.equals("loading...") || t.equals("loading") || d.equals("loading")) {
+                        isButtonLoading = true;
                     }
                 }
 
-                if (hasCollectGemButton && collectGemNode != null) {
+                if (isGemCollectionScreen) {
+                    lastSeenCollectionScreenTime = now;
                     if (collectGemScreenStartTime == 0) {
                         collectGemScreenStartTime = now;
                     }
                     long elapsedOnCollect = now - collectGemScreenStartTime;
 
-                    // Watchdog: If tapping Collect Gem does not launch an ad within 12s or after 3 taps:
-                    // Ad fill failed / rate limited -> Restart app cleanly to unfreeze!
+                    // Watchdog: If tapping Collect Gem or stuck on "Loading..." without launching an ad for >12s or 3 taps:
+                    // Ad fill failed / rate limited / stalled -> Restart app cleanly to unfreeze!
                     if (collectGemTapCount >= 3 || elapsedOnCollect > 12000) {
-                        Log.w(TAG, "Ad not loading after tapping Collect Gem (" + (elapsedOnCollect / 1000) + "s on screen, taps=" + collectGemTapCount + "). Restarting app cleanly...");
+                        Log.w(TAG, "Ad not loading after quiz completion (" + (elapsedOnCollect / 1000) + "s on screen, taps=" + collectGemTapCount + ", loading=" + isButtonLoading + "). Restarting app cleanly...");
                         currentStatus = "Ad not loading -> Restarting App";
                         collectGemScreenStartTime = 0;
                         collectGemTapCount = 0;
@@ -1326,41 +1347,48 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                         return;
                     }
 
-                    // Debounce: Wait 2.0s between taps on Collect Gem to allow ad to open
-                    if (collectGemTapCount > 0 && (now - lastTapTime < 2000)) {
-                        return;
-                    }
-                    collectGemTapCount++;
+                    if (hasCollectGemButton && collectGemNode != null) {
+                        // Debounce: Wait 2.0s between taps on Collect Gem to allow ad to open
+                        if (collectGemTapCount > 0 && (now - lastTapTime < 2000)) {
+                            return;
+                        }
+                        collectGemTapCount++;
 
-                    // If we are at 24+ gems, this collection action starts the final ad for the 25th gem!
-                    boolean is24thGem = (liveGems >= 24);
-                    if (!is24thGem) {
-                        for (NodeItem n : allNodes) {
-                            String nt = n.text.toLowerCase();
-                            String nd = n.contentDesc.toLowerCase();
-                            if (nt.contains("24/25") || nd.contains("24/25") || nt.contains("24 / 25") || nd.contains("24 / 25")) {
-                                is24thGem = true;
-                                break;
+                        // If we are at 24+ gems, this collection action starts the final ad for the 25th gem!
+                        boolean is24thGem = (liveGems >= 24);
+                        if (!is24thGem) {
+                            for (NodeItem n : allNodes) {
+                                String nt = n.text.toLowerCase();
+                                String nd = n.contentDesc.toLowerCase();
+                                if (nt.contains("24/25") || nd.contains("24/25") || nt.contains("24 / 25") || nd.contains("24 / 25")) {
+                                    is24thGem = true;
+                                    break;
+                                }
                             }
                         }
-                    }
-                    if (is24thGem) {
-                        isCollecting25thGem = true;
-                        finalAdStarted = false;
-                        Log.i(TAG, "Collecting 25th Gem! Final ad will play now. Bot remains ACTIVE to close the ad before stopping on the 25 gems page.");
-                    }
+                        if (is24thGem) {
+                            isCollecting25thGem = true;
+                            finalAdStarted = false;
+                            Log.i(TAG, "Collecting 25th Gem! Final ad will play now. Bot remains ACTIVE to close the ad before stopping on the 25 gems page.");
+                        }
 
-                    Log.i(TAG, "Found Action/Claim/Verify button: " + collectGemNode.text + " (Tap #" + collectGemTapCount + ") at " + collectGemNode.rect);
-                    tapNode(collectGemNode);
-                    lastTapTime = now + 1500;
-                    lastSolvedTarget = "";
-                    lastSolveTime = 0;
-                    currentStatus = "Collecting Gem (Waiting for ad)...";
-                    adStartTime = 0;
-                    return;
+                        Log.i(TAG, "Found Action/Claim/Verify button: " + collectGemNode.text + " (Tap #" + collectGemTapCount + ") at " + collectGemNode.rect);
+                        tapNode(collectGemNode);
+                        lastTapTime = now + 1500;
+                        lastSolvedTarget = "";
+                        lastSolveTime = 0;
+                        currentStatus = "Collecting Gem (Waiting for ad)...";
+                        adStartTime = 0;
+                        return;
+                    } else if (isButtonLoading) {
+                        currentStatus = "Waiting for ad to load (" + (elapsedOnCollect / 1000) + "s)...";
+                        return;
+                    }
                 } else {
-                    collectGemScreenStartTime = 0;
-                    collectGemTapCount = 0;
+                    if (now - lastSeenCollectionScreenTime > 2500) {
+                        collectGemScreenStartTime = 0;
+                        collectGemTapCount = 0;
+                    }
                 }
 
                 for (NodeItem item : allNodes) {
@@ -1936,7 +1964,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             t.contains("\u276F\u276F") || t.contains(">|") || t.contains("\u25B6\u25B6") || 
             t.contains("\u23ED") || t.contains("\u23E9") ||
             d.contains(">>") || d.contains("\u203A\u203A") || d.contains("\u00BB") || 
-            d.contains("\u276F\u276F") || d.contains("fast forward")) {
+            d.contains("\u276F\u276F") || d.contains("fast forward") ||
+            d.contains("\u23ED") || d.contains("\u23E9") || d.contains(">|")) {
             return true;
         }
 
