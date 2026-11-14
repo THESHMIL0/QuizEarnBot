@@ -122,10 +122,13 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             if (isRunning) {
                 try {
                     solveScreen();
-                } catch (Exception e) {
-                    Log.e(TAG, "Error in solveScreen", e);
+                } catch (Throwable t) {
+                    Log.e(TAG, "FATAL error in solveScreen", t);
+                } finally {
+                    if (isRunning) {
+                        loopHandler.postDelayed(this, 200);
+                    }
                 }
-                loopHandler.postDelayed(this, 200);
             }
         }
     };
@@ -1605,7 +1608,11 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     }
 
     private void collectAllNodes(AccessibilityNodeInfo node, List<NodeItem> list) {
-        if (node == null) return;
+        collectAllNodes(node, list, 0);
+    }
+
+    private void collectAllNodes(AccessibilityNodeInfo node, List<NodeItem> list, int depth) {
+        if (node == null || depth > 25 || list.size() > 450) return;
 
         CharSequence pkgSeq = node.getPackageName();
         String nodePkg = (pkgSeq != null) ? pkgSeq.toString() : "";
@@ -1649,7 +1656,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         for (int i = 0; i < node.getChildCount(); i++) {
             AccessibilityNodeInfo child = node.getChild(i);
             if (child != null) {
-                collectAllNodes(child, list);
+                collectAllNodes(child, list, depth + 1);
             }
         }
     }
@@ -2091,6 +2098,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         lastProgressTime = now;
 
         // Search for action buttons and active installation status in Play Store
+        int screenW = getResources().getDisplayMetrics().widthPixels;
         int screenH = getResources().getDisplayMetrics().heightPixels;
         NodeItem installButton = null;
         NodeItem openButton = null;
@@ -2114,7 +2122,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
         }
-        int heroCutoffY = Math.min((int)(screenH * 0.45), suggestionDividerY);
+        int heroCutoffY = (suggestionDividerY != Integer.MAX_VALUE) ? suggestionDividerY : (int)(screenH * 0.70);
         boolean isTargetAppAlreadyInstalled = false;
 
         for (NodeItem item : allNodes) {
@@ -2217,6 +2225,23 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             playStoreOpenSeenTime = 0;
             lastTapTime = now + 2000;
             return;
+        }
+
+        // Case 3B: If no action button found in Play Store after 4s, scroll down; after 10s, retry ad
+        if (installButton == null && !isPlayStoreActiveInstall && openButton == null && offerState == OFFER_STATE_PLAYSTORE) {
+            long waitInPlayStore = (now - offerStateStartTime) / 1000;
+            if (waitInPlayStore >= 10) {
+                Log.w(TAG, "Play Store listing open for " + waitInPlayStore + "s but no Install button found! Pressing Back to retry ad...");
+                performGlobalAction(GLOBAL_ACTION_BACK);
+                offerState = OFFER_STATE_IDLE;
+                lastTapTime = now + 1500;
+                return;
+            } else if (waitInPlayStore >= 4) {
+                currentStatus = "Play Store: Scrolling for Install (" + waitInPlayStore + "s)...";
+                swipeCoordinates(screenW / 2, (int)(screenH * 0.70), screenW / 2, (int)(screenH * 0.40), 300);
+                lastTapTime = now + 1200;
+                return;
+            }
         }
 
         // Case 4: We are in INSTALLING state, waiting for installation to fully stabilize & show "Open"
