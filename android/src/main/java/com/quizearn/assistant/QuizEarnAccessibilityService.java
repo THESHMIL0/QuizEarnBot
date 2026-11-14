@@ -873,12 +873,12 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 // Keep progress active while ad is running (so stall timer never triggers upon ad completion)
                 lastProgressTime = now;
 
-                // Progressive Universal Close taps (top-right skip pill, corner close X, top-left corner, and Back key)
-                long minAdElapsed = hasAdCountdown ? 20 : 8;
+                // Progressive Universal Close taps (corner close X, Back key, top-left corner)
+                long minAdElapsed = hasAdCountdown ? 16 : 8;
                 if (adElapsed >= minAdElapsed && (now - lastTapTime > 1800)) {
-                    // Only after 120s+ of total ad unresponsiveness: soft-bring Quiz & Earn to front (NEVER kill app)
-                    if (adElapsed >= 120) {
-                        Log.w(TAG, "Ad exceeded 120s timeout without dismissing. Bringing Quiz & Earn to front...");
+                    // Only after 38s+ of total ad unresponsiveness: soft-bring Quiz & Earn to front (NEVER kill app)
+                    if (adElapsed >= 38) {
+                        Log.w(TAG, "Ad exceeded 38s timeout without dismissing. Bringing Quiz & Earn to front...");
                         bringQuizAppToFront();
                         lastTapTime = now + 3000;
                         lastProgressTime = now;
@@ -1981,11 +1981,6 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             t.contains("reward in") || d.contains("reward in") ||
             t.contains("seconds after") || d.contains("seconds after") ||
             id.contains("countdown")) {
-            return false;
-        }
-
-        // Do not close prematurely while countdown is active
-        if (hasAdCountdown) {
             return false;
         }
 
