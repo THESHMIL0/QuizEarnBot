@@ -144,7 +144,9 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         offerTargetPackage = "";
         appUsageStartTime = 0;
         appIsDuplicate = false;
-        baselinePackages.clear();
+        if (instance != null) {
+            baselinePackages = instance.snapshotInstalledPackages();
+        }
         currentStatus = "Scanning...";
         Log.i(TAG, "startSolving called! instance = " + instance);
         if (instance != null) {
@@ -313,7 +315,9 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         } catch (Exception e) {
             Log.e(TAG, "Error loading super_offer_enabled pref", e);
         }
-        baselinePackages = snapshotInstalledPackages();
+        if (instance != null) {
+            baselinePackages = instance.snapshotInstalledPackages();
+        }
         Log.i(TAG, "Quiz Math Assistant connected successfully. isUserRunning=" + isUserRunning);
         if (isUserRunning) {
             startSolving();
@@ -2257,16 +2261,16 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                         offerTargetPackage = newPkg;
                     }
                 }
-
-                // If OS hasn't confirmed installation yet, stay in Play Store
                 if (newPkg == null || newPkg.isEmpty()) {
-                    currentStatus = "Waiting for OS package registration (" + installElapsed + "s)...";
-                    return;
+                    newPkg = findMostRecentInstalledPackage();
+                    if (newPkg != null && !newPkg.isEmpty()) {
+                        offerTargetPackage = newPkg;
+                    }
                 }
 
                 if (playStoreOpenSeenTime == 0) {
                     playStoreOpenSeenTime = now;
-                    Log.i(TAG, "Play Store shows 'Open' and package " + newPkg + " is registered! Waiting 3s for stabilization...");
+                    Log.i(TAG, "Play Store shows 'Open' (pkg=" + (newPkg != null ? newPkg : "detecting") + ")! Waiting 3s for stabilization...");
                     currentStatus = "Finalizing Install (3s)...";
                     return;
                 }
@@ -2752,7 +2756,9 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
             Log.i(TAG, "⚡ Super Offer 'Start Offer' button detected! Tapping at " + startOfferBtn.rect + " to play offer ad...");
             currentStatus = "Starting Offer Ad...";
-            baselinePackages = snapshotInstalledPackages();
+            if (instance != null) {
+            baselinePackages = instance.snapshotInstalledPackages();
+        }
             tapNode(startOfferBtn);
             offerState = OFFER_STATE_AD_PLAYING;
             adStartTime = now;

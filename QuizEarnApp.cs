@@ -1296,11 +1296,12 @@ public class QuizEarnApp : Form
                     // 1. Connect to this instance port
                     RunAdb(string.Format("connect {0}", targetDev));
                     string state = RunAdbDevice(targetDev, "get-state").Trim();
-                    bool isDeviceOnline = state.Contains("device");
+                    bool isDeviceOnline = state.Equals("device", StringComparison.OrdinalIgnoreCase);
 
                     // If offline and auto-recovery is enabled:
                     if (!isDeviceOnline && autoRecoverBlueStacks)
                     {
+                        RunAdb(string.Format("disconnect {0}", targetDev));
                         if (bstExe == null) bstExe = DetectBlueStacks(out unusedArg);
                         if (!string.IsNullOrEmpty(bstExe) && File.Exists(bstExe))
                         {
@@ -1309,6 +1310,7 @@ public class QuizEarnApp : Form
                             {
                                 ProcessStartInfo psi = new ProcessStartInfo();
                                 psi.FileName = bstExe;
+                                psi.WorkingDirectory = Path.GetDirectoryName(bstExe);
                                 psi.Arguments = string.Format("--instance {0}", inst.InstanceName);
                                 psi.UseShellExecute = true;
                                 Process.Start(psi);
@@ -3237,7 +3239,7 @@ public class QuizEarnApp : Form
             try
             {
                 string state = RunAdb("get-state").Trim();
-                if (state.Contains("device"))
+                if (state.Equals("device", StringComparison.OrdinalIgnoreCase))
                 {
                     adbAlive = true;
                 }
@@ -3267,6 +3269,7 @@ public class QuizEarnApp : Form
             {
                 ProcessStartInfo psi = new ProcessStartInfo();
                 psi.FileName = bstExe;
+                psi.WorkingDirectory = Path.GetDirectoryName(bstExe);
                 psi.Arguments = bstArgs;
                 psi.UseShellExecute = true;
                 Process.Start(psi);
@@ -3327,7 +3330,7 @@ public class QuizEarnApp : Form
             string targetDev = "127.0.0.1:" + inst.Port;
             RunAdb(string.Format("connect {0}", targetDev));
             string state = RunAdbDevice(targetDev, "get-state").Trim();
-            if (state.Contains("device"))
+            if (state.Equals("device", StringComparison.OrdinalIgnoreCase))
             {
                 RunAdbDevice(targetDev, "shell settings put secure enabled_accessibility_services com.quizearn.assistant/.QuizEarnAccessibilityService");
                 RunAdbDevice(targetDev, "shell settings put secure accessibility_enabled 1");
