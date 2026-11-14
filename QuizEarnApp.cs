@@ -1327,41 +1327,41 @@ public class QuizEarnApp : Form
                         connectedCount++;
                         if (string.IsNullOrEmpty(adbPort)) adbPort = targetDev;
 
-                        // 2. Check Android boot completion
-                        string boot = RunAdbDevice(targetDev, "shell getprop sys.boot_completed").Trim();
-                        if (boot == "1")
+                        // 2. ONLY run watchdog recovery actions if Watchdog is explicitly ON!
+                        if (autoRecoverBlueStacks)
                         {
-                            // A. Ensure Accessibility Service is enabled for APK Bot
-                            string secServices = RunAdbDevice(targetDev, "shell settings get secure enabled_accessibility_services");
-                            if (!secServices.Contains("com.quizearn.assistant/.QuizEarnAccessibilityService"))
+                            string boot = RunAdbDevice(targetDev, "shell getprop sys.boot_completed").Trim();
+                            if (boot == "1")
                             {
-                                RunAdbDevice(targetDev, "shell settings put secure enabled_accessibility_services com.quizearn.assistant/.QuizEarnAccessibilityService");
-                                RunAdbDevice(targetDev, "shell settings put secure accessibility_enabled 1");
-                                Log(string.Format("[🛡️ APK Watchdog] Enabled Accessibility Service on {0} ({1}).", inst.DisplayName, targetDev));
-                            }
+                                // A. Ensure Accessibility Service is enabled for APK Bot
+                                string secServices = RunAdbDevice(targetDev, "shell settings get secure enabled_accessibility_services");
+                                if (!secServices.Contains("com.quizearn.assistant/.QuizEarnAccessibilityService"))
+                                {
+                                    RunAdbDevice(targetDev, "shell settings put secure enabled_accessibility_services com.quizearn.assistant/.QuizEarnAccessibilityService");
+                                    RunAdbDevice(targetDev, "shell settings put secure accessibility_enabled 1");
+                                    Log(string.Format("[🛡️ APK Watchdog] Enabled Accessibility Service on {0} ({1}).", inst.DisplayName, targetDev));
+                                }
 
-                            // B. Ensure Quiz & Earn App is running (if closed or at home launcher)
-                            string curFocus = RunAdbDevice(targetDev, "shell \"dumpsys window | grep mCurrentFocus\"");
-                            string pidQuiz = RunAdbDevice(targetDev, "shell pidof com.quiz.earn.money.game").Trim();
-                            bool isLauncher = curFocus.Contains("launcher") || curFocus.Contains("home") || curFocus.Contains("com.bluestacks");
-                            bool relaunchedApp = false;
-                            if (string.IsNullOrEmpty(pidQuiz) || isLauncher)
-                            {
-                                RunAdbDevice(targetDev, "shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
-                                Log(string.Format("[🛡️ APK Watchdog] Relaunched Quiz & Earn app on {0} ({1}).", inst.DisplayName, targetDev));
-                                relaunchedApp = true;
-                                Thread.Sleep(2000);
-                            }
+                                // B. Ensure Quiz & Earn App is running (only if crashed/killed to launcher)
+                                string curFocus = RunAdbDevice(targetDev, "shell \"dumpsys window | grep mCurrentFocus\"");
+                                string pidQuiz = RunAdbDevice(targetDev, "shell pidof com.quiz.earn.money.game").Trim();
+                                bool isLauncher = curFocus.Contains("launcher") || curFocus.Contains("home") || curFocus.Contains("com.bluestacks");
+                                bool relaunchedApp = false;
+                                if (string.IsNullOrEmpty(pidQuiz) || isLauncher)
+                                {
+                                    RunAdbDevice(targetDev, "shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
+                                    Log(string.Format("[🛡️ APK Watchdog] Relaunched Quiz & Earn app on {0} ({1}).", inst.DisplayName, targetDev));
+                                    relaunchedApp = true;
+                                    Thread.Sleep(2000);
+                                }
 
-                            // C. Ensure APK Bot is running AND ACTIVELY SOLVING in players
-                            string botDump = RunAdbDevice(targetDev, "shell dumpsys activity service com.quizearn.assistant");
-                            string pidBot = RunAdbDevice(targetDev, "shell pidof com.quizearn.assistant").Trim();
-                            bool isBotActive = botDump.Contains("QUIZEARN_BOT_STATE=RUNNING");
-
-                            if (relaunchedApp || string.IsNullOrEmpty(pidBot) || !isBotActive)
-                            {
-                                RunAdbDevice(targetDev, "shell am start-foreground-service -a com.quizearn.assistant.START com.quizearn.assistant/.FloatingOverlayService");
-                                Log(string.Format("[🛡️ APK Watchdog] Turned ON and started APK Bot on {0} ({1})!", inst.DisplayName, targetDev));
+                                // C. Ensure APK Bot is running in players (only if process died or app was freshly relaunched)
+                                string pidBot = RunAdbDevice(targetDev, "shell pidof com.quizearn.assistant").Trim();
+                                if (relaunchedApp || string.IsNullOrEmpty(pidBot))
+                                {
+                                    RunAdbDevice(targetDev, "shell am start-foreground-service -a com.quizearn.assistant.START com.quizearn.assistant/.FloatingOverlayService");
+                                    Log(string.Format("[🛡️ APK Watchdog] Turned ON and started APK Bot on {0} ({1})!", inst.DisplayName, targetDev));
+                                }
                             }
                         }
                     }
@@ -1377,8 +1377,16 @@ public class QuizEarnApp : Form
                             UpdatePortLabel(string.Format("Multi-Instance ({0}/{1} Online)", connectedCount, instances.Count));
                             if (!isRunning && !isAutoOffering && !isBoosting)
                             {
-                                lblStatus.Text = string.Format("🛡️ WATCHDOG ACTIVE ({0}/{1} Devices Healthy)", connectedCount, instances.Count);
-                                lblStatus.ForeColor = Color.FromArgb(76, 175, 80);
+                                if (autoRecoverBlueStacks)
+                                {
+                                    lblStatus.Text = string.Format("🛡️ WATCHDOG ACTIVE ({0}/{1} Devices Healthy)", connectedCount, instances.Count);
+                                    lblStatus.ForeColor = Color.FromArgb(76, 175, 80);
+                                }
+                                else
+                                {
+                                    lblStatus.Text = string.Format("🛡️ WATCHDOG PAUSED ({0}/{1} Connected)", connectedCount, instances.Count);
+                                    lblStatus.ForeColor = Color.FromArgb(140, 140, 145);
+                                }
                             }
                         }));
                     }
@@ -1418,7 +1426,30 @@ public class QuizEarnApp : Form
             chkSettingsAutoRecoverBst.Checked = autoRecoverBlueStacks;
         }
         SaveStatsToFile();
-        Log(string.Format("[🛡️ Watchdog] APK Bot Watchdog {0} by user.", autoRecoverBlueStacks ? "ACTIVATED" : "PAUSED"));
+        Log(string.Format("[🛡️ Watchdog] APK Bot Watchdog {0} by user.", autoRecoverBlueStacks ? "ACTIVATED (ON)" : "PAUSED (OFF)"));
+
+        // If Watchdog turned OFF, pause APK bots across all players so user can claim coins undisturbed!
+        new Thread(new ThreadStart(delegate {
+            try
+            {
+                List<BlueStacksInstance> instances = DiscoverBlueStacksInstances();
+                string action = autoRecoverBlueStacks ? "START" : "STOP";
+                foreach (var inst in instances)
+                {
+                    RunAdbDevice("127.0.0.1:" + inst.Port, string.Format("shell am start-foreground-service -a com.quizearn.assistant.{0} com.quizearn.assistant/.FloatingOverlayService", action));
+                }
+            }
+            catch {}
+        })).Start();
+
+        if (!autoRecoverBlueStacks)
+        {
+            Log("[🛡️ Watchdog] Paused all APK bots across all players so you can freely claim coins!");
+        }
+        else
+        {
+            Log("[🛡️ Watchdog] Resumed all APK bots across all players!");
+        }
     }
 
     private void UpdateWatchdogButtonState()
