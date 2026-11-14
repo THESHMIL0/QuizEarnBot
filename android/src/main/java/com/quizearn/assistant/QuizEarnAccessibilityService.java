@@ -1048,6 +1048,33 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
+            // Check if we are stuck on the Daily Rewards / Missions / Tasks tab -> Return to Home
+            boolean isDailyRewardsScreen = false;
+            NodeItem homeTabBtn = null;
+            for (NodeItem item : allNodes) {
+                String t = item.text.trim().toLowerCase();
+                String d = item.contentDesc.trim().toLowerCase();
+                if (t.contains("daily rewards") || d.contains("daily rewards") ||
+                    t.contains("daily missions") || d.contains("daily missions") ||
+                    t.contains("daily tasks") || d.contains("daily tasks")) {
+                    isDailyRewardsScreen = true;
+                }
+                if (t.equals("home") || d.equals("home")) {
+                    homeTabBtn = item;
+                }
+            }
+            if (isDailyRewardsScreen) {
+                if (homeTabBtn != null) {
+                    Log.i(TAG, "On Daily Rewards screen: Tapping Home tab at " + homeTabBtn.rect);
+                    tapNode(homeTabBtn);
+                } else {
+                    performGlobalAction(GLOBAL_ACTION_BACK);
+                }
+                lastTapTime = now + 1500;
+                lastProgressTime = now;
+                return;
+            }
+
             // Check if we are on the Main Home Screen (User greeting, Task Partners, Leaderboard, Super/Mega Offer cards)
             boolean isHomeScreen = false;
             NodeItem homeSuperOfferClaimBtn = null;
@@ -1268,7 +1295,10 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                         currentStatus = "Collecting Gem (Waiting for ad)...";
                         adStartTime = 0;
                         return;
-                    } else if (t.equals("collect") || t.startsWith("claim") || d.startsWith("claim") ||
+                    } else if (t.equals("collect") || 
+                               ((t.startsWith("claim") || d.startsWith("claim")) && 
+                                !t.contains("daily") && !t.contains("bonus") && !t.contains("claimed") && 
+                                !d.contains("daily") && !d.contains("bonus") && !d.contains("claimed")) ||
                                t.contains("verify usage") || t.equals("verify") || d.contains("verify usage")) {
                         Log.i(TAG, "Found Action/Claim/Verify button: " + item.text + " at " + item.rect);
                         tapNode(item);

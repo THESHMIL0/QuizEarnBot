@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -198,8 +198,8 @@ public class QuizEarnApp : Form
     private List<string> claimsHistory = new List<string>();
 
     // App Version & Cloud Auto-Updater State
-    private const string APP_VERSION = "2.6";
-    private const int APP_VERSION_CODE = 260;
+    private const string APP_VERSION = "2.7";
+    private const int APP_VERSION_CODE = 270;
     private bool autoRecoverBlueStacks = true;
     private string updateFeedUrl = "https://raw.githubusercontent.com/THESHMIL0/QuizEarnBot/main/version.json";
     private string remoteVersion = "";
@@ -1068,7 +1068,7 @@ public class QuizEarnApp : Form
 
         chkSettingsAutoRecoverBst = new DarkToggleSwitch();
         chkSettingsAutoRecoverBst.Checked = autoRecoverBlueStacks;
-        CreateToggleRow(pnlPrefsCard, "Auto-launch BlueStacks on crash / disconnect", chkSettingsAutoRecoverBst, 162, () => {
+        CreateToggleRow(pnlPrefsCard, "Auto-Watchdog: Restore BlueStacks + APK Bot on crash", chkSettingsAutoRecoverBst, 162, () => {
             autoRecoverBlueStacks = chkSettingsAutoRecoverBst.Checked;
             SaveStatsToFile();
         });
@@ -1187,57 +1187,201 @@ public class QuizEarnApp : Form
         watcherThread.Start();
     }
 
+    private class BlueStacksInstance
+    {
+        public string InstanceName;
+        public string DisplayName;
+        public string Port;
+    }
+
+    private List<BlueStacksInstance> DiscoverBlueStacksInstances()
+    {
+        List<BlueStacksInstance> list = new List<BlueStacksInstance>();
+        string[] confCandidates = new string[]
+        {
+            @"C:\ProgramData\BlueStacks_nxt\bluestacks.conf",
+            @"D:\ProgramData\BlueStacks_nxt\bluestacks.conf",
+            @"E:\ProgramData\BlueStacks_nxt\bluestacks.conf",
+            @"C:\ProgramData\BlueStacks\bluestacks.conf"
+        };
+
+        foreach (string confPath in confCandidates)
+        {
+            if (File.Exists(confPath))
+            {
+                try
+                {
+                    string conf = File.ReadAllText(confPath);
+                    MatchCollection matches = Regex.Matches(conf, @"bst\.instance\.([^.]+)\.(?:status\.)?adb_port=""(\d+)""");
+                    Dictionary<string, string> instPorts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (Match m in matches)
+                    {
+                        string inst = m.Groups[1].Value.Trim();
+                        string p = m.Groups[2].Value.Trim();
+                        instPorts[inst] = p;
+                    }
+
+                    foreach (var kvp in instPorts)
+                    {
+                        string inst = kvp.Key;
+                        string port = kvp.Value;
+                        string displayName = inst;
+                        Match mName = Regex.Match(conf, @"bst\.instance\." + Regex.Escape(inst) + @"\.display_name=""([^""]+)""");
+                        if (mName.Success) displayName = mName.Groups[1].Value.Trim();
+
+                        bool exists = false;
+                        foreach (var item in list)
+                        {
+                            if (item.Port == port || item.InstanceName.Equals(inst, StringComparison.OrdinalIgnoreCase))
+                            {
+                                exists = true;
+                                break;
+                            }
+                        }
+                        if (!exists)
+                        {
+                            list.Add(new BlueStacksInstance { InstanceName = inst, DisplayName = displayName, Port = port });
+                        }
+                    }
+                    if (list.Count > 0) break;
+                }
+                catch {}
+            }
+        }
+
+        if (list.Count == 0)
+        {
+            list.Add(new BlueStacksInstance { InstanceName = "Tiramisu64", DisplayName = "BlueStacks App Player 1", Port = "5556" });
+            list.Add(new BlueStacksInstance { InstanceName = "Tiramisu64_3", DisplayName = "BlueStacks App Player 3", Port = "5585" });
+            list.Add(new BlueStacksInstance { InstanceName = "Tiramisu64_4", DisplayName = "BlueStacks App Player 4", Port = "5595" });
+        }
+
+        return list;
+    }
+
     private void UniversalAdbAutoWatchLoop()
     {
+        int checkCycle = 0;
         while (!this.IsDisposed)
         {
             try
             {
-                if (!isRunning)
+                checkCycle++;
+                List<BlueStacksInstance> instances = DiscoverBlueStacksInstances();
+                int connectedCount = 0;
+                string bstExe = null;
+                string unusedArg;
+
+                foreach (var inst in instances)
                 {
-                    bool connected = EnsureConnected();
-                    if (connected)
+                    string targetDev = "127.0.0.1:" + inst.Port;
+
+                    // 1. Connect to this instance port
+                    RunAdb(string.Format("connect {0}", targetDev));
+                    string state = RunAdbDevice(targetDev, "get-state").Trim();
+                    bool isDeviceOnline = state.Contains("device");
+
+                    // If offline and auto-recovery is enabled:
+                    if (!isDeviceOnline && autoRecoverBlueStacks)
                     {
-                        if (!isAdbConnected)
+                        if (bstExe == null) bstExe = DetectBlueStacks(out unusedArg);
+                        if (!string.IsNullOrEmpty(bstExe) && File.Exists(bstExe))
                         {
-                            isAdbConnected = true;
-                            UpdatePortLabel(adbPort);
-                            Log(string.Format("[ADB] Auto-connected to device on {0}! Ready to start.", adbPort));
-                            if (this.InvokeRequired)
+                            Log(string.Format("[🛡️ APK Watchdog] BlueStacks '{0}' ({1}) offline! Auto-launching...", inst.DisplayName, targetDev));
+                            try
                             {
-                                SafeBeginInvoke(new Action(delegate {
-                                    if (!isRunning)
-                                    {
-                                        lblStatus.Text = string.Format("READY (Connected: {0})", adbPort);
-                                        lblStatus.ForeColor = Color.FromArgb(135, 135, 140);
-                                    }
-                                }));
+                                ProcessStartInfo psi = new ProcessStartInfo();
+                                psi.FileName = bstExe;
+                                psi.Arguments = string.Format("--instance {0}", inst.InstanceName);
+                                psi.UseShellExecute = true;
+                                Process.Start(psi);
+                            }
+                            catch (Exception ex)
+                            {
+                                Log(string.Format("[🛡️ APK Watchdog] Launch error on {0}: {1}", inst.InstanceName, ex.Message));
                             }
                         }
                     }
-                    else
+
+                    if (isDeviceOnline)
                     {
-                        if (isAdbConnected)
+                        connectedCount++;
+                        if (string.IsNullOrEmpty(adbPort)) adbPort = targetDev;
+
+                        // 2. Check Android boot completion
+                        string boot = RunAdbDevice(targetDev, "shell getprop sys.boot_completed").Trim();
+                        if (boot == "1")
                         {
-                            isAdbConnected = false;
-                            UpdatePortLabel("Waiting for ADB (Turn on ADB)...");
-                            if (this.InvokeRequired)
+                            // A. Ensure Accessibility Service is enabled for APK Bot
+                            string secServices = RunAdbDevice(targetDev, "shell settings get secure enabled_accessibility_services");
+                            if (!secServices.Contains("com.quizearn.assistant/.QuizEarnAccessibilityService"))
                             {
-                                SafeBeginInvoke(new Action(delegate {
-                                    if (!isRunning)
-                                    {
-                                        lblStatus.Text = "WAITING FOR ADB (Turn on ADB)";
-                                        lblStatus.ForeColor = Color.FromArgb(95, 95, 100);
-                                    }
-                                }));
+                                RunAdbDevice(targetDev, "shell settings put secure enabled_accessibility_services com.quizearn.assistant/.QuizEarnAccessibilityService");
+                                RunAdbDevice(targetDev, "shell settings put secure accessibility_enabled 1");
+                                Log(string.Format("[🛡️ APK Watchdog] Enabled Accessibility Service on {0} ({1}).", inst.DisplayName, targetDev));
                             }
-                            Log("[ADB] Device connection lost. Auto-reconnecting...");
+
+                            // B. Ensure Quiz & Earn App is running (if closed or at home launcher)
+                            string curFocus = RunAdbDevice(targetDev, "shell \"dumpsys window | grep mCurrentFocus\"");
+                            string pidQuiz = RunAdbDevice(targetDev, "shell pidof com.quiz.earn.money.game").Trim();
+                            bool isLauncher = curFocus.Contains("launcher") || curFocus.Contains("home") || curFocus.Contains("com.bluestacks");
+                            if (string.IsNullOrEmpty(pidQuiz) || isLauncher)
+                            {
+                                RunAdbDevice(targetDev, "shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
+                                Log(string.Format("[🛡️ APK Watchdog] Relaunched Quiz & Earn app on {0} ({1}).", inst.DisplayName, targetDev));
+                                Thread.Sleep(1500);
+                            }
+
+                            // C. Ensure APK Bot foreground service is running
+                            string pidBot = RunAdbDevice(targetDev, "shell pidof com.quizearn.assistant").Trim();
+                            if (string.IsNullOrEmpty(pidBot))
+                            {
+                                RunAdbDevice(targetDev, "shell am start-foreground-service -a com.quizearn.assistant.START com.quizearn.assistant/.FloatingOverlayService");
+                                Log(string.Format("[🛡️ APK Watchdog] Started QuizEarn APK Bot foreground service on {0} ({1}).", inst.DisplayName, targetDev));
+                            }
                         }
                     }
                 }
+
+                // Update UI state
+                if (connectedCount > 0)
+                {
+                    isAdbConnected = true;
+                    if (this.InvokeRequired)
+                    {
+                        SafeBeginInvoke(new Action(delegate {
+                            UpdatePortLabel(string.Format("Multi-Instance ({0}/{1} Online)", connectedCount, instances.Count));
+                            if (!isRunning && !isAutoOffering && !isBoosting)
+                            {
+                                lblStatus.Text = string.Format("🛡️ WATCHDOG ACTIVE ({0}/{1} Devices Healthy)", connectedCount, instances.Count);
+                                lblStatus.ForeColor = Color.FromArgb(76, 175, 80);
+                            }
+                        }));
+                    }
+                }
+                else
+                {
+                    isAdbConnected = false;
+                    if (this.InvokeRequired)
+                    {
+                        SafeBeginInvoke(new Action(delegate {
+                            UpdatePortLabel("Waiting for BlueStacks / ADB...");
+                            if (!isRunning && !isAutoOffering && !isBoosting)
+                            {
+                                lblStatus.Text = "WAITING FOR BLUESTACKS / ADB";
+                                lblStatus.ForeColor = Color.FromArgb(95, 95, 100);
+                            }
+                        }));
+                    }
+                }
+
+                if (checkCycle % 5 == 0 && connectedCount > 0)
+                {
+                    Log(string.Format("[🛡️ APK Watchdog] Status OK: {0}/{1} BlueStacks instance(s) running & APK bot active.", connectedCount, instances.Count));
+                }
             }
             catch {}
-            Thread.Sleep(2500);
+            Thread.Sleep(12000);
         }
     }
 
@@ -1334,8 +1478,12 @@ public class QuizEarnApp : Form
                     {
                         RunAdb(string.Format("-s {0} shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1", dev));
                     }
+                    // Auto-enable Accessibility & start QuizEarn APK Bot on restart!
+                    RunAdb(string.Format("-s {0} shell settings put secure enabled_accessibility_services com.quizearn.assistant/.QuizEarnAccessibilityService", dev));
+                    RunAdb(string.Format("-s {0} shell settings put secure accessibility_enabled 1", dev));
+                    RunAdb(string.Format("-s {0} shell am start-foreground-service -a com.quizearn.assistant.START com.quizearn.assistant/.FloatingOverlayService", dev));
                 }
-                Log(string.Format("[App] Quiz & Earn / Cash Mafia restarted cleanly on {0} device(s).", targetDevices.Count));
+                Log(string.Format("[App] Quiz & Earn / Cash Mafia & APK Bot restarted cleanly on {0} device(s).", targetDevices.Count));
             }
             catch (Exception ex)
             {
@@ -2645,6 +2793,12 @@ public class QuizEarnApp : Form
         }
     }
 
+    private string RunAdbDevice(string deviceId, string arguments)
+    {
+        if (string.IsNullOrEmpty(deviceId)) return RunAdb(arguments);
+        return RunAdb(string.Format("-s {0} {1}", deviceId, arguments));
+    }
+
     private string RunAdb(string arguments)
     {
         try
@@ -2652,6 +2806,7 @@ public class QuizEarnApp : Form
             Process p = new Process();
             p.StartInfo.FileName = adbExe;
             bool isGlobalCmd = string.IsNullOrEmpty(adbPort) || 
+                               arguments.StartsWith("-s ") ||
                                arguments.StartsWith("devices") || 
                                arguments.StartsWith("connect") || 
                                arguments.StartsWith("disconnect") || 
@@ -3070,16 +3225,20 @@ public class QuizEarnApp : Form
         }
 
         // Wait for Android OS to boot: sys.boot_completed == 1
-        Log("[ðŸ›¡ï¸ Watchdog] Waiting for BlueStacks Android OS to finish booting (up to 90s)...");
+        Log("[🛡️ APK Watchdog] Waiting for BlueStacks Android OS to finish booting (up to 90s)...");
         int waitSeconds = 0;
         bool bootCompleted = false;
 
+        List<BlueStacksInstance> instances = DiscoverBlueStacksInstances();
         while (waitSeconds < 90)
         {
             Thread.Sleep(3000);
             waitSeconds += 3;
 
-            RunAdb("connect 127.0.0.1:5555");
+            foreach (var inst in instances)
+            {
+                RunAdb(string.Format("connect 127.0.0.1:{0}", inst.Port));
+            }
 
             string bootProp = RunAdb("shell getprop sys.boot_completed").Trim();
             if (bootProp == "1")
@@ -3090,26 +3249,37 @@ public class QuizEarnApp : Form
 
             if (waitSeconds % 15 == 0)
             {
-                Log(string.Format("[ðŸ›¡ï¸ Watchdog] Still booting Android OS... ({0}s elapsed)", waitSeconds));
+                Log(string.Format("[🛡️ APK Watchdog] Still booting Android OS... ({0}s elapsed)", waitSeconds));
             }
         }
 
         if (!bootCompleted)
         {
-            Log("[ðŸ›¡ï¸ Watchdog] Android boot timeout (90s exceeded). Could not complete BlueStacks recovery.");
+            Log("[🛡️ APK Watchdog] Android boot timeout (90s exceeded). Could not complete BlueStacks recovery.");
             return false;
         }
 
-        Log("[ðŸ›¡ï¸ Watchdog] BlueStacks Android OS boot completed! Stabilizing services (4s)...");
-        Thread.Sleep(4000);
+        Log("[🛡️ APK Watchdog] BlueStacks Android OS boot completed! Stabilizing services (3s)...");
+        Thread.Sleep(3000);
 
         EnsureConnected();
 
-        Log("[ðŸ›¡ï¸ Watchdog] Relaunching Quiz & Earn to resume automation...");
-        RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
-        Thread.Sleep(3500);
+        foreach (var inst in instances)
+        {
+            string targetDev = "127.0.0.1:" + inst.Port;
+            RunAdb(string.Format("connect {0}", targetDev));
+            string state = RunAdbDevice(targetDev, "get-state").Trim();
+            if (state.Contains("device"))
+            {
+                RunAdbDevice(targetDev, "shell settings put secure enabled_accessibility_services com.quizearn.assistant/.QuizEarnAccessibilityService");
+                RunAdbDevice(targetDev, "shell settings put secure accessibility_enabled 1");
+                RunAdbDevice(targetDev, "shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
+                RunAdbDevice(targetDev, "shell am start-foreground-service -a com.quizearn.assistant.START com.quizearn.assistant/.FloatingOverlayService");
+            }
+        }
+        Thread.Sleep(2000);
 
-        Log(string.Format("[ðŸ›¡ï¸ Watchdog] Recovery successful! Resuming {0}...", callerContext));
+        Log(string.Format("[🛡️ APK Watchdog] Recovery successful! Resuming {0}...", callerContext));
         return true;
     }
 
