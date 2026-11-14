@@ -2396,13 +2396,25 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         }
     }
 
-    private String findMostRecentInstalledPackage() {
+    private boolean isPackageInstalledRecently(String packageName, long sinceTime) {
+        if (packageName == null || packageName.isEmpty()) return false;
+        try {
+            PackageManager pm = getPackageManager();
+            PackageInfo pi = pm.getPackageInfo(packageName, 0);
+            if (pi == null) return false;
+            long cutoff = (sinceTime > 0) ? (sinceTime - 10000L) : (System.currentTimeMillis() - 180000L);
+            return pi.firstInstallTime >= cutoff;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private String findMostRecentInstalledPackage(long minInstallTime) {
         try {
             PackageManager pm = getPackageManager();
             List<PackageInfo> pkgs = pm.getInstalledPackages(0);
             long newestTime = 0;
             String newestPkg = null;
-            long now = System.currentTimeMillis();
 
             for (PackageInfo p : pkgs) {
                 if (isQuizAppPackage(p.packageName) || 
@@ -2412,7 +2424,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     p.packageName.startsWith("com.bluestacks.")) {
                     continue;
                 }
-                if (now - p.firstInstallTime < 45 * 60 * 1000L) {
+                if (p.firstInstallTime >= minInstallTime) {
                     if (p.firstInstallTime > newestTime) {
                         newestTime = p.firstInstallTime;
                         newestPkg = p.packageName;
@@ -2424,6 +2436,10 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             Log.e(TAG, "Error finding newest package", e);
             return "";
         }
+    }
+
+    private String findMostRecentInstalledPackage() {
+        return findMostRecentInstalledPackage(System.currentTimeMillis() - 180000L);
     }
 
     private void uninstallApp(String packageName) {
@@ -2692,55 +2708,52 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             }
         }
 
-        // Case A: App Not Detected or Duplicate app confirmed failed (User Rule: Tap Restart / Try Different App / Go Back)
-        if (isAppNotDetected || appIsDuplicate) {
-            // Check if target app IS actually installed in OS
-            boolean isInstalledInOs = false;
-            if (offerTargetPackage != null && !offerTargetPackage.isEmpty()) {
-                try {
-                    isInstalledInOs = (getPackageManager().getPackageInfo(offerTargetPackage, 0) != null);
-                } catch (Exception ignored) {}
+        // Detect if ANY valid new package was actually installed in Android OS during this offer
+        String newlyInstalledPkg = null;
+        if (offerTargetPackage != null && !offerTargetPackage.isEmpty() && isPackageInstalledRecently(offerTargetPackage, offerStateStartTime)) {
+            newlyInstalledPkg = offerTargetPackage;
+        } else {
+            newlyInstalledPkg = detectNewlyInstalledPackage(baselinePackages);
+            if (newlyInstalledPkg == null || newlyInstalledPkg.isEmpty()) {
+                newlyInstalledPkg = findMostRecentInstalledPackage(offerStateStartTime > 0 ? (offerStateStartTime - 10000L) : (now - 180000L));
             }
-            // If package is installed and verify button is visible, retry up to 4 times with 3.5s delay (allows backend referrer sync)
-            if (isInstalledInOs && verifyBtn != null && verifyAttempts < 4 && !appIsDuplicate) {
+        }
+
+        // Case A: App Not Detected or Duplicate app confirmed failed
+        if (isAppNotDetected || appIsDuplicate) {
+            boolean isInstalledInOs = (newlyInstalledPkg != null && !newlyInstalledPkg.isEmpty());
+
+            // If package IS installed in OS and verify button is visible, retry verification up to 3 times
+            if (isInstalledInOs && verifyBtn != null && verifyAttempts < 3 && !appIsDuplicate) {
                 verifyAttempts++;
-                Log.w(TAG, "⚠️ Quiz & Earn says 'App not detected', but package " + offerTargetPackage + " IS installed in OS! Retrying verification (" + verifyAttempts + "/4) in 3.5s...");
-                currentStatus = "Retrying Verification (" + verifyAttempts + "/4)...";
+                Log.w(TAG, "⚠️ Quiz & Earn says 'App not detected', but package " + newlyInstalledPkg + " IS installed in OS! Retrying verification (" + verifyAttempts + "/3) in 3.5s...");
+                currentStatus = "Retrying Verification (" + verifyAttempts + "/3)...";
                 lastTapTime = now + 3500;
                 lastProgressTime = now;
                 tapNode(verifyBtn);
                 return true;
             }
 
-            NodeItem retryBtn = (restartOfferBtn != null) ? restartOfferBtn : goBackBtn;
-            if (retryBtn != null) {
-                Log.w(TAG, "⚠️ Duplicate App / Verification failed permanently! Tapping " + retryBtn.text + " to retry with new app...");
-                currentStatus = "Restarting Offer...";
-                if (offerTargetPackage != null && !offerTargetPackage.isEmpty()) {
-                    uninstallApp(offerTargetPackage);
-                    offerTargetPackage = "";
-                }
-                tapNode(retryBtn);
-                offerState = OFFER_STATE_IDLE;
-                appIsDuplicate = false;
-                verifyAttempts = 0;
-                lastTapTime = now + 1500;
-                return true;
+            // If NO valid app was installed in OS (ad failed to load / skipped), or duplicate / permanent failure:
+            // DO NOT loop between Restart Offer and Start Offer! Restart Quiz & Earn to reset ad networks!
+            Log.w(TAG, "⚠️ Verification failed / No app installed (ad failed to load). Restarting Quiz & Earn cleanly to reset ad networks...");
+            currentStatus = "Ad not loaded -> Restarting App";
+            if (offerTargetPackage != null && !offerTargetPackage.isEmpty()) {
+                uninstallApp(offerTargetPackage);
+                offerTargetPackage = "";
             }
+            restartQuizApp();
+            offerState = OFFER_STATE_IDLE;
+            appIsDuplicate = false;
+            verifyAttempts = 0;
+            lastTapTime = now + 4000;
+            return true;
         }
 
         // Case B: Verify button is present
         if (verifyBtn != null) {
-            String newPkg = (offerTargetPackage != null && !offerTargetPackage.isEmpty()) 
-                ? offerTargetPackage 
-                : detectNewlyInstalledPackage(baselinePackages);
-
-            if (newPkg == null || newPkg.isEmpty()) {
-                newPkg = findMostRecentInstalledPackage();
-            }
-
-            if (newPkg != null && !newPkg.isEmpty()) {
-                offerTargetPackage = newPkg;
+            if (newlyInstalledPkg != null && !newlyInstalledPkg.isEmpty()) {
+                offerTargetPackage = newlyInstalledPkg;
 
                 // Allow 2 seconds after returning from Play Store before tapping Verify
                 if (offerState == OFFER_STATE_VERIFYING && (now - offerStateStartTime < 2000)) {
@@ -2777,21 +2790,33 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     return true;
                 }
 
-                // If no app installed yet:
-                // If on Quiz app Super Offer screen but no app was installed (ad failed to open / no Play Store) for > 15s:
-                if (offerStateStartTime > 0 && (now - offerStateStartTime > 15000)) {
-                    Log.w(TAG, "⚠️ Super Offer ad failed to load / no app installed after 15s. Restarting Quiz & Earn cleanly to reset ad networks...");
-                    currentStatus = "Ad not loading -> Restarting App";
-                    restartQuizApp();
-                    offerState = OFFER_STATE_IDLE;
-                    offerTargetPackage = "";
-                    lastTapTime = now + 3500;
-                    return true;
-                }
-
-                currentStatus = "Waiting for app install...";
+                // Verify button is present, but NO app was installed!
+                // The ad failed to load, was closed prematurely, or didn't open Play Store.
+                // Restart Quiz & Earn immediately so ad networks reload and fresh ads can load!
+                Log.w(TAG, "⚠️ 'Verify Installation' visible on Super Offer page, but NO app was installed (ad failed to load / skipped)! Restarting Quiz & Earn cleanly to reset ad networks...");
+                currentStatus = "Ad not loaded -> Restarting App";
+                restartQuizApp();
+                offerState = OFFER_STATE_IDLE;
+                offerTargetPackage = "";
+                lastTapTime = now + 4000;
                 return true;
             }
+        }
+
+        // Case C: 'Restart Offer' button visible without any newly installed app
+        if (restartOfferBtn != null && (newlyInstalledPkg == null || newlyInstalledPkg.isEmpty())) {
+            Log.w(TAG, "⚠️ 'Restart Offer' visible but no app was installed (ad failed to load)! Restarting Quiz & Earn cleanly to reset ad networks...");
+            currentStatus = "Ad not loaded -> Restarting App";
+            if (offerTargetPackage != null && !offerTargetPackage.isEmpty()) {
+                uninstallApp(offerTargetPackage);
+                offerTargetPackage = "";
+            }
+            restartQuizApp();
+            offerState = OFFER_STATE_IDLE;
+            appIsDuplicate = false;
+            verifyAttempts = 0;
+            lastTapTime = now + 4000;
+            return true;
         }
 
         // 4. START OFFER PHASE (Works for both Milestone card & Detail page)
@@ -2889,15 +2914,15 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             }
         }
 
-        // Watchdog: If we tapped Start Offer to play an ad, but after 10s we are STILL on the detail page:
-        // The ad failed to load! Restart Quiz app cleanly!
-        if (isOfferDetailPage && offerState == OFFER_STATE_AD_PLAYING && (now - offerStateStartTime > 10000)) {
-            Log.w(TAG, "⚠️ Super Offer ad failed to load within 10s of tapping Start Offer! Restarting Quiz & Earn to reset ad networks...");
+        // Watchdog: If we tapped Start Offer to play an ad, but after 8s we are STILL in Quiz app (ad didn't launch / no fill):
+        // Restart Quiz app cleanly so ad networks reload!
+        if (offerState == OFFER_STATE_AD_PLAYING && (now - offerStateStartTime > 8000)) {
+            Log.w(TAG, "⚠️ Super Offer ad failed to load within 8s of tapping Start Offer! Restarting Quiz & Earn to reset ad networks...");
             currentStatus = "Ad not loading -> Restarting App";
             restartQuizApp();
             offerState = OFFER_STATE_IDLE;
             offerTargetPackage = "";
-            lastTapTime = now + 3500;
+            lastTapTime = now + 4000;
             return true;
         }
 
