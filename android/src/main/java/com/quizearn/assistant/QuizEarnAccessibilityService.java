@@ -1267,63 +1267,71 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             // 4. Check for "Collect Gem", "Claim", "Verify Usage", or Reward collection buttons (Normal Solving Loop)
             if (hasCollectGem || (!is25GemsOnScreen && offerState == OFFER_STATE_IDLE)) {
                 // Check if we are on the Quiz Complete / Gem Collection Screen (Waiting for Ad)
-                boolean isQuizCompleteCollectGemScreen = false;
-                boolean hasAdLoadErrorToast = false;
-                boolean hasActiveQuizQuestion = false;
-
-                for (NodeItem n : allNodes) {
-                    String nt = n.text.toLowerCase();
-                    String nd = n.contentDesc.toLowerCase();
-
-                    // Check for active quiz questions / options (prevents false matches on question screen!)
-                    if (nt.contains("question ") || nt.contains("?") || nt.contains(" = ") ||
-                        nt.matches(".*\\d+\\s*[+\\-xX/÷*]\\s*\\d+.*")) {
-                        hasActiveQuizQuestion = true;
-                    }
-
-                    if (nt.contains("congratulations") || nd.contains("congratulations") ||
-                        nt.contains("+1 gem") || nd.contains("+1 gem") ||
-                        nt.contains("watch an ad to collect your gem") || nd.contains("watch an ad to collect your gem") ||
-                        nt.equals("collect gem") || nd.equals("collect gem") ||
-                        nt.equals("collect reward") || nd.equals("collect reward")) {
-                        isQuizCompleteCollectGemScreen = true;
-                    }
-                    if (nt.contains("please watch the full ad") || nd.contains("please watch the full ad") ||
-                        nt.contains("ad not available") || nd.contains("failed to load ad")) {
-                        hasAdLoadErrorToast = true;
+                // Direct & Reliable Collect Gem Handler with Ad Load Failure Watchdog
+                boolean hasCollectGemButton = false;
+                NodeItem collectGemNode = null;
+                for (NodeItem item : allNodes) {
+                    if (isForbiddenElement(item)) continue;
+                    String t = item.text.trim().toLowerCase();
+                    String d = item.contentDesc.trim().toLowerCase();
+                    String combined = (t + " " + d).trim();
+                    if (combined.contains("collect gem") || combined.contains("collect reward")) {
+                        hasCollectGemButton = true;
+                        collectGemNode = item;
+                        break;
                     }
                 }
 
-                if (hasActiveQuizQuestion) {
-                    isQuizCompleteCollectGemScreen = false;
-                }
-
-                if (isQuizCompleteCollectGemScreen) {
+                if (hasCollectGemButton && collectGemNode != null) {
                     if (collectGemScreenStartTime == 0) {
                         collectGemScreenStartTime = now;
+                    }
+                    long elapsedOnCollect = now - collectGemScreenStartTime;
+
+                    // Watchdog: If tapping Collect Gem does not launch an ad within 12s or after 3 taps:
+                    // Ad fill failed / rate limited -> Restart app cleanly to unfreeze!
+                    if (collectGemTapCount >= 3 || elapsedOnCollect > 12000) {
+                        Log.w(TAG, "Ad not loading after tapping Collect Gem (" + (elapsedOnCollect / 1000) + "s on screen, taps=" + collectGemTapCount + "). Restarting app cleanly...");
+                        currentStatus = "Ad not loading -> Restarting App";
+                        collectGemScreenStartTime = 0;
                         collectGemTapCount = 0;
+                        restartQuizApp();
+                        lastTapTime = now + 3500;
+                        return;
                     }
 
-                    long elapsedOnCollectScreen = now - collectGemScreenStartTime;
+                    // Debounce: Wait 2.0s between taps on Collect Gem to allow ad to open
+                    if (collectGemTapCount > 0 && (now - lastTapTime < 2000)) {
+                        return;
+                    }
+                    collectGemTapCount++;
 
-                    // Watchdog: If the ad does not load after completing quiz within 10s of tapping Collect Gem:
-                    // Automatically restart the app cleanly as requested by user!
-                    // ONLY restart if we already attempted to tap collect gem at least once (collectGemTapCount > 0)!
-                    // NEVER restart if collectGemTapCount == 0 (we haven't even tapped Collect Gem yet!)
-                    if (collectGemTapCount > 0) {
-                        if ((collectGemTapCount >= 2 && elapsedOnCollectScreen > 8000) ||
-                            (hasAdLoadErrorToast && elapsedOnCollectScreen > 5000) ||
-                            (elapsedOnCollectScreen > 15000)) {
-                            Log.w(TAG, "Ad not loading after completing quiz (" + (elapsedOnCollectScreen / 1000) + "s on Collect Gem screen, taps=" + collectGemTapCount + "). Restarting app cleanly as requested...");
-                            currentStatus = "Ad not loading -> Restarting App";
-                            collectGemScreenStartTime = 0;
-                            collectGemTapCount = 0;
-                            restartQuizApp();
-                            lastTapTime = now + 3500;
-                            lastProgressTime = now;
-                            return;
+                    // If we are at 24+ gems, this collection action starts the final ad for the 25th gem!
+                    boolean is24thGem = (liveGems >= 24);
+                    if (!is24thGem) {
+                        for (NodeItem n : allNodes) {
+                            String nt = n.text.toLowerCase();
+                            String nd = n.contentDesc.toLowerCase();
+                            if (nt.contains("24/25") || nd.contains("24/25") || nt.contains("24 / 25") || nd.contains("24 / 25")) {
+                                is24thGem = true;
+                                break;
+                            }
                         }
                     }
+                    if (is24thGem) {
+                        isCollecting25thGem = true;
+                        finalAdStarted = false;
+                        Log.i(TAG, "Collecting 25th Gem! Final ad will play now. Bot remains ACTIVE to close the ad before stopping on the 25 gems page.");
+                    }
+
+                    Log.i(TAG, "Found Action/Claim/Verify button: " + collectGemNode.text + " (Tap #" + collectGemTapCount + ") at " + collectGemNode.rect);
+                    tapNode(collectGemNode);
+                    lastTapTime = now + 1500;
+                    lastSolvedTarget = "";
+                    lastSolveTime = 0;
+                    currentStatus = "Collecting Gem (Waiting for ad)...";
+                    adStartTime = 0;
+                    return;
                 } else {
                     collectGemScreenStartTime = 0;
                     collectGemTapCount = 0;
@@ -1333,46 +1341,11 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     if (isForbiddenElement(item)) continue;
                     String t = item.text.trim().toLowerCase();
                     String d = item.contentDesc.trim().toLowerCase();
-                    String combined = (t + " " + d).trim();
-                    if (combined.contains("collect gem") || combined.contains("collect reward")) {
-                        // Debounce: Wait 1.5s after tapping Collect Gem for the ad to launch
-                        if (collectGemTapCount > 0 && (now - lastTapTime < 1500)) {
-                            return;
-                        }
-                        collectGemTapCount++;
-
-                        // If we are at 24+ gems, this collection action starts the final ad for the 25th gem!
-                        boolean is24thGem = (liveGems >= 24);
-                        if (!is24thGem) {
-                            for (NodeItem n : allNodes) {
-                                String nt = n.text.toLowerCase();
-                                String nd = n.contentDesc.toLowerCase();
-                                if (nt.contains("24/25") || nd.contains("24/25") || nt.contains("24 / 25") || nd.contains("24 / 25")) {
-                                    is24thGem = true;
-                                    break;
-                                }
-                            }
-                        }
-                        if (is24thGem) {
-                            isCollecting25thGem = true;
-                            finalAdStarted = false;
-                            Log.i(TAG, "Collecting 25th Gem! Final ad will play now. Bot remains ACTIVE to close the ad before stopping on the 25 gems page.");
-                        }
-
-                        Log.i(TAG, "Found Action/Claim/Verify button: " + item.text + " (Tap #" + collectGemTapCount + ") at " + item.rect);
-                        tapNode(item);
-                        lastTapTime = now + 1500;
-                        lastProgressTime = now;
-                        lastSolvedTarget = "";
-                        lastSolveTime = 0;
-                        currentStatus = "Collecting Gem (Waiting for ad)...";
-                        adStartTime = 0;
-                        return;
-                    } else if (t.equals("collect") || 
-                               ((t.startsWith("claim") || d.startsWith("claim")) && 
-                                !t.contains("daily") && !t.contains("bonus") && !t.contains("claimed") && 
-                                !d.contains("daily") && !d.contains("bonus") && !d.contains("claimed")) ||
-                               t.contains("verify usage") || t.equals("verify") || d.contains("verify usage")) {
+                    if (t.equals("collect") || 
+                        ((t.startsWith("claim") || d.startsWith("claim")) && 
+                         !t.contains("daily") && !t.contains("bonus") && !t.contains("claimed") && 
+                         !d.contains("daily") && !d.contains("bonus") && !d.contains("claimed")) ||
+                        t.contains("verify usage") || t.equals("verify") || d.contains("verify usage")) {
                         Log.i(TAG, "Found Action/Claim/Verify button: " + item.text + " at " + item.rect);
                         tapNode(item);
                         lastTapTime = now + 800;
