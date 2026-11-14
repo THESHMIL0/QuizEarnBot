@@ -343,7 +343,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         }
         if (!isRunning || event == null) return;
         long now = System.currentTimeMillis();
-        if (now - lastTapTime > 350) {
+        if (now - lastTapTime > 250) {
             solveScreen();
         }
     }
@@ -370,7 +370,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         if (!isRunning) return;
 
         long now = System.currentTimeMillis();
-        if (now - lastTapTime < 450) {
+        if (now - lastTapTime < 280) {
             return;
         }
 
@@ -862,8 +862,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     }
                 }
 
-                // After 18s: Search for verified small corner close icons / back buttons in custom webview/canvas
-                if (!hasAdCountdown && adElapsed >= 18 && (now - lastTapTime > 2000)) {
+                // After 7s: Search for verified small corner close icons / back buttons in custom webview/canvas
+                if (!hasAdCountdown && adElapsed >= 7 && (now - lastTapTime > 1400)) {
                     for (NodeItem item : allNodes) {
                         if (isForbiddenElement(item)) continue;
                         int cx = item.rect.centerX();
@@ -911,7 +911,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
                 // Progressive Universal Close taps (corner close X, Back key, top-left corner)
                 long minAdElapsed = hasAdCountdown ? 16 : 8;
-                if (adElapsed >= minAdElapsed && (now - lastTapTime > 1800)) {
+                if (adElapsed >= minAdElapsed && (now - lastTapTime > 1300)) {
                     // Only after 38s+ of total ad unresponsiveness: soft-bring Quiz & Earn to front (NEVER kill app)
                     if (adElapsed >= 38) {
                         Log.w(TAG, "Ad exceeded 38s timeout without dismissing. Bringing Quiz & Earn to front...");
@@ -1348,8 +1348,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     }
 
                     if (hasCollectGemButton && collectGemNode != null) {
-                        // Debounce: Wait 2.0s between taps on Collect Gem to allow ad to open
-                        if (collectGemTapCount > 0 && (now - lastTapTime < 2000)) {
+                        // Debounce: Wait 1.5s between taps on Collect Gem to allow ad to open
+                        if (collectGemTapCount > 0 && (now - lastTapTime < 1500)) {
                             return;
                         }
                         collectGemTapCount++;
