@@ -105,6 +105,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     private int collectGemTapCount = 0;
     private long questionWaitingStartTime = 0;
     private String lastWaitingQuestion = "";
+    private long emptyNodesStartTime = 0;
 
     // Real math operations (including unicode multiplication and division)
     private final Pattern mathPattern = Pattern.compile("(\\d+)\\s*([\\+\\-\\–\\—\\*×xX]|÷|\\/)\\s*(\\d+)");
@@ -161,6 +162,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             instance.collectGemTapCount = 0;
             instance.questionWaitingStartTime = 0;
             instance.lastWaitingQuestion = "";
+            instance.emptyNodesStartTime = 0;
             instance.loopHandler.removeCallbacks(instance.solveLoopRunnable);
             instance.loopHandler.post(instance.solveLoopRunnable);
         }
@@ -296,6 +298,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             instance.collectGemTapCount = 0;
             instance.questionWaitingStartTime = 0;
             instance.lastWaitingQuestion = "";
+            instance.emptyNodesStartTime = 0;
             instance.loopHandler.removeCallbacks(instance.solveLoopRunnable);
         }
         if (!currentStatus.contains("25 GEMS")) {
@@ -415,10 +418,37 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         }
 
         if (allNodes.isEmpty()) {
+            if (emptyNodesStartTime == 0) {
+                emptyNodesStartTime = now;
+            }
+            long emptyElapsed = (now - emptyNodesStartTime) / 1000;
+            int screenW = getResources().getDisplayMetrics().widthPixels;
+            int screenH = getResources().getDisplayMetrics().heightPixels;
+
+            // If an un-instrumented video ad surface or frozen screen has 0 accessibility nodes:
+            if (emptyElapsed >= 15 && (now - lastTapTime > 2200)) {
+                if (emptyElapsed >= 60) {
+                    Log.w(TAG, "Empty accessibility tree exceeded 60s timeout. Bringing Quiz & Earn to front...");
+                    bringQuizAppToFront();
+                    lastTapTime = now + 3000;
+                    emptyNodesStartTime = 0;
+                } else if (emptyElapsed % 6 == 0) {
+                    Log.i(TAG, "Empty tree ad/stall (" + emptyElapsed + "s): Pressing Back key...");
+                    performGlobalAction(GLOBAL_ACTION_BACK);
+                    lastTapTime = now;
+                } else if (emptyElapsed % 6 == 3) {
+                    Log.i(TAG, "Empty tree ad/stall (" + emptyElapsed + "s): Tapping top-right corner close at (" + (screenW - 55) + ", 55)...");
+                    tapCoordinates(screenW - 55, 55);
+                    lastTapTime = now;
+                }
+            }
+
             for (AccessibilityNodeInfo r : rootsToRecycle) {
                 try { if (r != null) r.recycle(); } catch (Throwable ignored) {}
             }
             return;
+        } else {
+            emptyNodesStartTime = 0;
         }
 
         try {
@@ -857,59 +887,47 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     }
 
                     int step = (int)((adElapsed - minAdElapsed) / 2);
-                    if (step % 4 == 0) {
-                        // Check if an Install or CTA button exists near the top-right before blind tapping!
-                        boolean hasCtaAtTopRight = false;
-                        for (NodeItem item : allNodes) {
-                            if (item.rect.centerX() > screenW / 2 && item.rect.centerY() < screenH * 0.20) {
-                                String t = item.text.trim().toLowerCase();
-                                String d = item.contentDesc.trim().toLowerCase();
-                                if (t.contains("install") || d.contains("install") ||
-                                    t.contains("download") || d.contains("download") ||
-                                    t.contains("get") || d.contains("get") ||
-                                    t.contains("open") || d.contains("open") ||
-                                    t.contains("shop now") || d.contains("shop now")) {
-                                    hasCtaAtTopRight = true;
-                                    break;
-                                }
-                            }
-                        }
-                        if (!hasCtaAtTopRight) {
-                            // Center of top-right Skip pill button (e.g. ">> Skip to Google Play")
-                            int targetX = Math.max(50, screenW - 140);
-                            int targetY = Math.max(75, (int)(screenH * 0.055));
-                            Log.i(TAG, "Ad running (" + adElapsed + "s): Tapping top-right Skip pill button at (" + targetX + ", " + targetY + ")...");
+                    if (offerState == OFFER_STATE_AD_PLAYING && step % 4 == 0) {
+                        // For Super Offer: tap Skip to Play Store pill button to trigger install
+                        int targetX = Math.max(50, screenW - 140);
+                        int targetY = Math.max(75, (int)(screenH * 0.055));
+                        Log.i(TAG, "Super Offer Ad (" + adElapsed + "s): Tapping Skip to Play Store pill at (" + targetX + ", " + targetY + ")...");
+                        tapCoordinates(targetX, targetY);
+                        lastTapTime = now;
+                        return;
+                    } else {
+                        // For Normal Gem Farming (< 25 gems): NEVER tap ad links or pills! Strictly dismiss the ad!
+                        int dismissStep = (offerState == OFFER_STATE_AD_PLAYING) ? (step % 4) : (step % 3);
+                        if (dismissStep == 0 || dismissStep == 1) {
+                            // Extreme top-right corner close X / chevron
+                            int targetX = screenW - 55;
+                            int targetY = 55;
+                            Log.i(TAG, "Ad running (" + adElapsed + "s): Tapping top-right corner close coordinate at (" + targetX + ", " + targetY + ")...");
+                            tapCoordinates(targetX, targetY);
+                            lastTapTime = now;
+                            return;
+                        } else if (dismissStep == 2) {
+                            // Press Back key to return to Quiz
+                            Log.i(TAG, "Ad running (" + adElapsed + "s): Pressing Back key to return to Quiz...");
+                            performGlobalAction(GLOBAL_ACTION_BACK);
+                            lastTapTime = now;
+                            return;
+                        } else {
+                            // Top-left corner fallback close
+                            int targetX = 55;
+                            int targetY = 55;
+                            Log.i(TAG, "Ad running (" + adElapsed + "s): Tapping top-left corner close coordinate at (" + targetX + ", " + targetY + ")...");
                             tapCoordinates(targetX, targetY);
                             lastTapTime = now;
                             return;
                         }
-                    } else if (step % 4 == 1) {
-                        // Extreme top-right corner close X / chevron
-                        int targetX = screenW - 55;
-                        int targetY = 55;
-                        Log.i(TAG, "Ad running (" + adElapsed + "s): Tapping top-right corner close coordinate at (" + targetX + ", " + targetY + ")...");
-                        tapCoordinates(targetX, targetY);
-                        lastTapTime = now;
-                        return;
-                    } else if (step % 4 == 2) {
-                        // Top-left corner fallback close
-                        int targetX = 55;
-                        int targetY = 55;
-                        Log.i(TAG, "Ad running (" + adElapsed + "s): Tapping top-left corner close coordinate at (" + targetX + ", " + targetY + ")...");
-                        tapCoordinates(targetX, targetY);
-                        lastTapTime = now;
-                        return;
                     }
-                    Log.i(TAG, "Ad running (" + adElapsed + "s): Pressing Back key to return to Quiz...");
-                    performGlobalAction(GLOBAL_ACTION_BACK);
-                    lastTapTime = now;
-                    return;
                 }
 
                 return;
             } else {
-                if (adStartTime > 0) {
-                    // Ad just completed: reset stall timer so return to quiz is never flagged as a freeze!
+                if (adStartTime > 0 && (hasActiveQuiz || hasHomeScreen || hasCollectGem || (hasSuperOfferMilestone && offerState != OFFER_STATE_AD_PLAYING))) {
+                    // Ad genuinely completed and returned to game: reset ad and stall timers
                     lastProgressTime = now;
                     adStartTime = 0;
                 }
