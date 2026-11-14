@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -2939,10 +2939,13 @@ public class QuizEarnApp : Form
                 try { p.Kill(); } catch {}
             }
             string res = sb.ToString();
-            if ((res.Contains("device not found") || res.Contains("device offline")) && !isGlobalCmd && adbPort != "emulator-5554")
+            if ((res.Contains("not found") || res.Contains("offline") || res.Contains("error: device")) && !isGlobalCmd)
             {
-                adbPort = "emulator-5554";
-                return RunAdb(arguments);
+                EnsureConnected();
+                if (!string.IsNullOrEmpty(adbPort))
+                {
+                    return RunAdb(string.Format("-s {0} {1}", adbPort, arguments));
+                }
             }
             return res;
         }
@@ -3068,10 +3071,13 @@ public class QuizEarnApp : Form
             }
         }
 
-        // Fallback common ports
-        if (!candidatePorts.Contains("127.0.0.1:5575")) candidatePorts.Add("127.0.0.1:5575");
-        if (!candidatePorts.Contains("127.0.0.1:5555")) candidatePorts.Add("127.0.0.1:5555");
-        if (!candidatePorts.Contains("127.0.0.1:5556")) candidatePorts.Add("127.0.0.1:5556");
+        // Fallback common ports (ONLY if port is actually open)
+        int[] fallbackPorts = new int[] { 5556, 5555, 5585, 5595 };
+        foreach (int port in fallbackPorts)
+        {
+            string ep = "127.0.0.1:" + port;
+            if (!candidatePorts.Contains(ep) && IsTcpPortOpen(port)) candidatePorts.Add(ep);
+        }
         if (!candidatePorts.Contains("emulator-5554")) candidatePorts.Add("emulator-5554");
 
         return candidatePorts;
@@ -3101,10 +3107,14 @@ public class QuizEarnApp : Form
                 string id = parts[0];
                 if (IsEmulatorDevice(id))
                 {
-                    adbPort = id;
-                    UpdatePortLabel("Emulator: " + adbPort);
-                    UpdateScreenResolution();
-                    return true;
+                    string state = RunAdbDevice(id, "get-state").Trim();
+                    if (state.Equals("device", StringComparison.OrdinalIgnoreCase))
+                    {
+                        adbPort = id;
+                        UpdatePortLabel("Emulator: " + adbPort);
+                        UpdateScreenResolution();
+                        return true;
+                    }
                 }
                 else if (string.IsNullOrEmpty(physicalFallback))
                 {
@@ -3122,10 +3132,14 @@ public class QuizEarnApp : Form
                 string res = RunAdb(string.Format("connect {0}", port));
                 if (res.Contains("connected to") || res.Contains("already connected"))
                 {
-                    adbPort = port;
-                    UpdatePortLabel("Emulator: " + adbPort);
-                    UpdateScreenResolution();
-                    return true;
+                    string state = RunAdbDevice(port, "get-state").Trim();
+                    if (state.Equals("device", StringComparison.OrdinalIgnoreCase))
+                    {
+                        adbPort = port;
+                        UpdatePortLabel("Emulator: " + adbPort);
+                        UpdateScreenResolution();
+                        return true;
+                    }
                 }
             }
         }
@@ -3133,14 +3147,18 @@ public class QuizEarnApp : Form
         // 3. Connect to physical phone if plugged in
         if (!string.IsNullOrEmpty(physicalFallback))
         {
-            adbPort = physicalFallback;
-            UpdatePortLabel("Phone: " + adbPort);
-            UpdateScreenResolution();
-            Log(string.Format("[ADB] Connected to physical Android device: {0}", adbPort));
-            return true;
+            string pstate = RunAdbDevice(physicalFallback, "get-state").Trim();
+            if (pstate.Equals("device", StringComparison.OrdinalIgnoreCase))
+            {
+                adbPort = physicalFallback;
+                UpdatePortLabel("Phone: " + adbPort);
+                UpdateScreenResolution();
+                Log(string.Format("[ADB] Connected to physical Android device: {0}", adbPort));
+                return true;
+            }
         }
 
-        // 4. Final verification: accept ANY device
+        // 4. Final verification: accept ANY live device
         devOut = RunAdb("devices");
         foreach (string line in devOut.Split('\n'))
         {
@@ -3151,11 +3169,15 @@ public class QuizEarnApp : Form
             string[] parts = trimmed.Split(new char[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length >= 2 && parts[1].ToLower() == "device")
             {
-                adbPort = parts[0];
-                UpdatePortLabel("Device: " + adbPort);
-                UpdateScreenResolution();
-                Log(string.Format("[ADB] Connected to device: {0}", adbPort));
-                return true;
+                string state = RunAdbDevice(parts[0], "get-state").Trim();
+                if (state.Equals("device", StringComparison.OrdinalIgnoreCase))
+                {
+                    adbPort = parts[0];
+                    UpdatePortLabel("Device: " + adbPort);
+                    UpdateScreenResolution();
+                    Log(string.Format("[ADB] Connected to device: {0}", adbPort));
+                    return true;
+                }
             }
         }
 
@@ -3739,7 +3761,11 @@ public class QuizEarnApp : Form
         {
             RunAdb(string.Format("shell uiautomator dump {0}", remotePath));
             string content = RunAdb(string.Format("shell cat {0}", remotePath));
-            return content ?? "";
+            if (string.IsNullOrEmpty(content) || !content.Contains("<hierarchy"))
+            {
+                return "";
+            }
+            return content;
         }
         catch { return ""; }
     }
@@ -3961,18 +3987,26 @@ public class QuizEarnApp : Form
         clickedTitle = "";
         try
         {
-            // Find all offer titles on the list (Every offer title on the Super Offers list is at X=105)
-            MatchCollection titleNodes = Regex.Matches(xml, @"<node [^>]*text=""([^""]+)""[^>]*bounds=""\[105,(\d+)\]\[(\d+),(\d+)\]""");
+            // Find all offer titles on the list (X in 50..220)
+            MatchCollection titleNodes = Regex.Matches(xml, @"<node [^>]*text=""([^""]+)""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
             
             foreach (Match tm in titleNodes)
             {
                 string rawTitle = tm.Groups[1].Value.Trim();
                 string cleanTitle = WebUtility.HtmlDecode(rawTitle).Trim();
-                int ty1 = int.Parse(tm.Groups[2].Value);
-                int ty2 = int.Parse(tm.Groups[4].Value);
+                int tx1 = int.Parse(tm.Groups[2].Value);
+                int ty1 = int.Parse(tm.Groups[3].Value);
+                int tx2 = int.Parse(tm.Groups[4].Value);
+                int ty2 = int.Parse(tm.Groups[5].Value);
+
+                // Offer titles are aligned near left margin (X in 50..220) and have reasonable height
+                if (tx1 < 50 || tx1 > 220 || (ty2 - ty1) < 15 || (ty2 - ty1) > 100) continue;
 
                 // Ignore headers and guidelines
-                if (cleanTitle == "Progress" || cleanTitle == "How to Complete" || cleanTitle.Contains("Important Guidelines") || cleanTitle == "Load More")
+                if (cleanTitle == "Progress" || cleanTitle == "How to Complete" || cleanTitle.Contains("Important Guidelines") || 
+                    cleanTitle == "Load More" || cleanTitle == "Pending Offers" || cleanTitle.Contains("active pending") ||
+                    cleanTitle == "My Super Offers" || cleanTitle == "Refresh offers" || cleanTitle.StartsWith("Unlocks in") ||
+                    cleanTitle.StartsWith("Installed ") || cleanTitle.EndsWith("tasks"))
                     continue;
 
                 // Ignore off-screen cards
@@ -4016,7 +4050,7 @@ public class QuizEarnApp : Form
 
                 bool isMilestonesText = cardContent.IndexOf("All milestones completed", StringComparison.OrdinalIgnoreCase) >= 0;
                 bool isCooldown = Regex.IsMatch(cardContent, @"Unlocks\s*in\s*(?:\d+h|\d+m|[1-9]\d*s)", RegexOptions.IgnoreCase);
-                bool isReady = Regex.IsMatch(cardContent, @"(?:Use\s*app\s*for|Claim|Open\s*App)", RegexOptions.IgnoreCase);
+                bool isReady = Regex.IsMatch(cardContent, @"(?:Use\s*app\s*for|Claim|Open\s*App|Usage\s*verified|Ready)", RegexOptions.IgnoreCase);
 
                 // Truly 100% finished: all tasks including bonus are completed (e.g. 7/7 tasks)
                 if (tasksDone >= 0 && tasksTotal > 0 && tasksDone >= tasksTotal)
@@ -4152,10 +4186,23 @@ public class QuizEarnApp : Form
                     UpdateDataDashboard();
 
                     consecutiveVerifyTaps = 0;
-                    Thread.Sleep(3000);
-                    RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
                     Thread.Sleep(2000);
-                    continue; // Re-check if next milestone unlocked!
+
+                    // Check for reward confirmation popup / dialog ("Awesome!", "Great", "OK", "Collect", "+100 Coins", etc.)
+                    string popupXml = DumpAndReadXml("/sdcard/claim_popup.xml");
+                    int px, py;
+                    if (TryFindNodeBounds(popupXml, "Awesome", out px, out py) ||
+                        TryFindNodeBounds(popupXml, "OK", out px, out py) ||
+                        TryFindNodeBounds(popupXml, "Collect", out px, out py) ||
+                        TryFindNodeBounds(popupXml, "Continue", out px, out py) ||
+                        TryFindNodeBounds(popupXml, "Claim", out px, out py))
+                    {
+                        Log(string.Format("[💎 Claimer] Dismissing reward confirmation dialog at ({0}, {1})...", px, py));
+                        AdbTap(px, py);
+                        Thread.Sleep(1500);
+                    }
+
+                    continue; // Re-check if next milestone unlocked on this same page!
                 }
 
                 // 2. Check for "Verify Usage" OR "Open App" Button!
@@ -4455,211 +4502,262 @@ public class QuizEarnApp : Form
         {
             Log("[💎 Claimer] Initializing Auto-Offer Claimer...");
             int totalAppsProcessed = 0;
-            HashSet<string> cycleCompletedApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            HashSet<string> cooldownBonusApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            string lastOpenedTitle = "";
-            int consecutiveEmptyDumps = 0;
 
-            while (isAutoOffering)
+            // 1. Gather all online BlueStacks instances
+            List<string> targetDevices = new List<string>();
+            List<BlueStacksInstance> instances = DiscoverBlueStacksInstances();
+            foreach (var inst in instances)
             {
-                if (autoRecoverBlueStacks && !IsBlueStacksProcessRunning())
+                string dev = "127.0.0.1:" + inst.Port;
+                string st = RunAdbDevice(dev, "get-state").Trim();
+                if (st.Equals("device", StringComparison.OrdinalIgnoreCase))
                 {
-                    EnsureBlueStacksAliveAndReady("Auto-Offer Claimer Loop");
-                    Thread.Sleep(2000);
-                    continue;
+                    if (!targetDevices.Contains(dev)) targetDevices.Add(dev);
                 }
-
-                string curFocus = GetCurrentFocus();
-                if (!curFocus.Contains("com.quiz.earn.money.game"))
-                {
-                    RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
-                    Thread.Sleep(2000);
-                }
-
-                string xml = DumpAndReadXml("/sdcard/offer_flow.xml");
-                if (string.IsNullOrEmpty(xml))
-                {
-                    consecutiveEmptyDumps++;
-                    if (consecutiveEmptyDumps >= 3 && autoRecoverBlueStacks && !IsBlueStacksProcessRunning())
-                    {
-                        EnsureBlueStacksAliveAndReady("Auto-Offer XML Dump Failure");
-                        consecutiveEmptyDumps = 0;
-                        continue;
-                    }
-                    Thread.Sleep(1000);
-                    continue;
-                }
-                consecutiveEmptyDumps = 0;
-
-                // SCREEN A: Are we inside an app detail page? (Look for REWARDS or Remove Wrong App)
-                if (xml.Contains("REWARDS") || xml.Contains("Remove Wrong App") || xml.Contains("Usage Progress") || xml.Contains("Initial Install Reward"))
-                {
-                    Log("[💎 Claimer] Inside offer app details page. Processing milestones & bonus...");
-                    ProcessOfferAppDetails(lastOpenedTitle, cycleCompletedApps, cooldownBonusApps);
-                    totalAppsProcessed++;
-                    Thread.Sleep(1500);
-
-                    // Safeguard: Verify if still on detail page (e.g. if notification banner intercepted back)
-                    string verifyXml = DumpAndReadXml("/sdcard/verify_back.xml");
-                    if (verifyXml.Contains("REWARDS") || verifyXml.Contains("Remove Wrong App") || verifyXml.Contains("Initial Install Reward"))
-                    {
-                        Log("[💎 Claimer] Still on detail page. Sending hardware Back button again...");
-                        AdbKey(4);
-                        Thread.Sleep(1500);
-                    }
-                    continue;
-                }
-
-                // SCREEN B: Are we on "My Super Offers" list?
-                if (xml.Contains("My Super Offers") || xml.Contains("Pending Offers") || xml.Contains("How to Complete"))
-                {
-                    if (xml.Contains("Failed to load offers"))
-                    {
-                        Log("[💎 Claimer] Detected 'Failed to load offers'. Tapping Refresh button...");
-                        AdbTap(846, 90);
-                        Thread.Sleep(3000);
-                        continue;
-                    }
-
-                    // Check if an offer's cooldown just hit 0m/0s - if so, refresh the list to reveal the "Use app" button!
-                    if (Regex.IsMatch(xml, @"Unlocks\s*in\s*0[ms]", RegexOptions.IgnoreCase))
-                    {
-                        Log("[💎 Claimer] Detected offer with 0m cooldown! Tapping Refresh offers...");
-                        AdbTap(846, 90);
-                        Thread.Sleep(3000);
-                        cooldownBonusApps.Clear(); // Cooldown finished, clear skipped cache
-                        cycleCompletedApps.Clear();
-                        continue;
-                    }
-
-                    Log("[💎 Claimer] On 'My Super Offers' list. Scanning for ready apps & bonus rewards...");
-                    string clickedTitle;
-                    bool foundApp = FindAndClickReadyOfferCard(xml, cycleCompletedApps, out clickedTitle);
-                    if (foundApp)
-                    {
-                        lastOpenedTitle = clickedTitle;
-                        Thread.Sleep(2500);
-                        continue;
-                    }
-                    else
-                    {
-                        // Check if Load More button is visible on page 1 and tap it to reveal all offers
-                        int lmx, lmy;
-                        if (TryFindNodeBounds(xml, "Load More", out lmx, out lmy) && lmy < 1550)
-                        {
-                            Log(string.Format("[💎 Claimer] Found 'Load More' button at ({0}, {1}). Tapping to reveal more offers...", lmx, lmy));
-                            AdbTap(lmx, lmy);
-                            Thread.Sleep(2500);
-                            xml = DumpAndReadXml("/sdcard/offer_flow.xml");
-                            if (FindAndClickReadyOfferCard(xml, cycleCompletedApps, out clickedTitle))
-                            {
-                                lastOpenedTitle = clickedTitle;
-                                Thread.Sleep(2500);
-                                continue;
-                            }
-                        }
-
-                        // Check lower cards by scrolling down up to 4 times
-                        bool foundOnScroll = false;
-                        for (int scrollPass = 1; scrollPass <= 4; scrollPass++)
-                        {
-                            Log(string.Format("[💎 Claimer] Scrolling down to find more ready offers (page {0}/4)...", scrollPass));
-                            RunAdb("shell input swipe 450 1200 450 400 350");
-                            Thread.Sleep(2000);
-                            string scrolledXml = DumpAndReadXml("/sdcard/offer_flow.xml");
-
-                            // Check Load More on scrolled page too
-                            if (TryFindNodeBounds(scrolledXml, "Load More", out lmx, out lmy) && lmy < 1550)
-                            {
-                                AdbTap(lmx, lmy);
-                                Thread.Sleep(2500);
-                                scrolledXml = DumpAndReadXml("/sdcard/offer_flow.xml");
-                            }
-
-                            if (Regex.IsMatch(scrolledXml, @"Unlocks\s*in\s*0[ms]", RegexOptions.IgnoreCase))
-                            {
-                                Log("[💎 Claimer] Detected offer with 0m cooldown! Tapping Refresh offers...");
-                                AdbTap(846, 90);
-                                Thread.Sleep(3000);
-                                cooldownBonusApps.Clear();
-                                cycleCompletedApps.Clear();
-                                scrolledXml = DumpAndReadXml("/sdcard/offer_flow.xml");
-                            }
-                            if (FindAndClickReadyOfferCard(scrolledXml, cycleCompletedApps, out clickedTitle))
-                            {
-                                lastOpenedTitle = clickedTitle;
-                                foundOnScroll = true;
-                                break;
-                            }
-                        }
-
-                        if (!foundOnScroll)
-                        {
-                            // Find the shortest cooldown so user knows exactly when the next offer unlocks!
-                            MatchCollection cdMatches = Regex.Matches(xml + " " + DumpAndReadXml("/sdcard/offer_flow.xml"), @"Unlocks\s*in\s*([0-9hm\s]+)", RegexOptions.IgnoreCase);
-                            string nextUnlock = "a few hours";
-                            if (cdMatches.Count > 0)
-                            {
-                                nextUnlock = cdMatches[0].Groups[1].Value.Trim();
-                            }
-                            Log(string.Format("[💎 Claimer] All pending offers are on cooldown or completed for this cycle! Next offer unlocks in ~{0}. Returning to Quiz...", nextUnlock));
-                            
-                            SafeBeginInvoke(new Action(() => {
-                                if (lblBoostStatus != null)
-                                {
-                                    lblBoostStatus.Text = string.Format("Cooldown (Next: {0})", nextUnlock);
-                                    lblBoostStatus.ForeColor = Color.FromArgb(150, 150, 155);
-                                }
-                            }));
-
-                            AdbKey(4);
-                            Thread.Sleep(1500);
-                            break;
-                        }
-                        continue;
-                    }
-                }
-
-                // SCREEN C: Are we on Quiz screen?
-                if (xml.Contains("My Offers") || xml.Contains("Super Offer") || xml.Contains("captchas for Guaranteed"))
-                {
-                    Log("[💎 Claimer] Found Quiz screen. Opening 'My Offers'...");
-                    int tx, ty;
-                    if (TryFindNodeBounds(xml, "My Offers", out tx, out ty))
-                    {
-                        AdbTap(tx, ty);
-                    }
-                    else
-                    {
-                        AdbTapRef(450, 832);
-                    }
-                    Thread.Sleep(3000);
-                    continue;
-                }
-
-                // SCREEN D: Are we on Home screen?
-                if (xml.Contains("SUPER OFFER") || xml.Contains("Guaranteed") || xml.Contains("1,000"))
-                {
-                    Log("[💎 Claimer] On Home screen. Tapping Super Offer 1,000 card...");
-                                        int scx, scy;
-                    if (TryFindNodeBounds(xml, "SUPER OFFER", out scx, out scy) || TryFindNodeBounds(xml, "1,000", out scx, out scy))
-                    {
-                        AdbTap(scx, scy + 40);
-                    }
-                    else
-                    {
-                        AdbTap(240, 370);
-                    }
-                    Thread.Sleep(3000);
-                    continue;
-                }
-
-                Log("[💎 Claimer] Screen unrecognized, opening Quiz & Earn main page...");
-                RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
-                Thread.Sleep(2500);
             }
 
-            Log(string.Format("[💎 Claimer] Auto-Offer session complete! Processed {0} apps.", totalAppsProcessed));
+            if (targetDevices.Count == 0)
+            {
+                EnsureConnected();
+                if (!string.IsNullOrEmpty(adbPort)) targetDevices.Add(adbPort);
+            }
+
+            Log(string.Format("[💎 Claimer] Found {0} online instance(s) to process: {1}", targetDevices.Count, string.Join(", ", targetDevices)));
+
+            foreach (string dev in targetDevices)
+            {
+                if (!isAutoOffering) break;
+                adbPort = dev;
+                UpdatePortLabel("Claimer: " + adbPort);
+                Log(string.Format("[💎 Claimer] === Processing Instance {0} ===", dev));
+
+                HashSet<string> cycleCompletedApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                HashSet<string> cooldownBonusApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                string lastOpenedTitle = "";
+                int consecutiveEmptyDumps = 0;
+                int unrecognizedCount = 0;
+
+                while (isAutoOffering)
+                {
+                    if (autoRecoverBlueStacks && !IsBlueStacksProcessRunning())
+                    {
+                        EnsureBlueStacksAliveAndReady("Auto-Offer Claimer Loop");
+                        Thread.Sleep(2000);
+                        continue;
+                    }
+
+                    string curFocus = GetCurrentFocus();
+                    if (!curFocus.Contains("com.quiz.earn.money.game") && !curFocus.Contains("tabata") && !curFocus.Contains("vending"))
+                    {
+                        RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
+                        Thread.Sleep(2000);
+                    }
+
+                    string xml = DumpAndReadXml("/sdcard/offer_flow.xml");
+                    if (string.IsNullOrEmpty(xml) || !xml.Contains("<hierarchy"))
+                    {
+                        consecutiveEmptyDumps++;
+                        if (consecutiveEmptyDumps >= 3)
+                        {
+                            Log(string.Format("[💎 Claimer] Instance {0} ADB unresponsive. Verifying...", dev));
+                            EnsureConnected();
+                            consecutiveEmptyDumps = 0;
+                        }
+                        Thread.Sleep(1000);
+                        continue;
+                    }
+                    consecutiveEmptyDumps = 0;
+
+                    // SCREEN A: Are we inside an app detail page? (Look for REWARDS or Remove Wrong App)
+                    if (xml.Contains("REWARDS") || xml.Contains("Remove Wrong App") || xml.Contains("Usage Progress") || xml.Contains("Initial Install Reward"))
+                    {
+                        unrecognizedCount = 0;
+                        Log("[💎 Claimer] Inside offer app details page. Processing milestones & bonus...");
+                        ProcessOfferAppDetails(lastOpenedTitle, cycleCompletedApps, cooldownBonusApps);
+                        totalAppsProcessed++;
+                        Thread.Sleep(1500);
+
+                        // Safeguard: Verify if still on detail page
+                        string verifyXml = DumpAndReadXml("/sdcard/verify_back.xml");
+                        if (verifyXml.Contains("REWARDS") || verifyXml.Contains("Remove Wrong App") || verifyXml.Contains("Initial Install Reward"))
+                        {
+                            Log("[💎 Claimer] Still on detail page. Sending hardware Back button again...");
+                            AdbKey(4);
+                            Thread.Sleep(1500);
+                        }
+                        continue;
+                    }
+
+                    // SCREEN B: Are we on "My Super Offers" list?
+                    if (xml.Contains("My Super Offers") || xml.Contains("Pending Offers") || xml.Contains("How to Complete"))
+                    {
+                        unrecognizedCount = 0;
+                        if (xml.Contains("Failed to load offers"))
+                        {
+                            Log("[💎 Claimer] Detected 'Failed to load offers'. Tapping Refresh button...");
+                            AdbTap(846, 90);
+                            Thread.Sleep(3000);
+                            continue;
+                        }
+
+                        // Check if an offer's cooldown just hit 0m/0s - if so, refresh the list!
+                        if (Regex.IsMatch(xml, @"Unlocks\s*in\s*0[ms]", RegexOptions.IgnoreCase))
+                        {
+                            Log("[💎 Claimer] Detected offer with 0m cooldown! Tapping Refresh offers...");
+                            AdbTap(846, 90);
+                            Thread.Sleep(3000);
+                            cooldownBonusApps.Clear();
+                            cycleCompletedApps.Clear();
+                            continue;
+                        }
+
+                        Log("[💎 Claimer] On 'My Super Offers' list. Scanning for ready apps & bonus rewards...");
+                        string clickedTitle;
+                        bool foundApp = FindAndClickReadyOfferCard(xml, cycleCompletedApps, out clickedTitle);
+                        if (foundApp)
+                        {
+                            lastOpenedTitle = clickedTitle;
+                            Thread.Sleep(2500);
+                            continue;
+                        }
+                        else
+                        {
+                            // Check lower cards by scrolling down up to 4 times
+                            bool foundOnScroll = false;
+                            for (int scrollPass = 1; scrollPass <= 4; scrollPass++)
+                            {
+                                Log(string.Format("[💎 Claimer] Scrolling down to find more ready offers (page {0}/4)...", scrollPass));
+                                RunAdb("shell input swipe 450 1200 450 400 350");
+                                Thread.Sleep(2000);
+                                string scrolledXml = DumpAndReadXml("/sdcard/offer_flow.xml");
+
+                                if (Regex.IsMatch(scrolledXml, @"Unlocks\s*in\s*0[ms]", RegexOptions.IgnoreCase))
+                                {
+                                    Log("[💎 Claimer] Detected offer with 0m cooldown! Tapping Refresh offers...");
+                                    AdbTap(846, 90);
+                                    Thread.Sleep(3000);
+                                    cooldownBonusApps.Clear();
+                                    cycleCompletedApps.Clear();
+                                    scrolledXml = DumpAndReadXml("/sdcard/offer_flow.xml");
+                                }
+                                if (FindAndClickReadyOfferCard(scrolledXml, cycleCompletedApps, out clickedTitle))
+                                {
+                                    lastOpenedTitle = clickedTitle;
+                                    foundOnScroll = true;
+                                    break;
+                                }
+                            }
+
+                            if (!foundOnScroll)
+                            {
+                                MatchCollection cdMatches = Regex.Matches(xml, @"Unlocks\s*in\s*([0-9hm\s]+)", RegexOptions.IgnoreCase);
+                                string nextUnlock = "a few hours";
+                                if (cdMatches.Count > 0)
+                                {
+                                    nextUnlock = cdMatches[0].Groups[1].Value.Trim();
+                                }
+                                Log(string.Format("[💎 Claimer] [{0}] All pending offers are on cooldown or completed! Next offer unlocks in ~{1}.", dev, nextUnlock));
+                                
+                                SafeBeginInvoke(new Action(() => {
+                                    if (lblBoostStatus != null)
+                                    {
+                                        lblBoostStatus.Text = string.Format("Cooldown (Next: {0})", nextUnlock);
+                                        lblBoostStatus.ForeColor = Color.FromArgb(150, 150, 155);
+                                    }
+                                }));
+
+                                AdbKey(4);
+                                Thread.Sleep(1500);
+                                break; // Done with this instance, move to next
+                            }
+                            continue;
+                        }
+                    }
+
+                    // SCREEN C0: 25 Gems Milestone / Start Offer Screen
+                    if (xml.Contains("Gems Collected") || (xml.Contains("25") && xml.Contains("1000") && (xml.Contains("Start Offer") || xml.Contains("Start"))))
+                    {
+                        unrecognizedCount = 0;
+                        Log("[💎 Claimer] 25 Gems Milestone reached! Tapping 'Start Offer' button...");
+                        int sox, soy;
+                        if (TryFindNodeBounds(xml, "Start Offer", out sox, out soy) || TryFindNodeBounds(xml, "Start", out sox, out soy))
+                        {
+                            AdbTap(sox, soy);
+                        }
+                        else
+                        {
+                            AdbTap(450, 1226);
+                        }
+                        Thread.Sleep(3500);
+                        continue;
+                    }
+
+                    // SCREEN C: Are we on Quiz screen?
+                    if (xml.Contains("captchas for Guaranteed") || xml.Contains("My Offers") || (xml.Contains("Quiz") && xml.Contains("Super Offer")))
+                    {
+                        unrecognizedCount = 0;
+                        Log("[💎 Claimer] Found Quiz screen. Opening 'My Offers'...");
+                        int tx, ty;
+                        if (TryFindNodeBounds(xml, "My Offers", out tx, out ty))
+                        {
+                            AdbTap(tx, ty);
+                        }
+                        else
+                        {
+                            AdbTap(450, 832);
+                        }
+                        Thread.Sleep(3000);
+                        continue;
+                    }
+
+                    // SCREEN D: Are we on Home screen?
+                    if (xml.Contains("SUPER OFFER") || (xml.Contains("Guaranteed") && xml.Contains("1,000")) || (xml.Contains("Go to Wallet") && xml.Contains("Tasks")))
+                    {
+                        unrecognizedCount = 0;
+                        Log("[💎 Claimer] On Home screen. Tapping Super Offer card...");
+                        int scx, scy;
+                        if (TryFindNodeBounds(xml, "SUPER OFFER", out scx, out scy) || 
+                            TryFindNodeBounds(xml, "1,000", out scx, out scy) ||
+                            TryFindNodeBounds(xml, "Claim", out scx, out scy))
+                        {
+                            AdbTap(scx, Math.Min(scy + 40, 640));
+                        }
+                        else
+                        {
+                            AdbTap(265, 570);
+                        }
+                        Thread.Sleep(3000);
+                        continue;
+                    }
+
+                    // SCREEN E: Ad playing
+                    if (xml.Contains("Ad") || xml.Contains("Reward in") || xml.Contains("video will end in") || xml.Contains("Sponsored"))
+                    {
+                        unrecognizedCount = 0;
+                        Log("[💎 Claimer] Ad detected during claim flow. Dismissing...");
+                        DismissAppDialogs();
+                        AdbTap(846, 60);
+                        AdbTap(54, 60);
+                        Thread.Sleep(2000);
+                        continue;
+                    }
+
+                    unrecognizedCount++;
+                    if (unrecognizedCount <= 3)
+                    {
+                        Log(string.Format("[💎 Claimer] Screen unrecognized ({0}/3), waiting for screen to settle...", unrecognizedCount));
+                        Thread.Sleep(2000);
+                        continue;
+                    }
+
+                    unrecognizedCount = 0;
+                    Log("[💎 Claimer] Navigating to Quiz & Earn Home screen...");
+                    RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
+                    Thread.Sleep(2500);
+                }
+            }
+
+            Log(string.Format("[💎 Claimer] Auto-Offer session complete across all instances! Processed {0} apps.", totalAppsProcessed));
             try { System.Media.SystemSounds.Asterisk.Play(); } catch {}
         }
         catch (Exception ex)
@@ -4698,20 +4796,17 @@ public class QuizEarnApp : Form
             return;
         }
 
-        if (!isAdbConnected)
+        if (!EnsureConnected())
         {
-            if (!EnsureConnected())
+            if (autoRecoverBlueStacks && !IsBlueStacksProcessRunning())
             {
-                if (autoRecoverBlueStacks && !IsBlueStacksProcessRunning())
-                {
-                    Log("[ðŸ›¡ï¸ Watchdog] BlueStacks not running. Auto-launching BlueStacks before starting claimer...");
-                    EnsureBlueStacksAliveAndReady("Auto-Offer Claimer Startup");
-                }
-                Log("[💎 Claimer] ADB not connected yet! Turn on ADB in emulator/phone first.");
-                return;
+                Log("[🛡️ Watchdog] BlueStacks not running. Auto-launching BlueStacks before starting claimer...");
+                EnsureBlueStacksAliveAndReady("Auto-Offer Claimer Startup");
             }
-            isAdbConnected = true;
+            Log("[💎 Claimer] ADB not connected yet! Turn on ADB in emulator/phone first.");
+            return;
         }
+        isAdbConnected = true;
 
         isAutoOffering = true;
         isBoosting = true;
@@ -4721,7 +4816,6 @@ public class QuizEarnApp : Form
         autoOfferThread.IsBackground = true;
         autoOfferThread.Start();
     }
-
     private void StopAutoOfferClaimer()
     {
         if (isAutoOffering || isBoosting)
