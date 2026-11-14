@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -1342,19 +1342,24 @@ public class QuizEarnApp : Form
                             string curFocus = RunAdbDevice(targetDev, "shell \"dumpsys window | grep mCurrentFocus\"");
                             string pidQuiz = RunAdbDevice(targetDev, "shell pidof com.quiz.earn.money.game").Trim();
                             bool isLauncher = curFocus.Contains("launcher") || curFocus.Contains("home") || curFocus.Contains("com.bluestacks");
+                            bool relaunchedApp = false;
                             if (string.IsNullOrEmpty(pidQuiz) || isLauncher)
                             {
                                 RunAdbDevice(targetDev, "shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
                                 Log(string.Format("[🛡️ APK Watchdog] Relaunched Quiz & Earn app on {0} ({1}).", inst.DisplayName, targetDev));
-                                Thread.Sleep(1500);
+                                relaunchedApp = true;
+                                Thread.Sleep(2000);
                             }
 
-                            // C. Ensure APK Bot foreground service is running
+                            // C. Ensure APK Bot is running AND ACTIVELY SOLVING in players
+                            string botDump = RunAdbDevice(targetDev, "shell dumpsys activity service com.quizearn.assistant");
                             string pidBot = RunAdbDevice(targetDev, "shell pidof com.quizearn.assistant").Trim();
-                            if (string.IsNullOrEmpty(pidBot))
+                            bool isBotActive = botDump.Contains("QUIZEARN_BOT_STATE=RUNNING");
+
+                            if (relaunchedApp || string.IsNullOrEmpty(pidBot) || !isBotActive)
                             {
                                 RunAdbDevice(targetDev, "shell am start-foreground-service -a com.quizearn.assistant.START com.quizearn.assistant/.FloatingOverlayService");
-                                Log(string.Format("[🛡️ APK Watchdog] Started QuizEarn APK Bot foreground service on {0} ({1}).", inst.DisplayName, targetDev));
+                                Log(string.Format("[🛡️ APK Watchdog] Turned ON and started APK Bot on {0} ({1})!", inst.DisplayName, targetDev));
                             }
                         }
                     }

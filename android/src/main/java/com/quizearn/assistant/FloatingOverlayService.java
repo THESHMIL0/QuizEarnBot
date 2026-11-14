@@ -632,6 +632,15 @@ public class FloatingOverlayService extends Service {
     }
 
     @Override
+    protected void dump(java.io.FileDescriptor fd, java.io.PrintWriter writer, String[] args) {
+        super.dump(fd, writer, args);
+        writer.println("QUIZEARN_BOT_STATE=" + (QuizEarnAccessibilityService.isRunning ? "RUNNING" : "STOPPED"));
+        writer.println("QUIZEARN_GEMS=" + QuizEarnAccessibilityService.liveGems);
+        writer.println("QUIZEARN_STATUS=" + QuizEarnAccessibilityService.currentStatus);
+        writer.println("QUIZEARN_SOLVED=" + QuizEarnAccessibilityService.solvedCount);
+    }
+
+    @Override
     public void onDestroy() {
         super.onDestroy();
         uiHandler.removeCallbacks(refreshRunnable);
