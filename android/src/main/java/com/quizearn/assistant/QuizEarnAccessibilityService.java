@@ -2167,23 +2167,24 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         boolean isPlayStoreActiveInstall = false;
         String activeStatusText = "";
 
-        // 1. First, find Y cutoff for section dividers (suggestions, sponsored, other devices)
+        // 1. First, find Y cutoff for section dividers (suggestions, other devices)
         int suggestionDividerY = Integer.MAX_VALUE;
         for (NodeItem item : allNodes) {
+            int cy = item.rect.centerY();
+            if (cy < (int)(screenH * 0.35)) continue; // Never allow top headers or sponsored banners to cut off the hero!
             String t = item.text.trim().toLowerCase();
             String d = item.contentDesc.trim().toLowerCase();
             if (t.contains("available on more devices") || d.contains("available on more devices") ||
                 t.contains("more devices") || d.contains("more devices") ||
                 t.contains("suggested for you") || d.contains("suggested for you") ||
-                t.contains("sponsored") || d.contains("sponsored") ||
                 t.contains("similar apps") || d.contains("similar apps") ||
                 t.contains("related to this app") || d.contains("related to this app") ||
                 t.contains("recommended for you") || d.contains("recommended for you") ||
                 t.contains("more apps like this") || d.contains("more apps like this") ||
                 t.contains("rate this app") || d.contains("rate this app") ||
                 t.contains("about this app") || d.contains("about this app")) {
-                if (item.rect.centerY() < suggestionDividerY) {
-                    suggestionDividerY = item.rect.centerY();
+                if (cy < suggestionDividerY) {
+                    suggestionDividerY = cy;
                 }
             }
         }
@@ -2205,13 +2206,11 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     isTargetAppAlreadyInstalled = true;
                 }
 
-                // Check for Open, Play, or Uninstall (Genuine wide action buttons only)
-                if (item.rect.width() >= 140) {
-                    if (t.equals("open") || d.equals("open") ||
-                        ((t.equals("play") || d.equals("play")) && !d.contains("video") && !d.contains("trailer") && !d.contains("preview")) ||
-                        t.equals("uninstall") || d.equals("uninstall")) {
-                        openButton = item;
-                    }
+                // Check for Open, Play, or Uninstall
+                if (t.equals("open") || d.equals("open") ||
+                    ((t.equals("play") || d.equals("play")) && !d.contains("video") && !d.contains("trailer") && !d.contains("preview")) ||
+                    t.equals("uninstall") || d.equals("uninstall")) {
+                    openButton = item;
                 }
 
                 // Check for Install button of the TARGET app (Never suggested apps / other devices)
@@ -2779,19 +2778,14 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
 
                 // If no app installed yet:
-                // Wait at least 35s for the app to be installed from Play Store before giving up and retrying
-                if (offerStateStartTime > 0 && (now - offerStateStartTime > 35000)) {
-                    NodeItem backBtn = (goBackBtn != null) ? goBackBtn : restartOfferBtn;
-                    if (backBtn != null) {
-                        Log.w(TAG, "⚠️ No app installed after 35s! Tapping " + backBtn.text + " to retry and play offer ad...");
-                        currentStatus = "Retrying Offer Ad...";
-                        tapNode(backBtn);
-                    } else {
-                        Log.w(TAG, "⚠️ No app installed after 35s! Pressing Back to retry ad...");
-                        performGlobalAction(GLOBAL_ACTION_BACK);
-                    }
+                // If on Quiz app Super Offer screen but no app was installed (ad failed to open / no Play Store) for > 15s:
+                if (offerStateStartTime > 0 && (now - offerStateStartTime > 15000)) {
+                    Log.w(TAG, "⚠️ Super Offer ad failed to load / no app installed after 15s. Restarting Quiz & Earn cleanly to reset ad networks...");
+                    currentStatus = "Ad not loading -> Restarting App";
+                    restartQuizApp();
                     offerState = OFFER_STATE_IDLE;
-                    lastTapTime = now + 2000;
+                    offerTargetPackage = "";
+                    lastTapTime = now + 3500;
                     return true;
                 }
 
@@ -2867,6 +2861,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 if (instance != null) {
                     baselinePackages = instance.snapshotInstalledPackages();
                 }
+                offerTargetPackage = ""; // Clean slate for new offer app
                 tapNode(startOfferBtn);
                 offerState = OFFER_STATE_AD_PLAYING;
                 adStartTime = now;
@@ -2883,7 +2878,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         boolean hasBottomAction = false;
         for (NodeItem item : allNodes) {
             String t = item.text.trim().toLowerCase();
-            if (t.contains("watch a video ad") || t.contains("download and install the advertised app")) {
+            if (t.contains("watch a video ad") || t.contains("download and install the advertised app") || t.contains("gems collected!")) {
                 isOfferDetailPage = true;
             }
             if (t.contains("loading")) {
@@ -2893,8 +2888,32 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 hasBottomAction = true;
             }
         }
+
+        // Watchdog: If we tapped Start Offer to play an ad, but after 10s we are STILL on the detail page:
+        // The ad failed to load! Restart Quiz app cleanly!
+        if (isOfferDetailPage && offerState == OFFER_STATE_AD_PLAYING && (now - offerStateStartTime > 10000)) {
+            Log.w(TAG, "⚠️ Super Offer ad failed to load within 10s of tapping Start Offer! Restarting Quiz & Earn to reset ad networks...");
+            currentStatus = "Ad not loading -> Restarting App";
+            restartQuizApp();
+            offerState = OFFER_STATE_IDLE;
+            offerTargetPackage = "";
+            lastTapTime = now + 3500;
+            return true;
+        }
+
         if (hasLoadingButton) {
-            currentStatus = "Loading Ad...";
+            if (offerStateStartTime == 0) offerStateStartTime = now;
+            long elapsedLoading = now - offerStateStartTime;
+            if (elapsedLoading > 12000) {
+                Log.w(TAG, "⚠️ Super Offer ad stuck on 'Loading...' for >12s! Restarting Quiz & Earn to reset ad networks...");
+                currentStatus = "Ad not loading -> Restarting App";
+                restartQuizApp();
+                offerState = OFFER_STATE_IDLE;
+                offerTargetPackage = "";
+                lastTapTime = now + 3500;
+                return true;
+            }
+            currentStatus = "Loading Ad (" + (elapsedLoading / 1000) + "s)...";
             return true;
         }
         if (isOfferDetailPage && startOfferBtn == null && verifyBtn == null && restartOfferBtn == null && !hasBottomAction) {
