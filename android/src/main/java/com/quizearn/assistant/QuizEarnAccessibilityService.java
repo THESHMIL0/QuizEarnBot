@@ -2110,17 +2110,21 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         boolean isPlayStoreActiveInstall = false;
         String activeStatusText = "";
 
-        // 1. First, find Y cutoff for "Sponsored" or "Suggested for you" section dividers
+        // 1. First, find Y cutoff for section dividers (suggestions, sponsored, other devices)
         int suggestionDividerY = Integer.MAX_VALUE;
         for (NodeItem item : allNodes) {
             String t = item.text.trim().toLowerCase();
             String d = item.contentDesc.trim().toLowerCase();
-            if (t.contains("suggested for you") || d.contains("suggested for you") ||
+            if (t.contains("available on more devices") || d.contains("available on more devices") ||
+                t.contains("more devices") || d.contains("more devices") ||
+                t.contains("suggested for you") || d.contains("suggested for you") ||
                 t.contains("sponsored") || d.contains("sponsored") ||
                 t.contains("similar apps") || d.contains("similar apps") ||
                 t.contains("related to this app") || d.contains("related to this app") ||
                 t.contains("recommended for you") || d.contains("recommended for you") ||
-                t.contains("more apps like this") || d.contains("more apps like this")) {
+                t.contains("more apps like this") || d.contains("more apps like this") ||
+                t.contains("rate this app") || d.contains("rate this app") ||
+                t.contains("about this app") || d.contains("about this app")) {
                 if (item.rect.centerY() < suggestionDividerY) {
                     suggestionDividerY = item.rect.centerY();
                 }
@@ -2137,21 +2141,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 closeSheetButton = item;
             }
 
-            // Detect if Play Store is actively downloading, verifying with Play Protect, or installing
-            if (t.contains("installing") || d.contains("installing") ||
-                t.contains("verifying") || d.contains("verifying") ||
-                t.contains("downloading") || d.contains("downloading") ||
-                t.contains("pending") || d.contains("pending") ||
-                t.contains("waiting for download") || d.contains("waiting for download") ||
-                t.contains("play protect") || d.contains("play protect") ||
-                t.equals("cancel") || d.equals("cancel") ||
-                (t.contains("%") && !t.contains("off") && !t.contains("discount")) ||
-                (d.contains("%") && !d.contains("off") && !d.contains("discount"))) {
-                isPlayStoreActiveInstall = true;
-                activeStatusText = !t.isEmpty() ? item.text.trim() : item.contentDesc.trim();
-            }
-
-            // ONLY look for target app action buttons within the main hero section (STRICTLY ABOVE suggestions)
+            // ONLY look for target app action buttons and install status within the main hero section (STRICTLY ABOVE suggestions & other devices)
             if (item.rect.centerY() < heroCutoffY) {
                 // Check if target app explicitly shows "Installed" label
                 if (t.equals("installed") || d.equals("installed")) {
@@ -2167,13 +2157,33 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     }
                 }
 
-                // Check for Install button of the TARGET app (Never suggested apps)
+                // Check for Install button of the TARGET app (Never suggested apps / other devices)
                 if (t.equals("install") || d.equals("install") || 
                     t.startsWith("install ") || d.startsWith("install ") ||
                     (t.contains("install") && t.length() <= 20)) {
                     installButton = item;
                 }
+
+                // Detect if Play Store is actively downloading, verifying with Play Protect, or installing on THIS device
+                if (t.contains("installing") || d.contains("installing") ||
+                    t.contains("verifying") || d.contains("verifying") ||
+                    t.contains("downloading") || d.contains("downloading") ||
+                    t.contains("waiting for download") || d.contains("waiting for download") ||
+                    t.contains("play protect") || d.contains("play protect") ||
+                    t.equals("cancel") || d.equals("cancel") ||
+                    (t.contains("%") && !t.contains("off") && !t.contains("discount")) ||
+                    (d.contains("%") && !d.contains("off") && !d.contains("discount"))) {
+                    isPlayStoreActiveInstall = true;
+                    activeStatusText = !t.isEmpty() ? item.text.trim() : item.contentDesc.trim();
+                }
             }
+        }
+
+        // CRITICAL OVERRIDE: If Open or Uninstall button exists, the app is ALREADY installed on this device!
+        // Ignore any other-device install buttons or background pending status!
+        if (openButton != null) {
+            installButton = null;
+            isPlayStoreActiveInstall = false;
         }
 
         // Update target package detection if already completed
