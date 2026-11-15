@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -4799,6 +4799,23 @@ public class QuizEarnApp : Form
         if (!EnsureConnected())
         {
             if (autoRecoverBlueStacks && !IsBlueStacksProcessRunning())
+            {
+                Log("[🛡️ Watchdog] BlueStacks not running. Auto-launching BlueStacks before starting claimer...");
+                EnsureBlueStacksAliveAndReady("Auto-Offer Claimer Startup");
+            }
+            Log("[💎 Claimer] ADB not connected yet! Turn on ADB in emulator/phone first.");
+            return;
+        }
+        isAdbConnected = true;
+
+        isAutoOffering = true;
+        isBoosting = true;
+        Log("[💎 Claimer] Starting 1-Click Auto-Offer Claimer...");
+
+        autoOfferThread = new Thread(new ThreadStart(AutoOfferWorkerLoop));
+        autoOfferThread.IsBackground = true;
+        autoOfferThread.Start();
+    }
             {
                 Log("[🛡️ Watchdog] BlueStacks not running. Auto-launching BlueStacks before starting claimer...");
                 EnsureBlueStacksAliveAndReady("Auto-Offer Claimer Startup");
