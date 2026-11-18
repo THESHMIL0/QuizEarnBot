@@ -1,8 +1,8 @@
-﻿{
-    "version":  "2.8",
-    "version_code":  280,
+{
+    "version":  "2.9",
+    "version_code":  290,
     "release_date":  "2026-11-18",
-    "changelog":  "Dual Engine v2.8 (Quiz \u0026 Earn + CashMafia): Super Offer auto-installer v2.0, Play Store verification, ad reward safety lock (26s-35s), blue Resume dialog protection, auto-relaunch watchdog, and Doze battery whitelist.",
+    "changelog":  "v2.9: Collect Gem no-ad stall \u0026 restart fix, removed all pm uninstall logic, API-aware Android 7-15 service recovery, non-destructive Accessibility setup, thread-safe stats/ADB cleanup, Quiz \u0026 Earn + CashMafia switcher, proportional screen scaling, and High-DPI WinForms UI.",
     "download_url":  "https://raw.githubusercontent.com/THESHMIL0/QuizEarnBot/main/QuizEarnBot.exe",
     "apk_url":  "https://raw.githubusercontent.com/THESHMIL0/QuizEarnBot/main/QuizEarnBot.apk",
     "mandatory":  false

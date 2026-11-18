@@ -1,33 +1,37 @@
-using System.Net;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Sockets;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Forms;
-using System.Runtime.InteropServices;
-using System.Net.Sockets;
-using System.Reflection;
 using Microsoft.Win32;
 
 [assembly: AssemblyTitle("Quiz & Earn Automation Suite")]
-[assembly: AssemblyDescription("Automation utility and reward assistant for Quiz & Earn on BlueStacks.")]
+[assembly: AssemblyDescription("Desktop controller and multi-instance watchdog for Quiz & Earn & CashMafia.")]
 [assembly: AssemblyConfiguration("Release")]
 [assembly: AssemblyCompany("Quiz & Earn Tools")]
 [assembly: AssemblyProduct("Quiz & Earn Auto-Bot")]
-[assembly: AssemblyCopyright("Copyright © 2026 Quiz & Earn Tools")]
-[assembly: AssemblyTrademark("")]
-[assembly: AssemblyCulture("")]
-[assembly: AssemblyVersion("2.8.0.0")]
-[assembly: AssemblyFileVersion("2.8.0.0")]
+[assembly: AssemblyCopyright("Copyright (c) 2026 Quiz & Earn Tools")]
+[assembly: AssemblyVersion("2.9.0.0")]
+[assembly: AssemblyFileVersion("2.9.0.0")]
 
 public class QuizEarnApp : Form
 {
+    private const string PKG_QUIZ_EARN = "com.quiz.earn.money.game";
+    private const string PKG_CASH_MAFIA = "com.rayole.cashmafia2";
+    private const string PKG_BOT_ASSISTANT = "com.quizearn.assistant";
+    private const string A11Y_COMPONENT = "com.quizearn.assistant/com.quizearn.assistant.QuizEarnAccessibilityService";
+    private const string OVERLAY_COMPONENT = "com.quizearn.assistant/.FloatingOverlayService";
+
     [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
     private static extern uint SetThreadExecutionState(uint esFlags);
     private const uint ES_CONTINUOUS = 0x80000000;
@@ -53,17 +57,8 @@ public class QuizEarnApp : Form
     [DllImport("user32.dll")]
     private static extern int GetWindowThreadProcessId(IntPtr hWnd, out int processId);
 
-    [DllImport("user32.dll")]
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
     private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct RECT
-    {
-        public int Left;
-        public int Top;
-        public int Right;
-        public int Bottom;
-    }
 
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
@@ -73,181 +68,131 @@ public class QuizEarnApp : Form
     private const int DWMWA_CAPTION_COLOR = 35;
     private const int DWMWA_TEXT_COLOR = 36;
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT { public int Left, Top, Right, Bottom; }
+
+    // Synchronized state & I/O locks (thread-safe BeginInvoke UI updates)
+    private readonly object statsLock = new object();
+    private readonly object logLock = new object();
+
+    // UI Elements
+    private Label lblTitle, lblStatus, lblPort;
+    private Button btnToggle, btnWatchdog, btnRestartApp, btnResetAdId, btnSendLastSS;
+    private Label lblTodaySolved, lblGems, lblCaptcha, lblStats;
+    private RichTextBox txtLog;
+    private ComboBox cmbTargetApp;
+
+    // Booster & Auto-Claimer
+    private volatile bool isBoosting = false;
+    private Thread boosterThread = null;
+    private int boostSecondsRemaining = 0;
+    private string boostTargetPackage = "";
+    private Panel pnlBooster;
+    private Label lblBoostStatus;
+    private Button btnBoost1m, btnBoost5m, btnBoost12m, btnBoostStop;
+    private volatile bool isAutoOffering = false;
+    private Thread autoOfferThread = null;
+    private Button btnAutoOffer, btnAutoOfferStop;
+
+    // Bot Threading & ADB
+    private Thread botThread;
+    private volatile bool isRunning = false;
+    private volatile bool isAdbConnected = false;
+    private volatile bool autoMuteEnabled = true;
+    private volatile bool turboSpeedEnabled = true;
+    private volatile bool autoRecoverBlueStacks = true;
+    private volatile string targetAppPackage = PKG_QUIZ_EARN;
+    private string adbPort = "";
+    private string adbExe = "adb";
+    private int devWidth = 900;
+    private int devHeight = 1600;
+
+    // Statistics & Collect-Gem Guard
+    private int questionsSolved = 0, todaySolved = 0, gemsEarned = 0, currentOfferGems = 0;
+    private int totalGems = 0, adsClosed = 0;
+    private int collectGemNoAdCount = 0;
+    private DateTime adReloadCooldownUntil = DateTime.MinValue;
+    private string lastCaptcha = "None";
+    private string lastSolvedTarget = "";
+    private DateTime lastSolveTime = DateTime.MinValue;
+    private DateTime lastProgressTime = DateTime.Now;
+
+    // Data & Analytics
+    private int todayCoinsClaimed = 0, totalCoinsClaimed = 0;
+    private int today25GemsCount = 0, total25GemsCount = 0;
+    private int todayOffersClaimed = 0, totalOffersClaimed = 0;
+    private bool hasCountedThis25GemCycle = false;
+    private bool isPending25thGemStop = false;
+    private List<string> claimsHistory = new List<string>();
+
+    // Cloud Updater
+    private const string APP_VERSION = "2.9";
+    private const int APP_VERSION_CODE = 290;
+    private string updateFeedUrl = "https://raw.githubusercontent.com/THESHMIL0/QuizEarnBot/main/version.json";
+    private string remoteVersion = "", remoteChangelog = "", remoteDownloadUrl = "";
+    private int remoteVersionCode = 0;
+    private bool autoCheckUpdates = true;
+
+    // Navigation Views
+    private Panel pnlHomeView, pnlDataView, pnlSettingsView, pnlBottomNav;
+    private Button btnNavHome, btnNavData, btnNavSettings;
+    private Label lblCurrentVersion, lblUpdateStatus;
+    private Button btnCheckUpdate;
+    private DarkToggleSwitch chkAutoCheckUpdates, chkSettingsAlwaysOnTop, chkSettingsAutoMute, chkSettingsTurbo, chkSettingsAutoRecoverBst;
+    private Label lblDataCoinsVal, lblData25GemsVal, lblData25GemsSub, lblDataOffersVal, lblDataQuizzesVal;
+    private Label lblLifetimeCoins, lblLifetime25Gems, lblLifetimeQuizzes, lblDataDate;
+    private RichTextBox txtClaimsLog;
+    private Button btnDataRefresh, btnDataResetToday;
+
+    private string GetTargetPackage()
+    {
+        return string.IsNullOrEmpty(targetAppPackage) ? PKG_QUIZ_EARN : targetAppPackage;
+    }
+
+    private string GetTargetAppLabel()
+    {
+        return GetTargetPackage() == PKG_CASH_MAFIA ? "CashMafia" : "Quiz & Earn";
+    }
+
+    private bool IsKnownQuizApp(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return false;
+        return text.Contains(PKG_QUIZ_EARN) || text.Contains(PKG_CASH_MAFIA);
+    }
+
     public static void ApplyDwmDarkTo(IntPtr hwnd)
     {
         try
         {
-            int darkMode = 1;
-            DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ref darkMode, sizeof(int));
-            DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1, ref darkMode, sizeof(int));
-            int blackColor = 0x00000000;
-            DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, ref blackColor, sizeof(int));
-            DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, ref blackColor, sizeof(int));
-            int textColor = 0x00808080;
-            DwmSetWindowAttribute(hwnd, DWMWA_TEXT_COLOR, ref textColor, sizeof(int));
+            int dark = 1, black = 0x00000000, textGray = 0x00909095;
+            DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ref dark, sizeof(int));
+            DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1, ref dark, sizeof(int));
+            DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, ref black, sizeof(int));
+            DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, ref black, sizeof(int));
+            DwmSetWindowAttribute(hwnd, DWMWA_TEXT_COLOR, ref textGray, sizeof(int));
         }
-        catch {}
-    }
-
-    private void ApplyDwmDarkMode()
-    {
-        try
-        {
-            ApplyDwmDarkTo(this.Handle);
-            Log("[DWM] Titlebar DarkMode applied.");
-        }
-        catch (Exception ex)
-        {
-            Log("[DWM Error] " + ex.Message);
-        }
+        catch { }
     }
 
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        ApplyDwmDarkMode();
-    }
-
-    protected override void OnShown(EventArgs e)
-    {
-        base.OnShown(e);
-        ApplyDwmDarkMode();
+        ApplyDwmDarkTo(this.Handle);
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
+        isRunning = false;
+        isAutoOffering = false;
+        isBoosting = false;
+        AllowSleep();
         base.OnFormClosing(e);
-        try {
-            File.AppendAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "close_reason.log"), string.Format("[CLOSE] Reason: {0}, Cancel: {1}\nStackTrace:\n{2}\n", e.CloseReason, e.Cancel, Environment.StackTrace));
-        } catch {}
     }
-
-    // UI Elements
-    private Label lblTitle;
-    private Label lblStatus;
-    private Label lblPort;
-    private Button btnToggle;
-    private Button btnWatchdog;
-    private Button btnRestartApp;
-    private Button btnResetAdId;
-    private Button btnSendLastSS;
-    private Button btnTimerToggle;
-    private Label lblTodaySolved;
-    private Label lblGems;
-    private Label lblCaptcha;
-    private Label lblStats;
-    private RichTextBox txtLog;
-    private CheckBox chkAlwaysOnTop;
-    private CheckBox chkAutoMute;
-    private CheckBox chkTurboSpeed;
-
-    // One-Click App Usage Booster Elements (AFK Time Farmer for Sponsored Offer Apps)
-    private volatile bool isBoosting = false;
-    private Thread boosterThread = null;
-    private int boostSecondsRemaining = 0;
-    private int boostTotalSeconds = 0;
-    private string boostTargetPackage = "";
-    private Panel pnlBooster;
-    private Label lblBoostTitle;
-    private Label lblBoostStatus;
-    private Button btnBoost1m;
-    private Button btnBoost5m;
-    private Button btnBoost12m;
-
-    // Dedicated Auto-Offer Coin Claimer Elements
-    private volatile bool isAutoOffering = false;
-    private Thread autoOfferThread = null;
-    private Button btnAutoOffer;
-    private Button btnAutoOfferStop;
-
-    // Ad Countdown Timer
-    private System.Windows.Forms.Timer uiCountdownTimer;
-    private int countdownSeconds = 30;
-    private bool isTimerRunning = false;
-
-    // Threading & ADB
-    private Thread botThread;
-    private volatile bool isRunning = false;
-    private string adbPort = "127.0.0.1:5555";
-    private string adbExe = "adb";
-    private volatile bool isAdbConnected = false;
-    private int devWidth = 900;
-    private int devHeight = 1600;
-
-    // Statistics & State
-    private int questionsSolved = 0;
-    private int todaySolved = 0;
-    private int gemsEarned = 0;
-    private int currentOfferGems = 0;
-    private int totalGems = 0;
-    private int adsClosed = 0;
-    private string lastCaptcha = "None";
-    private string lastSolvedTarget = "";
-    private DateTime lastSolveTime = DateTime.MinValue;
-    private DateTime botStartTime;
-    private DateTime lastProgressTime = DateTime.Now;
-
-    // Data & Analytics State
-    private int todayCoinsClaimed = 0;
-    private int totalCoinsClaimed = 0;
-    private int today25GemsCount = 0;
-    private int total25GemsCount = 0;
-    private int todayOffersClaimed = 0;
-    private int totalOffersClaimed = 0;
-    private bool hasCountedThis25GemCycle = false;
-    private bool isPending25thGemStop = false;
-    private List<string> claimsHistory = new List<string>();
-
-    // App Version & Cloud Auto-Updater State
-    private const string APP_VERSION = "2.8";
-    private const int APP_VERSION_CODE = 280;
-    private bool autoRecoverBlueStacks = true;
-    private string updateFeedUrl = "https://raw.githubusercontent.com/THESHMIL0/QuizEarnBot/main/version.json";
-    private string remoteVersion = "";
-    private int remoteVersionCode = 0;
-    private string remoteChangelog = "";
-    private string remoteDownloadUrl = "";
-    private bool isUpdateAvailable = false;
-    private bool isUpdateIgnored = false;
-    private bool autoCheckUpdates = true;
-
-    // UI Navigation & Views
-    private Panel pnlHomeView;
-    private Panel pnlDataView;
-    private Panel pnlSettingsView;
-    private Panel pnlBottomNav;
-    private Button btnNavHome;
-    private Button btnNavData;
-    private Button btnNavSettings;
-
-    // Settings View UI Elements
-    private Label lblCurrentVersion;
-    private Label lblUpdateStatus;
-    private Button btnCheckUpdate;
-    private Panel pnlUpdateCard;
-    private DarkToggleSwitch chkAutoCheckUpdates;
-    private DarkToggleSwitch chkSettingsAlwaysOnTop;
-    private DarkToggleSwitch chkSettingsAutoMute;
-    private DarkToggleSwitch chkSettingsTurbo;
-    private DarkToggleSwitch chkSettingsAutoRecoverBst;
-
-    // Data View UI Elements
-    private Label lblDataCoinsVal;
-    private Label lblData25GemsVal;
-    private Label lblData25GemsSub;
-    private Label lblDataOffersVal;
-    private Label lblDataQuizzesVal;
-    private Label lblLifetimeCoins;
-    private Label lblLifetime25Gems;
-    private Label lblLifetimeQuizzes;
-    private Label lblDataDate;
-    private RichTextBox txtClaimsLog;
-    private Button btnDataRefresh;
-    private Button btnDataResetToday;
 
     public QuizEarnApp()
     {
-        Control.CheckForIllegalCrossThreadCalls = false;
+        this.AutoScaleDimensions = new SizeF(96F, 96F);
+        this.AutoScaleMode = AutoScaleMode.Dpi;
         DetectAdbExecutable();
         InitializeComponent();
         PreventSleep();
@@ -255,35 +200,39 @@ public class QuizEarnApp : Form
 
     private void PreventSleep()
     {
-        try { SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED); } catch {}
+        try { SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED); } catch { }
     }
 
     private void AllowSleep()
     {
-        try { SetThreadExecutionState(ES_CONTINUOUS); } catch {}
+        try { SetThreadExecutionState(ES_CONTINUOUS); } catch { }
+    }
+
+    private void SafeBeginInvoke(Action action)
+    {
+        try
+        {
+            if (!this.IsDisposed && this.IsHandleCreated)
+            {
+                if (this.InvokeRequired) this.BeginInvoke(action);
+                else action();
+            }
+        }
+        catch { }
     }
 
     private void DetectAdbExecutable()
     {
-        // 1. Check local directory alongside QuizEarnBot.exe
         string localAdb = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "adb.exe");
-        if (File.Exists(localAdb))
-        {
-            adbExe = localAdb;
-            return;
-        }
+        if (File.Exists(localAdb)) { adbExe = localAdb; return; }
 
-        // 2. Extract embedded zero-install ADB toolchain if bundled inside the executable
         try
         {
             string appDataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "QuizEarnBot", "bin");
             if (!Directory.Exists(appDataDir)) Directory.CreateDirectory(appDataDir);
             string appDataAdb = Path.Combine(appDataDir, "adb.exe");
-
-            string[] requiredFiles = new string[] { "adb.exe", "AdbWinApi.dll", "AdbWinUsbApi.dll" };
             Assembly asm = Assembly.GetExecutingAssembly();
-
-            foreach (string fileName in requiredFiles)
+            foreach (string fileName in new string[] { "adb.exe", "AdbWinApi.dll", "AdbWinUsbApi.dll" })
             {
                 string targetPath = Path.Combine(appDataDir, fileName);
                 if (!File.Exists(targetPath) || new FileInfo(targetPath).Length == 0)
@@ -294,27 +243,18 @@ public class QuizEarnApp : Form
                         {
                             using (FileStream fs = new FileStream(targetPath, FileMode.Create, FileAccess.Write))
                             {
-                                byte[] buffer = new byte[81920];
+                                byte[] buffer = new byte[65536];
                                 int read;
-                                while ((read = resStream.Read(buffer, 0, buffer.Length)) > 0)
-                                {
-                                    fs.Write(buffer, 0, read);
-                                }
+                                while ((read = resStream.Read(buffer, 0, buffer.Length)) > 0) fs.Write(buffer, 0, read);
                             }
                         }
                     }
                 }
             }
-
-            if (File.Exists(appDataAdb))
-            {
-                adbExe = appDataAdb;
-                return;
-            }
+            if (File.Exists(appDataAdb)) { adbExe = appDataAdb; return; }
         }
-        catch {}
+        catch { }
 
-        // 3. Search common emulator and Android SDK locations
         string[] candidates = new string[]
         {
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"Android\Sdk\platform-tools\adb.exe"),
@@ -323,185 +263,208 @@ public class QuizEarnApp : Form
             @"C:\Program Files\BlueStacks\HD-Adb.exe",
             @"C:\LDPlayer\LDPlayer9\adb.exe",
             @"D:\LDPlayer\LDPlayer9\adb.exe",
-            @"C:\LDPlayer\LDPlayer4\adb.exe",
             @"C:\Program Files\Nox\bin\nox_adb.exe",
             @"C:\Program Files\Microvirt\MEmu\adb.exe",
-            @"C:\Program Files\Netease\MuMuPlayerGlobal-12.0\shell\adb.exe",
             "adb"
         };
-
         foreach (string c in candidates)
         {
-            if (c == "adb" || File.Exists(c))
-            {
-                adbExe = c;
-                break;
-            }
+            if (c == "adb" || File.Exists(c)) { adbExe = c; break; }
         }
     }
 
     private void InitializeComponent()
     {
-        this.Text = "Quiz & Earn - Auto Quiz & Reward Bot";
+        this.Text = "Quiz & Earn + CashMafia Auto-Bot v" + APP_VERSION;
         try
         {
             string icoPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app.ico");
-            if (File.Exists(icoPath))
-                this.Icon = new Icon(icoPath);
-            else
-                this.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+            if (File.Exists(icoPath)) this.Icon = new Icon(icoPath);
+            else this.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
         }
-        catch {}
-        this.ClientSize = new Size(544, 835);
-        this.StartPosition = FormStartPosition.CenterScreen;
-        // Pure OLED Pitch Black Dark++ Theme (Stealth Minimalist)
-        this.BackColor = Color.Black;
-        this.ForeColor = Color.FromArgb(135, 135, 140);
-        this.Font = new Font("Segoe UI", 9.5f, FontStyle.Regular);
-        this.FormBorderStyle = FormBorderStyle.FixedSingle;
-        this.MaximizeBox = false;
-        this.AutoScroll = false;
+        catch { }
 
-        // ==========================================
-        // 1. HOME VIEW CONTAINER
-        // ==========================================
+        this.ClientSize = new Size(560, 860);
+        this.MinimumSize = new Size(540, 740);
+        this.StartPosition = FormStartPosition.CenterScreen;
+        this.BackColor = Color.Black;
+        this.ForeColor = Color.FromArgb(165, 165, 175);
+        this.Font = new Font("Segoe UI", 9.5f, FontStyle.Regular);
+        this.FormBorderStyle = FormBorderStyle.Sizable;
+        this.MaximizeBox = true;
+
+        // Bottom Navigation Bar (Docked Bottom for Responsive Resize / DPI)
+        pnlBottomNav = new Panel();
+        pnlBottomNav.Dock = DockStyle.Bottom;
+        pnlBottomNav.Height = 56;
+        pnlBottomNav.BackColor = Color.FromArgb(6, 6, 8);
+        pnlBottomNav.Padding = new Padding(12, 8, 12, 8);
+        pnlBottomNav.Paint += delegate(object s, PaintEventArgs pe)
+        {
+            pe.Graphics.DrawLine(new Pen(Color.FromArgb(26, 26, 30), 1), 0, 0, pnlBottomNav.Width, 0);
+        };
+        this.Controls.Add(pnlBottomNav);
+
+        TableLayoutPanel navGrid = new TableLayoutPanel();
+        navGrid.Dock = DockStyle.Fill;
+        navGrid.ColumnCount = 3;
+        navGrid.RowCount = 1;
+        navGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33f));
+        navGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33f));
+        navGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.34f));
+        pnlBottomNav.Controls.Add(navGrid);
+
+        btnNavHome = CreateNavButton("HOME");
+        btnNavHome.Click += delegate { SwitchToHomeView(); };
+        btnNavData = CreateNavButton("DATA");
+        btnNavData.Click += delegate { SwitchToDataView(); };
+        btnNavSettings = CreateNavButton("SETTINGS");
+        btnNavSettings.Click += delegate { SwitchToSettingsView(); };
+
+        navGrid.Controls.Add(btnNavHome, 0, 0);
+        navGrid.Controls.Add(btnNavData, 1, 0);
+        navGrid.Controls.Add(btnNavSettings, 2, 0);
+
+        // 1. HOME VIEW
         pnlHomeView = new Panel();
-        pnlHomeView.Location = new Point(0, 0);
-        pnlHomeView.Size = new Size(544, 780);
+        pnlHomeView.Dock = DockStyle.Fill;
         pnlHomeView.BackColor = Color.Black;
-        pnlHomeView.AutoScroll = false;
+        pnlHomeView.Padding = new Padding(18, 14, 18, 10);
         this.Controls.Add(pnlHomeView);
 
-        // Header Logo & Title
-        PictureBox picLogo = new PictureBox();
-        picLogo.Location = new Point(20, 14);
-        picLogo.Size = new Size(30, 30);
-        picLogo.SizeMode = PictureBoxSizeMode.Zoom;
-        picLogo.BackColor = Color.Transparent;
-        try
-        {
-            string pngPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logo.png");
-            string icoPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app.ico");
-            if (File.Exists(pngPath)) picLogo.Image = Image.FromFile(pngPath);
-            else if (File.Exists(icoPath)) picLogo.Image = new Icon(icoPath, 64, 64).ToBitmap();
-            else if (this.Icon != null) picLogo.Image = this.Icon.ToBitmap();
-        }
-        catch {}
-        pnlHomeView.Controls.Add(picLogo);
+        // Top Bar
+        Panel topRow = new Panel();
+        topRow.Dock = DockStyle.Top;
+        topRow.Height = 64;
+        pnlHomeView.Controls.Add(topRow);
 
         lblTitle = new Label();
-        lblTitle.Text = "Quiz & Earn Auto-Bot";
-        lblTitle.Font = new Font("Segoe UI", 16f, FontStyle.Bold);
-        lblTitle.ForeColor = Color.FromArgb(160, 160, 165);
-        lblTitle.Location = new Point(56, 14);
+        lblTitle.Text = "QuizEarn & CashMafia Bot v" + APP_VERSION;
+        lblTitle.Font = new Font("Segoe UI", 14.5f, FontStyle.Bold);
+        lblTitle.ForeColor = Color.FromArgb(225, 225, 232);
+        lblTitle.Location = new Point(0, 2);
         lblTitle.AutoSize = true;
-        pnlHomeView.Controls.Add(lblTitle);
+        topRow.Controls.Add(lblTitle);
 
-        // Dedicated Watchdog Toggle Button on Home View
+        lblStatus = new Label();
+        lblStatus.Text = "READY - Waiting for ADB";
+        lblStatus.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
+        lblStatus.ForeColor = Color.FromArgb(130, 130, 140);
+        lblStatus.Location = new Point(2, 30);
+        lblStatus.AutoSize = true;
+        topRow.Controls.Add(lblStatus);
+
+        lblPort = new Label();
+        lblPort.Text = "ADB: Auto-Detecting...";
+        lblPort.Font = new Font("Consolas", 8f);
+        lblPort.ForeColor = Color.FromArgb(100, 105, 115);
+        lblPort.Location = new Point(2, 47);
+        lblPort.AutoSize = true;
+        topRow.Controls.Add(lblPort);
+
         btnWatchdog = new Button();
-        btnWatchdog.Text = autoRecoverBlueStacks ? "[ 🛡️ WATCHDOG: ON ]" : "[ 🛡️ WATCHDOG: OFF ]";
+        btnWatchdog.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        btnWatchdog.Size = new Size(168, 34);
+        btnWatchdog.Location = new Point(topRow.Width - 168, 6);
         btnWatchdog.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
-        btnWatchdog.ForeColor = autoRecoverBlueStacks ? Color.FromArgb(76, 175, 80) : Color.FromArgb(140, 140, 145);
-        btnWatchdog.BackColor = autoRecoverBlueStacks ? Color.FromArgb(10, 24, 14) : Color.FromArgb(12, 12, 14);
         btnWatchdog.FlatStyle = FlatStyle.Flat;
-        btnWatchdog.FlatAppearance.BorderColor = autoRecoverBlueStacks ? Color.FromArgb(46, 125, 50) : Color.FromArgb(28, 28, 32);
-        btnWatchdog.FlatAppearance.BorderSize = 1;
-        btnWatchdog.Location = new Point(335, 12);
-        btnWatchdog.Size = new Size(190, 32);
         btnWatchdog.Cursor = Cursors.Hand;
         btnWatchdog.Click += new EventHandler(BtnWatchdog_Click);
-        pnlHomeView.Controls.Add(btnWatchdog);
+        topRow.Controls.Add(btnWatchdog);
 
-        // Internal Status & Port instances (Hidden from UI per user request)
-        lblStatus = new Label();
-        lblStatus.Text = "READY";
-        lblPort = new Label();
-        lblPort.Text = "ADB: Connected";
+        // Target App + Main Controls Stack
+        Panel controlsBlock = new Panel();
+        controlsBlock.Dock = DockStyle.Top;
+        controlsBlock.Height = 296;
+        pnlHomeView.Controls.Add(controlsBlock);
+        controlsBlock.BringToFront();
 
-        // Main Start/Stop Button (Dark++ Pure Stealth)
+        // Target App Selector Row
+        Label lblTarget = new Label();
+        lblTarget.Text = "Target App:";
+        lblTarget.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
+        lblTarget.ForeColor = Color.FromArgb(150, 150, 160);
+        lblTarget.Location = new Point(0, 6);
+        lblTarget.AutoSize = true;
+        controlsBlock.Controls.Add(lblTarget);
+
+        cmbTargetApp = new ComboBox();
+        cmbTargetApp.DropDownStyle = ComboBoxStyle.DropDownList;
+        cmbTargetApp.BackColor = Color.FromArgb(16, 16, 20);
+        cmbTargetApp.ForeColor = Color.White;
+        cmbTargetApp.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
+        cmbTargetApp.Items.Add("Quiz & Earn (com.quiz.earn.money.game)");
+        cmbTargetApp.Items.Add("CashMafia (com.rayole.cashmafia2)");
+        cmbTargetApp.Location = new Point(90, 2);
+        cmbTargetApp.Width = 428;
+        cmbTargetApp.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        cmbTargetApp.SelectedIndexChanged += delegate
+        {
+            targetAppPackage = cmbTargetApp.SelectedIndex == 1 ? PKG_CASH_MAFIA : PKG_QUIZ_EARN;
+            SaveStatsToFile();
+            Log(string.Format("[Target] Active target switched to {0} ({1}).", GetTargetAppLabel(), targetAppPackage));
+        };
+        controlsBlock.Controls.Add(cmbTargetApp);
+
         btnToggle = new Button();
-        btnToggle.Text = "[ > ]  START QUIZ & EARN BOT";
-        btnToggle.Font = new Font("Segoe UI", 12f, FontStyle.Bold);
-        btnToggle.ForeColor = Color.FromArgb(150, 150, 155);
-        btnToggle.BackColor = Color.FromArgb(8, 8, 8);
+        btnToggle.Text = "[ > ]  START BOT";
+        btnToggle.Font = new Font("Segoe UI", 11.5f, FontStyle.Bold);
+        btnToggle.ForeColor = Color.White;
+        btnToggle.BackColor = Color.FromArgb(14, 48, 34);
         btnToggle.FlatStyle = FlatStyle.Flat;
-        btnToggle.FlatAppearance.BorderColor = Color.FromArgb(24, 24, 24);
+        btnToggle.FlatAppearance.BorderColor = Color.FromArgb(24, 110, 74);
         btnToggle.FlatAppearance.BorderSize = 1;
-        btnToggle.Location = new Point(20, 52);
-        btnToggle.Size = new Size(505, 48);
+        btnToggle.Location = new Point(0, 36);
+        btnToggle.Size = new Size(518, 46);
+        btnToggle.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         btnToggle.Cursor = Cursors.Hand;
         btnToggle.Click += new EventHandler(BtnToggle_Click);
-        pnlHomeView.Controls.Add(btnToggle);
+        controlsBlock.Controls.Add(btnToggle);
 
-        // Utility Buttons Row: App Restart, Reset Ad ID & Send Last SS
-        int btnY = 108;
-        btnRestartApp = new Button();
-        btnRestartApp.Text = "Restart App";
-        btnRestartApp.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
-        btnRestartApp.ForeColor = Color.FromArgb(120, 120, 125);
-        btnRestartApp.BackColor = Color.FromArgb(6, 6, 6);
-        btnRestartApp.FlatStyle = FlatStyle.Flat;
-        btnRestartApp.FlatAppearance.BorderColor = Color.FromArgb(18, 18, 18);
-        btnRestartApp.FlatAppearance.BorderSize = 1;
-        btnRestartApp.Location = new Point(20, btnY);
-        btnRestartApp.Size = new Size(158, 36);
-        btnRestartApp.Cursor = Cursors.Hand;
+        TableLayoutPanel utilityRow = new TableLayoutPanel();
+        utilityRow.Location = new Point(0, 90);
+        utilityRow.Size = new Size(518, 36);
+        utilityRow.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        utilityRow.ColumnCount = 3;
+        utilityRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33f));
+        utilityRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33f));
+        utilityRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.34f));
+        controlsBlock.Controls.Add(utilityRow);
+
+        btnRestartApp = CreateFlatButton("Restart App", Color.FromArgb(14, 14, 18), Color.FromArgb(180, 180, 190), Color.FromArgb(32, 32, 38));
         btnRestartApp.Click += new EventHandler(BtnRestartApp_Click);
-        pnlHomeView.Controls.Add(btnRestartApp);
-
-        btnResetAdId = new Button();
-        btnResetAdId.Text = "Reset Ad ID";
-        btnResetAdId.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
-        btnResetAdId.ForeColor = Color.FromArgb(120, 120, 125);
-        btnResetAdId.BackColor = Color.FromArgb(6, 6, 6);
-        btnResetAdId.FlatStyle = FlatStyle.Flat;
-        btnResetAdId.FlatAppearance.BorderColor = Color.FromArgb(18, 18, 18);
-        btnResetAdId.FlatAppearance.BorderSize = 1;
-        btnResetAdId.Location = new Point(186, btnY);
-        btnResetAdId.Size = new Size(158, 36);
-        btnResetAdId.Cursor = Cursors.Hand;
+        btnResetAdId = CreateFlatButton("Reset Ad ID", Color.FromArgb(14, 14, 18), Color.FromArgb(180, 180, 190), Color.FromArgb(32, 32, 38));
         btnResetAdId.Click += new EventHandler(BtnResetAdId_Click);
-        pnlHomeView.Controls.Add(btnResetAdId);
-
-        btnSendLastSS = new Button();
-        btnSendLastSS.Text = "Auto SS to Gallery";
-        btnSendLastSS.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
-        btnSendLastSS.ForeColor = Color.FromArgb(80, 175, 255);
-        btnSendLastSS.BackColor = Color.FromArgb(14, 26, 42);
-        btnSendLastSS.FlatStyle = FlatStyle.Flat;
-        btnSendLastSS.FlatAppearance.BorderColor = Color.FromArgb(42, 90, 150);
-        btnSendLastSS.FlatAppearance.BorderSize = 1;
-        btnSendLastSS.Location = new Point(352, btnY);
-        btnSendLastSS.Size = new Size(172, 36);
-        btnSendLastSS.Cursor = Cursors.Hand;
+        btnSendLastSS = CreateFlatButton("Auto SS to Gallery", Color.FromArgb(14, 26, 42), Color.FromArgb(95, 185, 255), Color.FromArgb(42, 90, 150));
         btnSendLastSS.Click += new EventHandler(BtnSendLastSS_Click);
-        pnlHomeView.Controls.Add(btnSendLastSS);
 
-        // Timer toggle button instance kept in memory for events but not shown
-        btnTimerToggle = new Button();
+        utilityRow.Controls.Add(btnRestartApp, 0, 0);
+        utilityRow.Controls.Add(btnResetAdId, 1, 0);
+        utilityRow.Controls.Add(btnSendLastSS, 2, 0);
 
-        // One-Click App Usage Booster & Auto-Claim Container (Pure Dark++ Stealth)
+        // Offer Claimer + Booster Panel
         pnlBooster = new Panel();
-        pnlBooster.BackColor = Color.FromArgb(4, 4, 4);
-        pnlBooster.Location = new Point(20, 152);
-        pnlBooster.Size = new Size(505, 88);
-        pnlBooster.BorderStyle = BorderStyle.None;
-        pnlBooster.Paint += delegate(object s, PaintEventArgs pe) {
-            ControlPaint.DrawBorder(pe.Graphics, pnlBooster.ClientRectangle, Color.FromArgb(20, 20, 20), ButtonBorderStyle.Solid);
+        pnlBooster.Location = new Point(0, 134);
+        pnlBooster.Size = new Size(518, 86);
+        pnlBooster.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        pnlBooster.BackColor = Color.FromArgb(8, 8, 10);
+        pnlBooster.Paint += delegate(object s, PaintEventArgs pe)
+        {
+            ControlPaint.DrawBorder(pe.Graphics, pnlBooster.ClientRectangle, Color.FromArgb(26, 26, 32), ButtonBorderStyle.Solid);
         };
-        pnlHomeView.Controls.Add(pnlBooster);
+        controlsBlock.Controls.Add(pnlBooster);
 
-        // Row 1: Dedicated 1-Click Auto-Offer Coin Claimer
         btnAutoOffer = new Button();
         btnAutoOffer.Text = "[ AUTO-CLAIM ALL OFFERS (1-Click) ]";
         btnAutoOffer.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
-        btnAutoOffer.ForeColor = Color.FromArgb(220, 220, 225);
-        btnAutoOffer.BackColor = Color.FromArgb(12, 12, 14);
+        btnAutoOffer.ForeColor = Color.White;
+        btnAutoOffer.BackColor = Color.FromArgb(16, 16, 20);
         btnAutoOffer.FlatStyle = FlatStyle.Flat;
-        btnAutoOffer.FlatAppearance.BorderColor = Color.FromArgb(28, 28, 32);
+        btnAutoOffer.FlatAppearance.BorderColor = Color.FromArgb(36, 36, 44);
         btnAutoOffer.FlatAppearance.BorderSize = 1;
         btnAutoOffer.Location = new Point(8, 8);
-        btnAutoOffer.Size = new Size(398, 34);
+        btnAutoOffer.Size = new Size(412, 34);
+        btnAutoOffer.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         btnAutoOffer.Cursor = Cursors.Hand;
         btnAutoOffer.Click += new EventHandler(BtnAutoOffer_Click);
         pnlBooster.Controls.Add(btnAutoOffer);
@@ -509,683 +472,136 @@ public class QuizEarnApp : Form
         btnAutoOfferStop = new Button();
         btnAutoOfferStop.Text = "Stop";
         btnAutoOfferStop.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
-        btnAutoOfferStop.ForeColor = Color.FromArgb(140, 140, 145);
-        btnAutoOfferStop.BackColor = Color.FromArgb(10, 10, 12);
+        btnAutoOfferStop.ForeColor = Color.FromArgb(200, 140, 140);
+        btnAutoOfferStop.BackColor = Color.FromArgb(24, 12, 14);
         btnAutoOfferStop.FlatStyle = FlatStyle.Flat;
-        btnAutoOfferStop.FlatAppearance.BorderColor = Color.FromArgb(24, 24, 28);
+        btnAutoOfferStop.FlatAppearance.BorderColor = Color.FromArgb(55, 24, 28);
         btnAutoOfferStop.FlatAppearance.BorderSize = 1;
-        btnAutoOfferStop.Location = new Point(412, 8);
+        btnAutoOfferStop.Location = new Point(426, 8);
         btnAutoOfferStop.Size = new Size(84, 34);
+        btnAutoOfferStop.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         btnAutoOfferStop.Cursor = Cursors.Hand;
         btnAutoOfferStop.Click += new EventHandler(BtnAutoOfferStop_Click);
         pnlBooster.Controls.Add(btnAutoOfferStop);
 
-        // Row 2: Manual Booster Presets & Live Countdown
-        lblBoostTitle = new Label();
-        lblBoostTitle.Text = "Manual:";
-        lblBoostTitle.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
-        lblBoostTitle.ForeColor = Color.FromArgb(85, 85, 95);
-        lblBoostTitle.Location = new Point(8, 52);
-        lblBoostTitle.AutoSize = true;
-        pnlBooster.Controls.Add(lblBoostTitle);
-
-        btnBoost1m = new Button();
-        btnBoost1m.Text = "+1m";
-        btnBoost1m.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
-        btnBoost1m.ForeColor = Color.FromArgb(180, 180, 185);
-        btnBoost1m.BackColor = Color.FromArgb(8, 8, 10);
-        btnBoost1m.FlatStyle = FlatStyle.Flat;
-        btnBoost1m.FlatAppearance.BorderColor = Color.FromArgb(24, 24, 28);
-        btnBoost1m.FlatAppearance.BorderSize = 1;
-        btnBoost1m.Location = new Point(62, 48);
-        btnBoost1m.Size = new Size(54, 30);
-        btnBoost1m.Cursor = Cursors.Hand;
+        btnBoost1m = CreateBoostButton("+1m", 8);
         btnBoost1m.Click += delegate { StartUsageBooster(1); };
-        pnlBooster.Controls.Add(btnBoost1m);
-
-        btnBoost5m = new Button();
-        btnBoost5m.Text = "+5m";
-        btnBoost5m.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
-        btnBoost5m.ForeColor = Color.FromArgb(180, 180, 185);
-        btnBoost5m.BackColor = Color.FromArgb(8, 8, 10);
-        btnBoost5m.FlatStyle = FlatStyle.Flat;
-        btnBoost5m.FlatAppearance.BorderColor = Color.FromArgb(24, 24, 28);
-        btnBoost5m.FlatAppearance.BorderSize = 1;
-        btnBoost5m.Location = new Point(120, 48);
-        btnBoost5m.Size = new Size(54, 30);
-        btnBoost5m.Cursor = Cursors.Hand;
+        btnBoost5m = CreateBoostButton("+5m", 62);
         btnBoost5m.Click += delegate { StartUsageBooster(5); };
-        pnlBooster.Controls.Add(btnBoost5m);
-
-        btnBoost12m = new Button();
-        btnBoost12m.Text = "+12m";
-        btnBoost12m.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
-        btnBoost12m.ForeColor = Color.FromArgb(180, 180, 185);
-        btnBoost12m.BackColor = Color.FromArgb(8, 8, 10);
-        btnBoost12m.FlatStyle = FlatStyle.Flat;
-        btnBoost12m.FlatAppearance.BorderColor = Color.FromArgb(24, 24, 28);
-        btnBoost12m.FlatAppearance.BorderSize = 1;
-        btnBoost12m.Location = new Point(178, 48);
-        btnBoost12m.Size = new Size(60, 30);
-        btnBoost12m.Cursor = Cursors.Hand;
+        btnBoost12m = CreateBoostButton("+12m", 116);
         btnBoost12m.Click += delegate { StartUsageBooster(12); };
-        pnlBooster.Controls.Add(btnBoost12m);
+
+        btnBoostStop = new Button();
+        btnBoostStop.Text = "Stop Boost";
+        btnBoostStop.Font = new Font("Segoe UI", 8f, FontStyle.Bold);
+        btnBoostStop.ForeColor = Color.FromArgb(190, 190, 200);
+        btnBoostStop.BackColor = Color.FromArgb(14, 14, 18);
+        btnBoostStop.FlatStyle = FlatStyle.Flat;
+        btnBoostStop.FlatAppearance.BorderColor = Color.FromArgb(30, 30, 36);
+        btnBoostStop.Location = new Point(176, 48);
+        btnBoostStop.Size = new Size(76, 30);
+        btnBoostStop.Cursor = Cursors.Hand;
+        btnBoostStop.Click += new EventHandler(BtnBoostStop_Click);
+        pnlBooster.Controls.Add(btnBoostStop);
 
         lblBoostStatus = new Label();
-        lblBoostStatus.Text = "Idle (Tap Auto-Claim to farm offers)";
-        lblBoostStatus.Font = new Font("Segoe UI", 7.5f, FontStyle.Regular);
-        lblBoostStatus.ForeColor = Color.FromArgb(110, 110, 115);
-        lblBoostStatus.Location = new Point(245, 54);
-        lblBoostStatus.AutoSize = true;
+        lblBoostStatus.Text = "Idle (Auto-Claim or Manual Booster)";
+        lblBoostStatus.Font = new Font("Segoe UI", 8f);
+        lblBoostStatus.ForeColor = Color.FromArgb(135, 135, 145);
+        lblBoostStatus.Location = new Point(258, 55);
+        lblBoostStatus.Size = new Size(252, 20);
+        lblBoostStatus.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         pnlBooster.Controls.Add(lblBoostStatus);
 
-        // Stats Dashboard Container (Pitch Black Panel)
-        Panel statsPanel = new Panel();
-        statsPanel.BackColor = Color.FromArgb(4, 4, 4);
-        statsPanel.Location = new Point(20, 248);
-        statsPanel.Size = new Size(505, 95);
-        statsPanel.BorderStyle = BorderStyle.None;
-        statsPanel.Paint += delegate(object s, PaintEventArgs pe) {
-            ControlPaint.DrawBorder(pe.Graphics, statsPanel.ClientRectangle, Color.FromArgb(20, 20, 20), ButtonBorderStyle.Solid);
+        // Live 4-Metric Bar
+        TableLayoutPanel statsPanel = new TableLayoutPanel();
+        statsPanel.Location = new Point(0, 226);
+        statsPanel.Size = new Size(518, 64);
+        statsPanel.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        statsPanel.BackColor = Color.FromArgb(8, 8, 10);
+        statsPanel.ColumnCount = 4;
+        for (int i = 0; i < 4; i++) statsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25f));
+        statsPanel.Paint += delegate(object s, PaintEventArgs pe)
+        {
+            ControlPaint.DrawBorder(pe.Graphics, statsPanel.ClientRectangle, Color.FromArgb(24, 24, 28), ButtonBorderStyle.Solid);
         };
-        pnlHomeView.Controls.Add(statsPanel);
+        controlsBlock.Controls.Add(statsPanel);
 
-        // Stat Card 1: Today Solved
-        lblTodaySolved = new Label();
-        lblTodaySolved.Text = "0\nToday Solved";
-        lblTodaySolved.Font = new Font("Segoe UI", 11f, FontStyle.Bold);
-        lblTodaySolved.ForeColor = Color.FromArgb(150, 150, 155);
-        lblTodaySolved.TextAlign = ContentAlignment.MiddleCenter;
-        lblTodaySolved.Location = new Point(10, 10);
-        lblTodaySolved.Size = new Size(115, 75);
-        statsPanel.Controls.Add(lblTodaySolved);
+        lblTodaySolved = CreateMetricLabel("0\nSolved");
+        lblGems = CreateMetricLabel("0/25\nOffer Gems");
+        lblCaptcha = CreateMetricLabel("None\nLast Captcha");
+        lblStats = CreateMetricLabel("0\nAds Closed");
+        statsPanel.Controls.Add(lblTodaySolved, 0, 0);
+        statsPanel.Controls.Add(lblGems, 1, 0);
+        statsPanel.Controls.Add(lblCaptcha, 2, 0);
+        statsPanel.Controls.Add(lblStats, 3, 0);
 
-        // Stat Card 2: Gems Earned
-        lblGems = new Label();
-        lblGems.Text = "0\nGems Earned";
-        lblGems.Font = new Font("Segoe UI", 11f, FontStyle.Bold);
-        lblGems.ForeColor = Color.FromArgb(150, 150, 155);
-        lblGems.TextAlign = ContentAlignment.MiddleCenter;
-        lblGems.Location = new Point(135, 10);
-        lblGems.Size = new Size(115, 75);
-        statsPanel.Controls.Add(lblGems);
+        // Log Header + Scrollable Log Console
+        Panel logArea = new Panel();
+        logArea.Dock = DockStyle.Fill;
+        pnlHomeView.Controls.Add(logArea);
+        logArea.BringToFront();
 
-        // Stat Card 3: Last Captcha
-        lblCaptcha = new Label();
-        lblCaptcha.Text = "None\nLast Captcha";
-        lblCaptcha.Font = new Font("Segoe UI", 11f, FontStyle.Bold);
-        lblCaptcha.ForeColor = Color.FromArgb(150, 150, 155);
-        lblCaptcha.TextAlign = ContentAlignment.MiddleCenter;
-        lblCaptcha.Location = new Point(260, 10);
-        lblCaptcha.Size = new Size(110, 75);
-        statsPanel.Controls.Add(lblCaptcha);
+        Panel logHeader = new Panel();
+        logHeader.Dock = DockStyle.Top;
+        logHeader.Height = 24;
+        logArea.Controls.Add(logHeader);
 
-        // Stat Card 4: Ads Watched
-        lblStats = new Label();
-        lblStats.Text = "0\nAds Watched";
-        lblStats.Font = new Font("Segoe UI", 11f, FontStyle.Bold);
-        lblStats.ForeColor = Color.FromArgb(150, 150, 155);
-        lblStats.TextAlign = ContentAlignment.MiddleCenter;
-        lblStats.Location = new Point(380, 10);
-        lblStats.Size = new Size(115, 75);
-        statsPanel.Controls.Add(lblStats);
-
-        // Options Bar instances kept in memory with optimal settings (Hidden from UI per user request)
-        chkAlwaysOnTop = new CheckBox();
-        chkAlwaysOnTop.Checked = false;
-
-        chkAutoMute = new CheckBox();
-        chkAutoMute.Checked = true;
-
-        chkTurboSpeed = new CheckBox();
-        chkTurboSpeed.Checked = true;
-
-        // Activity Log Label
         Label lblLogTitle = new Label();
         lblLogTitle.Text = "Activity Log:";
-        lblLogTitle.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
-        lblLogTitle.ForeColor = Color.FromArgb(75, 75, 80);
-        lblLogTitle.Location = new Point(20, 352);
+        lblLogTitle.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
+        lblLogTitle.ForeColor = Color.FromArgb(120, 120, 130);
+        lblLogTitle.Location = new Point(0, 3);
         lblLogTitle.AutoSize = true;
-        pnlHomeView.Controls.Add(lblLogTitle);
+        logHeader.Controls.Add(lblLogTitle);
 
-        // Activity Log Box (Pure OLED Pitch Black, No Scrollbars)
+        Button btnClearLog = new Button();
+        btnClearLog.Text = "Clear Log";
+        btnClearLog.Font = new Font("Segoe UI", 7.5f, FontStyle.Bold);
+        btnClearLog.ForeColor = Color.FromArgb(150, 150, 160);
+        btnClearLog.BackColor = Color.FromArgb(12, 12, 16);
+        btnClearLog.FlatStyle = FlatStyle.Flat;
+        btnClearLog.FlatAppearance.BorderColor = Color.FromArgb(28, 28, 34);
+        btnClearLog.Size = new Size(72, 22);
+        btnClearLog.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        btnClearLog.Location = new Point(logHeader.Width - 72, 0);
+        btnClearLog.Cursor = Cursors.Hand;
+        btnClearLog.Click += delegate { if (txtLog != null) txtLog.Clear(); };
+        logHeader.Controls.Add(btnClearLog);
+
         txtLog = new RichTextBox();
-        txtLog.Location = new Point(20, 374);
-        txtLog.Size = new Size(505, 396);
-        txtLog.BackColor = Color.Black;
-        txtLog.ForeColor = Color.FromArgb(115, 120, 125);
-        txtLog.Font = new Font("Consolas", 9f);
-        txtLog.BorderStyle = BorderStyle.None;
+        txtLog.Dock = DockStyle.Fill;
+        txtLog.BackColor = Color.FromArgb(5, 5, 7);
+        txtLog.ForeColor = Color.FromArgb(165, 175, 185);
+        txtLog.Font = new Font("Consolas", 8.75f);
+        txtLog.BorderStyle = BorderStyle.FixedSingle;
         txtLog.ReadOnly = true;
-        txtLog.ScrollBars = RichTextBoxScrollBars.None;
-        pnlHomeView.Controls.Add(txtLog);
+        txtLog.ScrollBars = RichTextBoxScrollBars.Vertical;
+        logArea.Controls.Add(txtLog);
+        txtLog.BringToFront();
 
-        // ==========================================
-        // 2. DATA VIEW CONTAINER (Analytics & Stats)
-        // ==========================================
-        pnlDataView = new Panel();
-        pnlDataView.Location = new Point(0, 0);
-        pnlDataView.Size = new Size(544, 780);
-        pnlDataView.BackColor = Color.Black;
-        pnlDataView.AutoScroll = false;
-        pnlDataView.Visible = false;
-        this.Controls.Add(pnlDataView);
+        // 2. DATA VIEW
+        BuildDataView();
 
-        // Header Title
-        Label lblDataTitle = new Label();
-        lblDataTitle.Text = "📊  Earnings & Performance Data";
-        lblDataTitle.Font = new Font("Segoe UI", 15f, FontStyle.Bold);
-        lblDataTitle.ForeColor = Color.FromArgb(220, 220, 225);
-        lblDataTitle.Location = new Point(20, 16);
-        lblDataTitle.AutoSize = true;
-        pnlDataView.Controls.Add(lblDataTitle);
+        // 3. SETTINGS VIEW
+        BuildSettingsView();
 
-        // Header Subtitle
-        Label lblDataSubtitle = new Label();
-        lblDataSubtitle.Text = "Live tracking of Coins claimed, 25-Gem cycles & offer completions";
-        lblDataSubtitle.Font = new Font("Segoe UI", 8.5f);
-        lblDataSubtitle.ForeColor = Color.FromArgb(120, 120, 130);
-        lblDataSubtitle.Location = new Point(22, 46);
-        lblDataSubtitle.AutoSize = true;
-        pnlDataView.Controls.Add(lblDataSubtitle);
-
-        // Date Display
-        lblDataDate = new Label();
-        lblDataDate.Text = "Today: " + DateTime.Now.ToString("dddd, MMMM dd, yyyy");
-        lblDataDate.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
-        lblDataDate.ForeColor = Color.FromArgb(140, 140, 145);
-        lblDataDate.Location = new Point(22, 68);
-        lblDataDate.AutoSize = true;
-        pnlDataView.Controls.Add(lblDataDate);
-
-        // Card 1: Today's Coins Claimed
-        Panel pnlCardCoins = new Panel();
-        pnlCardCoins.BackColor = Color.FromArgb(6, 6, 6);
-        pnlCardCoins.Location = new Point(20, 96);
-        pnlCardCoins.Size = new Size(246, 95);
-        pnlCardCoins.Paint += delegate(object s, PaintEventArgs pe) {
-            ControlPaint.DrawBorder(pe.Graphics, pnlCardCoins.ClientRectangle, Color.FromArgb(22, 22, 26), ButtonBorderStyle.Solid);
-        };
-        pnlDataView.Controls.Add(pnlCardCoins);
-
-        Label lblCardCoinsHead = new Label();
-        lblCardCoinsHead.Text = "COINS CLAIMED TODAY";
-        lblCardCoinsHead.Font = new Font("Segoe UI", 8f, FontStyle.Bold);
-        lblCardCoinsHead.ForeColor = Color.FromArgb(140, 140, 145);
-        lblCardCoinsHead.Location = new Point(12, 10);
-        lblCardCoinsHead.AutoSize = true;
-        pnlCardCoins.Controls.Add(lblCardCoinsHead);
-
-        lblDataCoinsVal = new Label();
-        lblDataCoinsVal.Text = "+0 Coins";
-        lblDataCoinsVal.Font = new Font("Segoe UI", 18f, FontStyle.Bold);
-        lblDataCoinsVal.ForeColor = Color.FromArgb(235, 235, 240);
-        lblDataCoinsVal.Location = new Point(10, 32);
-        lblDataCoinsVal.AutoSize = true;
-        pnlCardCoins.Controls.Add(lblDataCoinsVal);
-
-        Label lblCardCoinsSub = new Label();
-        lblCardCoinsSub.Text = "Farmed from offer milestones & bonuses";
-        lblCardCoinsSub.Font = new Font("Segoe UI", 7.5f);
-        lblCardCoinsSub.ForeColor = Color.FromArgb(100, 100, 105);
-        lblCardCoinsSub.Location = new Point(12, 68);
-        lblCardCoinsSub.AutoSize = true;
-        pnlCardCoins.Controls.Add(lblCardCoinsSub);
-
-        // Card 2: 25-Gem Cycles Hit
-        Panel pnlCard25Gems = new Panel();
-        pnlCard25Gems.BackColor = Color.FromArgb(6, 6, 6);
-        pnlCard25Gems.Location = new Point(278, 96);
-        pnlCard25Gems.Size = new Size(246, 95);
-        pnlCard25Gems.Paint += delegate(object s, PaintEventArgs pe) {
-            ControlPaint.DrawBorder(pe.Graphics, pnlCard25Gems.ClientRectangle, Color.FromArgb(22, 22, 26), ButtonBorderStyle.Solid);
-        };
-        pnlDataView.Controls.Add(pnlCard25Gems);
-
-        Label lblCard25GemsHead = new Label();
-        lblCard25GemsHead.Text = "25-GEM CYCLES HIT";
-        lblCard25GemsHead.Font = new Font("Segoe UI", 8f, FontStyle.Bold);
-        lblCard25GemsHead.ForeColor = Color.FromArgb(140, 140, 145);
-        lblCard25GemsHead.Location = new Point(12, 10);
-        lblCard25GemsHead.AutoSize = true;
-        pnlCard25Gems.Controls.Add(lblCard25GemsHead);
-
-        lblData25GemsVal = new Label();
-        lblData25GemsVal.Text = "0 times";
-        lblData25GemsVal.Font = new Font("Segoe UI", 18f, FontStyle.Bold);
-        lblData25GemsVal.ForeColor = Color.FromArgb(235, 235, 240);
-        lblData25GemsVal.Location = new Point(10, 32);
-        lblData25GemsVal.AutoSize = true;
-        pnlCard25Gems.Controls.Add(lblData25GemsVal);
-
-        lblData25GemsSub = new Label();
-        lblData25GemsSub.Text = "0 Gems earned from quizzes today";
-        lblData25GemsSub.Font = new Font("Segoe UI", 7.5f);
-        lblData25GemsSub.ForeColor = Color.FromArgb(100, 100, 105);
-        lblData25GemsSub.Location = new Point(12, 68);
-        lblData25GemsSub.AutoSize = true;
-        pnlCard25Gems.Controls.Add(lblData25GemsSub);
-
-        // Row 2: Offers Claimed Today & Quizzes Solved
-        Panel pnlCardOffers = new Panel();
-        pnlCardOffers.BackColor = Color.FromArgb(5, 5, 5);
-        pnlCardOffers.Location = new Point(20, 200);
-        pnlCardOffers.Size = new Size(246, 75);
-        pnlCardOffers.Paint += delegate(object s, PaintEventArgs pe) {
-            ControlPaint.DrawBorder(pe.Graphics, pnlCardOffers.ClientRectangle, Color.FromArgb(20, 20, 24), ButtonBorderStyle.Solid);
-        };
-        pnlDataView.Controls.Add(pnlCardOffers);
-
-        Label lblCardOffersHead = new Label();
-        lblCardOffersHead.Text = "OFFERS CLAIMED TODAY";
-        lblCardOffersHead.Font = new Font("Segoe UI", 7.5f, FontStyle.Bold);
-        lblCardOffersHead.ForeColor = Color.FromArgb(140, 140, 145);
-        lblCardOffersHead.Location = new Point(12, 8);
-        lblCardOffersHead.AutoSize = true;
-        pnlCardOffers.Controls.Add(lblCardOffersHead);
-
-        lblDataOffersVal = new Label();
-        lblDataOffersVal.Text = "0 claims";
-        lblDataOffersVal.Font = new Font("Segoe UI", 15f, FontStyle.Bold);
-        lblDataOffersVal.ForeColor = Color.FromArgb(200, 200, 205);
-        lblDataOffersVal.Location = new Point(10, 26);
-        lblDataOffersVal.AutoSize = true;
-        pnlCardOffers.Controls.Add(lblDataOffersVal);
-
-        Label lblCardOffersSub = new Label();
-        lblCardOffersSub.Text = "Milestones & bonus stages";
-        lblCardOffersSub.Font = new Font("Segoe UI", 7.5f);
-        lblCardOffersSub.ForeColor = Color.FromArgb(100, 100, 105);
-        lblCardOffersSub.Location = new Point(12, 54);
-        lblCardOffersSub.AutoSize = true;
-        pnlCardOffers.Controls.Add(lblCardOffersSub);
-
-        Panel pnlCardQuizzes = new Panel();
-        pnlCardQuizzes.BackColor = Color.FromArgb(5, 5, 5);
-        pnlCardQuizzes.Location = new Point(278, 200);
-        pnlCardQuizzes.Size = new Size(246, 75);
-        pnlCardQuizzes.Paint += delegate(object s, PaintEventArgs pe) {
-            ControlPaint.DrawBorder(pe.Graphics, pnlCardQuizzes.ClientRectangle, Color.FromArgb(20, 20, 24), ButtonBorderStyle.Solid);
-        };
-        pnlDataView.Controls.Add(pnlCardQuizzes);
-
-        Label lblCardQuizzesHead = new Label();
-        lblCardQuizzesHead.Text = "QUIZZES & ADS TODAY";
-        lblCardQuizzesHead.Font = new Font("Segoe UI", 7.5f, FontStyle.Bold);
-        lblCardQuizzesHead.ForeColor = Color.FromArgb(140, 140, 145);
-        lblCardQuizzesHead.Location = new Point(12, 8);
-        lblCardQuizzesHead.AutoSize = true;
-        pnlCardQuizzes.Controls.Add(lblCardQuizzesHead);
-
-        lblDataQuizzesVal = new Label();
-        lblDataQuizzesVal.Text = "0 Solved | 0 Ads";
-        lblDataQuizzesVal.Font = new Font("Segoe UI", 14f, FontStyle.Bold);
-        lblDataQuizzesVal.ForeColor = Color.FromArgb(200, 200, 205);
-        lblDataQuizzesVal.Location = new Point(10, 26);
-        lblDataQuizzesVal.AutoSize = true;
-        pnlCardQuizzes.Controls.Add(lblDataQuizzesVal);
-
-        Label lblCardQuizzesSub = new Label();
-        lblCardQuizzesSub.Text = "Captcha solver activity";
-        lblCardQuizzesSub.Font = new Font("Segoe UI", 7.5f);
-        lblCardQuizzesSub.ForeColor = Color.FromArgb(100, 100, 105);
-        lblCardQuizzesSub.Location = new Point(12, 54);
-        lblCardQuizzesSub.AutoSize = true;
-        pnlCardQuizzes.Controls.Add(lblCardQuizzesSub);
-
-        // Row 3: Lifetime Totals Box
-        Panel pnlLifetime = new Panel();
-        pnlLifetime.BackColor = Color.FromArgb(5, 5, 7);
-        pnlLifetime.Location = new Point(20, 284);
-        pnlLifetime.Size = new Size(504, 76);
-        pnlLifetime.Paint += delegate(object s, PaintEventArgs pe) {
-            ControlPaint.DrawBorder(pe.Graphics, pnlLifetime.ClientRectangle, Color.FromArgb(20, 20, 24), ButtonBorderStyle.Solid);
-        };
-        pnlDataView.Controls.Add(pnlLifetime);
-
-        Label lblLifeHead = new Label();
-        lblLifeHead.Text = "LIFETIME TOTALS";
-        lblLifeHead.Font = new Font("Segoe UI", 8f, FontStyle.Bold);
-        lblLifeHead.ForeColor = Color.FromArgb(140, 140, 145);
-        lblLifeHead.Location = new Point(12, 8);
-        lblLifeHead.AutoSize = true;
-        pnlLifetime.Controls.Add(lblLifeHead);
-
-        lblLifetimeCoins = new Label();
-        lblLifetimeCoins.Text = "0 Coins";
-        lblLifetimeCoins.Font = new Font("Segoe UI", 11f, FontStyle.Bold);
-        lblLifetimeCoins.ForeColor = Color.FromArgb(210, 210, 215);
-        lblLifetimeCoins.Location = new Point(12, 30);
-        lblLifetimeCoins.Size = new Size(160, 22);
-        pnlLifetime.Controls.Add(lblLifetimeCoins);
-
-        Label lblLifeCoinsSub = new Label();
-        lblLifeCoinsSub.Text = "All-Time Coins";
-        lblLifeCoinsSub.Font = new Font("Segoe UI", 7.5f);
-        lblLifeCoinsSub.ForeColor = Color.FromArgb(100, 100, 105);
-        lblLifeCoinsSub.Location = new Point(12, 52);
-        lblLifeCoinsSub.AutoSize = true;
-        pnlLifetime.Controls.Add(lblLifeCoinsSub);
-
-        lblLifetime25Gems = new Label();
-        lblLifetime25Gems.Text = "0 times (0 gems)";
-        lblLifetime25Gems.Font = new Font("Segoe UI", 11f, FontStyle.Bold);
-        lblLifetime25Gems.ForeColor = Color.FromArgb(210, 210, 215);
-        lblLifetime25Gems.Location = new Point(180, 30);
-        lblLifetime25Gems.Size = new Size(170, 22);
-        pnlLifetime.Controls.Add(lblLifetime25Gems);
-
-        Label lblLifeGemsSub = new Label();
-        lblLifeGemsSub.Text = "All-Time 25-Gem Cycles";
-        lblLifeGemsSub.Font = new Font("Segoe UI", 7.5f);
-        lblLifeGemsSub.ForeColor = Color.FromArgb(100, 100, 105);
-        lblLifeGemsSub.Location = new Point(180, 52);
-        lblLifeGemsSub.AutoSize = true;
-        pnlLifetime.Controls.Add(lblLifeGemsSub);
-
-        lblLifetimeQuizzes = new Label();
-        lblLifetimeQuizzes.Text = "0 Solved";
-        lblLifetimeQuizzes.Font = new Font("Segoe UI", 11f, FontStyle.Bold);
-        lblLifetimeQuizzes.ForeColor = Color.FromArgb(210, 210, 215);
-        lblLifetimeQuizzes.Location = new Point(360, 30);
-        lblLifetimeQuizzes.Size = new Size(130, 22);
-        pnlLifetime.Controls.Add(lblLifetimeQuizzes);
-
-        Label lblLifeQuizSub = new Label();
-        lblLifeQuizSub.Text = "All-Time Solved";
-        lblLifeQuizSub.Font = new Font("Segoe UI", 7.5f);
-        lblLifeQuizSub.ForeColor = Color.FromArgb(100, 100, 105);
-        lblLifeQuizSub.Location = new Point(360, 52);
-        lblLifeQuizSub.AutoSize = true;
-        pnlLifetime.Controls.Add(lblLifeQuizSub);
-
-        // Row 4: Claims Log
-        Label lblClaimsLogHead = new Label();
-        lblClaimsLogHead.Text = "Today's Claims & Milestone History:";
-        lblClaimsLogHead.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
-        lblClaimsLogHead.ForeColor = Color.FromArgb(140, 140, 145);
-        lblClaimsLogHead.Location = new Point(20, 368);
-        lblClaimsLogHead.AutoSize = true;
-        pnlDataView.Controls.Add(lblClaimsLogHead);
-
-        txtClaimsLog = new RichTextBox();
-        txtClaimsLog.Location = new Point(20, 390);
-        txtClaimsLog.Size = new Size(504, 335);
-        txtClaimsLog.BackColor = Color.Black;
-        txtClaimsLog.ForeColor = Color.FromArgb(180, 180, 185);
-        txtClaimsLog.Font = new Font("Consolas", 9f);
-        txtClaimsLog.BorderStyle = BorderStyle.None;
-        txtClaimsLog.ReadOnly = true;
-        txtClaimsLog.ScrollBars = RichTextBoxScrollBars.None;
-        pnlDataView.Controls.Add(txtClaimsLog);
-
-        // Row 5: Action Buttons
-        btnDataRefresh = new Button();
-        btnDataRefresh.Text = "Refresh Data";
-        btnDataRefresh.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
-        btnDataRefresh.ForeColor = Color.FromArgb(180, 180, 185);
-        btnDataRefresh.BackColor = Color.FromArgb(8, 8, 10);
-        btnDataRefresh.FlatStyle = FlatStyle.Flat;
-        btnDataRefresh.FlatAppearance.BorderColor = Color.FromArgb(24, 24, 28);
-        btnDataRefresh.FlatAppearance.BorderSize = 1;
-        btnDataRefresh.Location = new Point(20, 735);
-        btnDataRefresh.Size = new Size(246, 36);
-        btnDataRefresh.Cursor = Cursors.Hand;
-        btnDataRefresh.Click += delegate { UpdateDataDashboard(); };
-        pnlDataView.Controls.Add(btnDataRefresh);
-
-        btnDataResetToday = new Button();
-        btnDataResetToday.Text = "Reset Today's Count";
-        btnDataResetToday.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
-        btnDataResetToday.ForeColor = Color.FromArgb(140, 140, 145);
-        btnDataResetToday.BackColor = Color.FromArgb(8, 8, 10);
-        btnDataResetToday.FlatStyle = FlatStyle.Flat;
-        btnDataResetToday.FlatAppearance.BorderColor = Color.FromArgb(24, 24, 28);
-        btnDataResetToday.FlatAppearance.BorderSize = 1;
-        btnDataResetToday.Location = new Point(278, 735);
-        btnDataResetToday.Size = new Size(246, 36);
-        btnDataResetToday.Cursor = Cursors.Hand;
-        btnDataResetToday.Click += delegate {
-            if (ShowDarkConfirm("Reset Today's Stats", "Are you sure you want to reset today's coins, 25-gem count, and claims log back to 0?"))
-            {
-                todayCoinsClaimed = 0;
-                today25GemsCount = 0;
-                todayOffersClaimed = 0;
-                todaySolved = 0;
-                gemsEarned = 0;
-                claimsHistory.Clear();
-                SaveStatsToFile();
-                UpdateDataDashboard();
-                UpdateDashboard(lastCaptcha);
-                Log("[Data] Today's statistics have been reset to 0.");
-            }
-        };
-        pnlDataView.Controls.Add(btnDataResetToday);
-
-        // ==========================================
-        // 3. SETTINGS & UPDATER VIEW CONTAINER
-        // ==========================================
-        pnlSettingsView = new Panel();
-        pnlSettingsView.Location = new Point(0, 0);
-        pnlSettingsView.Size = new Size(544, 780);
-        pnlSettingsView.BackColor = Color.Black;
-        pnlSettingsView.AutoScroll = false;
-        pnlSettingsView.Visible = false;
-        this.Controls.Add(pnlSettingsView);
-
-        // Header Title
-        Label lblSettingsTitle = new Label();
-        lblSettingsTitle.Text = "Settings & Updates";
-        lblSettingsTitle.Font = new Font("Segoe UI", 15f, FontStyle.Bold);
-        lblSettingsTitle.ForeColor = Color.FromArgb(220, 220, 225);
-        lblSettingsTitle.Location = new Point(20, 16);
-        lblSettingsTitle.AutoSize = true;
-        pnlSettingsView.Controls.Add(lblSettingsTitle);
-
-        Label lblSettingsSub = new Label();
-        lblSettingsSub.Text = "Manage in-app cloud updates, bot automation, and preferences";
-        lblSettingsSub.Font = new Font("Segoe UI", 8.5f);
-        lblSettingsSub.ForeColor = Color.FromArgb(120, 120, 130);
-        lblSettingsSub.Location = new Point(22, 46);
-        lblSettingsSub.AutoSize = true;
-        pnlSettingsView.Controls.Add(lblSettingsSub);
-
-        // Card 1: Cloud Auto-Updater Card
-        pnlUpdateCard = new Panel();
-        pnlUpdateCard.BackColor = Color.FromArgb(6, 6, 6);
-        pnlUpdateCard.Location = new Point(20, 72);
-        pnlUpdateCard.Size = new Size(504, 90);
-        pnlUpdateCard.Paint += delegate(object s, PaintEventArgs pe) {
-            ControlPaint.DrawBorder(pe.Graphics, pnlUpdateCard.ClientRectangle, Color.FromArgb(22, 22, 26), ButtonBorderStyle.Solid);
-        };
-        pnlSettingsView.Controls.Add(pnlUpdateCard);
-
-        Label lblUpdateHead = new Label();
-        lblUpdateHead.Text = "APP VERSION & CLOUD UPDATER";
-        lblUpdateHead.Font = new Font("Segoe UI", 8f, FontStyle.Bold);
-        lblUpdateHead.ForeColor = Color.FromArgb(140, 140, 145);
-        lblUpdateHead.Location = new Point(14, 12);
-        lblUpdateHead.AutoSize = true;
-        pnlUpdateCard.Controls.Add(lblUpdateHead);
-
-        lblCurrentVersion = new Label();
-        lblCurrentVersion.Text = string.Format("Current Installed: v{0}", APP_VERSION);
-        lblCurrentVersion.Font = new Font("Segoe UI", 12f, FontStyle.Bold);
-        lblCurrentVersion.ForeColor = Color.FromArgb(235, 235, 240);
-        lblCurrentVersion.Location = new Point(12, 32);
-        lblCurrentVersion.AutoSize = true;
-        pnlUpdateCard.Controls.Add(lblCurrentVersion);
-
-        lblUpdateStatus = new Label();
-        lblUpdateStatus.Text = "Status: Up to date. Click 'Check for Updates' to verify.";
-        lblUpdateStatus.Font = new Font("Segoe UI", 8.5f);
-        lblUpdateStatus.ForeColor = Color.FromArgb(140, 140, 145);
-        lblUpdateStatus.Location = new Point(14, 58);
-        lblUpdateStatus.Size = new Size(300, 20);
-        pnlUpdateCard.Controls.Add(lblUpdateStatus);
-
-        btnCheckUpdate = new Button();
-        btnCheckUpdate.Text = "Check for Updates";
-        btnCheckUpdate.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
-        btnCheckUpdate.ForeColor = Color.FromArgb(200, 200, 205);
-        btnCheckUpdate.BackColor = Color.FromArgb(12, 12, 14);
-        btnCheckUpdate.FlatStyle = FlatStyle.Flat;
-        btnCheckUpdate.FlatAppearance.BorderColor = Color.FromArgb(28, 28, 32);
-        btnCheckUpdate.FlatAppearance.BorderSize = 1;
-        btnCheckUpdate.Location = new Point(334, 26);
-        btnCheckUpdate.Size = new Size(156, 36);
-        btnCheckUpdate.Cursor = Cursors.Hand;
-        btnCheckUpdate.Click += delegate { CheckForUpdatesAsync(true); };
-        pnlUpdateCard.Controls.Add(btnCheckUpdate);
-
-        // Card 2: Automation & Preferences
-        Panel pnlPrefsCard = new Panel();
-        pnlPrefsCard.BackColor = Color.FromArgb(6, 6, 6);
-        pnlPrefsCard.Location = new Point(20, 178);
-        pnlPrefsCard.Size = new Size(504, 210);
-        pnlPrefsCard.Paint += delegate(object s, PaintEventArgs pe) {
-            ControlPaint.DrawBorder(pe.Graphics, pnlPrefsCard.ClientRectangle, Color.FromArgb(22, 22, 26), ButtonBorderStyle.Solid);
-        };
-        pnlSettingsView.Controls.Add(pnlPrefsCard);
-
-        Label lblPrefsHead = new Label();
-        lblPrefsHead.Text = "BOT AUTOMATION & PREFERENCES";
-        lblPrefsHead.Font = new Font("Segoe UI", 8f, FontStyle.Bold);
-        lblPrefsHead.ForeColor = Color.FromArgb(140, 140, 145);
-        lblPrefsHead.Location = new Point(14, 10);
-        lblPrefsHead.AutoSize = true;
-        pnlPrefsCard.Controls.Add(lblPrefsHead);
-
-        chkAutoCheckUpdates = new DarkToggleSwitch();
-        chkAutoCheckUpdates.Checked = autoCheckUpdates;
-        CreateToggleRow(pnlPrefsCard, "Auto-check for updates on startup", chkAutoCheckUpdates, 34, () => {
-            autoCheckUpdates = chkAutoCheckUpdates.Checked;
-            SaveStatsToFile();
-        });
-
-        chkSettingsAutoMute = new DarkToggleSwitch();
-        chkSettingsAutoMute.Checked = true;
-        CreateToggleRow(pnlPrefsCard, "Auto-Mute Ads while solving quizzes (keeps PC quiet)", chkSettingsAutoMute, 66, () => {
-            if (chkAutoMute != null) chkAutoMute.Checked = chkSettingsAutoMute.Checked;
-        });
-
-        chkSettingsTurbo = new DarkToggleSwitch();
-        chkSettingsTurbo.Checked = true;
-        CreateToggleRow(pnlPrefsCard, "Turbo Speed Solver (fast answering mode)", chkSettingsTurbo, 98, () => {
-            if (chkTurboSpeed != null) chkTurboSpeed.Checked = chkSettingsTurbo.Checked;
-        });
-
-        chkSettingsAlwaysOnTop = new DarkToggleSwitch();
-        chkSettingsAlwaysOnTop.Checked = false;
-        CreateToggleRow(pnlPrefsCard, "Always On Top window mode", chkSettingsAlwaysOnTop, 130, () => {
-            this.TopMost = chkSettingsAlwaysOnTop.Checked;
-        });
-
-        chkSettingsAutoRecoverBst = new DarkToggleSwitch();
-        chkSettingsAutoRecoverBst.Checked = autoRecoverBlueStacks;
-        CreateToggleRow(pnlPrefsCard, "Auto-Watchdog: Restore BlueStacks + APK Bot on crash", chkSettingsAutoRecoverBst, 162, () => {
-            autoRecoverBlueStacks = chkSettingsAutoRecoverBst.Checked;
-            UpdateWatchdogButtonState();
-            SaveStatsToFile();
-        });
-
-        // Card 3: About Standalone
-        Panel pnlAboutCard = new Panel();
-        pnlAboutCard.BackColor = Color.FromArgb(4, 4, 4);
-        pnlAboutCard.Location = new Point(20, 400);
-        pnlAboutCard.Size = new Size(504, 115);
-        pnlAboutCard.Paint += delegate(object s, PaintEventArgs pe) {
-            ControlPaint.DrawBorder(pe.Graphics, pnlAboutCard.ClientRectangle, Color.FromArgb(20, 20, 24), ButtonBorderStyle.Solid);
-        };
-        pnlSettingsView.Controls.Add(pnlAboutCard);
-
-        Label lblAboutHead = new Label();
-        lblAboutHead.Text = "ABOUT QUIZEARNBOT PORTABLE";
-        lblAboutHead.Font = new Font("Segoe UI", 8f, FontStyle.Bold);
-        lblAboutHead.ForeColor = Color.FromArgb(140, 140, 145);
-        lblAboutHead.Location = new Point(14, 10);
-        lblAboutHead.AutoSize = true;
-        pnlAboutCard.Controls.Add(lblAboutHead);
-
-        Label lblAboutText = new Label();
-        lblAboutText.Text = string.Format("• Version: v{0} (Pure OLED Monochrome Stealth Build)\n• Architecture: Standalone Portable (Zero installation, zero registry impact)\n• Universal ADB Engine: BlueStacks, LDPlayer, Nox, USB Phone\n• Automated Day Rollover: Real-time Coin & 25-Gem stats tracker", APP_VERSION);
-        lblAboutText.Font = new Font("Segoe UI", 8f);
-        lblAboutText.ForeColor = Color.FromArgb(120, 120, 125);
-        lblAboutText.Location = new Point(14, 32);
-        lblAboutText.Size = new Size(476, 72);
-        pnlAboutCard.Controls.Add(lblAboutText);
-
-        // ==========================================
-        // 4. BOTTOM NAVIGATION BAR
-        // ==========================================
-        pnlBottomNav = new Panel();
-        pnlBottomNav.Location = new Point(0, 780);
-        pnlBottomNav.Size = new Size(544, 55);
-        pnlBottomNav.BackColor = Color.FromArgb(4, 4, 4);
-        pnlBottomNav.Paint += delegate(object s, PaintEventArgs pe) {
-            pe.Graphics.DrawLine(new Pen(Color.FromArgb(20, 20, 22), 1), 0, 0, pnlBottomNav.Width, 0);
-        };
-        this.Controls.Add(pnlBottomNav);
-
-        btnNavHome = new Button();
-        btnNavHome.Text = "HOME";
-        btnNavHome.Font = new Font("Segoe UI", 10f, FontStyle.Bold);
-        btnNavHome.ForeColor = Color.White;
-        btnNavHome.BackColor = Color.FromArgb(20, 20, 24);
-        btnNavHome.FlatStyle = FlatStyle.Flat;
-        btnNavHome.FlatAppearance.BorderColor = Color.FromArgb(45, 45, 52);
-        btnNavHome.FlatAppearance.BorderSize = 1;
-        btnNavHome.Location = new Point(14, 7);
-        btnNavHome.Size = new Size(164, 40);
-        btnNavHome.Cursor = Cursors.Hand;
-        btnNavHome.Click += delegate { SwitchToHomeView(); };
-        pnlBottomNav.Controls.Add(btnNavHome);
-
-        btnNavData = new Button();
-        btnNavData.Text = "DATA";
-        btnNavData.Font = new Font("Segoe UI", 10f, FontStyle.Bold);
-        btnNavData.ForeColor = Color.FromArgb(110, 110, 115);
-        btnNavData.BackColor = Color.FromArgb(6, 6, 8);
-        btnNavData.FlatStyle = FlatStyle.Flat;
-        btnNavData.FlatAppearance.BorderColor = Color.FromArgb(18, 18, 20);
-        btnNavData.FlatAppearance.BorderSize = 1;
-        btnNavData.Location = new Point(188, 7);
-        btnNavData.Size = new Size(164, 40);
-        btnNavData.Cursor = Cursors.Hand;
-        btnNavData.Click += delegate { SwitchToDataView(); };
-        pnlBottomNav.Controls.Add(btnNavData);
-
-        btnNavSettings = new Button();
-        btnNavSettings.Text = "SETTINGS";
-        btnNavSettings.Font = new Font("Segoe UI", 10f, FontStyle.Bold);
-        btnNavSettings.ForeColor = Color.FromArgb(110, 110, 115);
-        btnNavSettings.BackColor = Color.FromArgb(6, 6, 8);
-        btnNavSettings.FlatStyle = FlatStyle.Flat;
-        btnNavSettings.FlatAppearance.BorderColor = Color.FromArgb(18, 18, 20);
-        btnNavSettings.FlatAppearance.BorderSize = 1;
-        btnNavSettings.Location = new Point(362, 7);
-        btnNavSettings.Size = new Size(164, 40);
-        btnNavSettings.Cursor = Cursors.Hand;
-        btnNavSettings.Click += delegate { SwitchToSettingsView(); };
-        pnlBottomNav.Controls.Add(btnNavSettings);
-
-        // Ad Countdown Timer Setup
-        uiCountdownTimer = new System.Windows.Forms.Timer();
-        uiCountdownTimer.Interval = 1000;
-        uiCountdownTimer.Tick += new EventHandler(UiCountdownTimer_Tick);
+        // Ensure Bottom Navigation bar docks before Fill views (highest z-index docks first in WinForms)
+        pnlBottomNav.SendToBack();
 
         LoadStatsFromFile();
+        cmbTargetApp.SelectedIndex = (targetAppPackage == PKG_CASH_MAFIA) ? 1 : 0;
+        UpdateWatchdogButtonState();
         UpdateDashboard(lastCaptcha);
         UpdateDataDashboard();
         SwitchToHomeView();
 
-        // Background auto-check for updates after 3.5 seconds
         if (autoCheckUpdates)
         {
             System.Windows.Forms.Timer updateDelayTimer = new System.Windows.Forms.Timer();
             updateDelayTimer.Interval = 3500;
-            updateDelayTimer.Tick += delegate {
+            updateDelayTimer.Tick += delegate
+            {
                 updateDelayTimer.Stop();
                 updateDelayTimer.Dispose();
                 CheckForUpdatesAsync(false);
@@ -1193,950 +609,324 @@ public class QuizEarnApp : Form
             updateDelayTimer.Start();
         }
 
-        Log("Quiz & Earn Auto-Bot initialized.");
-        Log("Pure OLED Pitch Black Theme loaded (Dark++).");
-        Log("Universal ADB Auto-Discovery active (BlueStacks, LDPlayer, Nox, Phone).");
-        Log("Ready. Start ADB on your emulator or phone, then click [START].");
+        Log("QuizEarn & CashMafia Auto-Bot v" + APP_VERSION + " initialized (Clean offer recovery mode).");
+        Log("Collect Gem stall guard + Android 7-15 SDK-aware Watchdog ready.");
 
-        // Universal ADB Auto-Watcher Loop (Continuous Background Thread)
         Thread watcherThread = new Thread(new ThreadStart(UniversalAdbAutoWatchLoop));
         watcherThread.IsBackground = true;
         watcherThread.Start();
     }
 
-    private class BlueStacksInstance
+    private Button CreateNavButton(string label)
     {
-        public string InstanceName;
-        public string DisplayName;
-        public string Port;
+        Button b = new Button();
+        b.Text = label;
+        b.Dock = DockStyle.Fill;
+        b.Margin = new Padding(4, 0, 4, 0);
+        b.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
+        b.FlatStyle = FlatStyle.Flat;
+        b.FlatAppearance.BorderSize = 1;
+        b.Cursor = Cursors.Hand;
+        return b;
     }
 
-    private List<BlueStacksInstance> DiscoverBlueStacksInstances()
+    private Button CreateFlatButton(string text, Color bg, Color fg, Color border)
     {
-        List<BlueStacksInstance> list = new List<BlueStacksInstance>();
-        string[] confCandidates = new string[]
+        Button b = new Button();
+        b.Text = text;
+        b.Dock = DockStyle.Fill;
+        b.Margin = new Padding(2, 0, 2, 0);
+        b.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
+        b.BackColor = bg;
+        b.ForeColor = fg;
+        b.FlatStyle = FlatStyle.Flat;
+        b.FlatAppearance.BorderColor = border;
+        b.FlatAppearance.BorderSize = 1;
+        b.Cursor = Cursors.Hand;
+        return b;
+    }
+
+    private Button CreateBoostButton(string text, int x)
+    {
+        Button b = new Button();
+        b.Text = text;
+        b.Location = new Point(x, 48);
+        b.Size = new Size(50, 30);
+        b.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
+        b.ForeColor = Color.FromArgb(200, 200, 210);
+        b.BackColor = Color.FromArgb(14, 14, 18);
+        b.FlatStyle = FlatStyle.Flat;
+        b.FlatAppearance.BorderColor = Color.FromArgb(30, 30, 36);
+        b.Cursor = Cursors.Hand;
+        pnlBooster.Controls.Add(b);
+        return b;
+    }
+
+    private Label CreateMetricLabel(string text)
+    {
+        Label l = new Label();
+        l.Text = text;
+        l.Dock = DockStyle.Fill;
+        l.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
+        l.ForeColor = Color.FromArgb(205, 205, 215);
+        l.TextAlign = ContentAlignment.MiddleCenter;
+        return l;
+    }
+
+    private void BuildDataView()
+    {
+        pnlDataView = new Panel();
+        pnlDataView.Dock = DockStyle.Fill;
+        pnlDataView.BackColor = Color.Black;
+        pnlDataView.Padding = new Padding(18, 14, 18, 10);
+        pnlDataView.Visible = false;
+        this.Controls.Add(pnlDataView);
+
+        Label lblDataTitle = new Label();
+        lblDataTitle.Text = "Earnings & Performance Data";
+        lblDataTitle.Font = new Font("Segoe UI", 14f, FontStyle.Bold);
+        lblDataTitle.ForeColor = Color.White;
+        lblDataTitle.Dock = DockStyle.Top;
+        lblDataTitle.Height = 28;
+
+        lblDataDate = new Label();
+        lblDataDate.Text = "Today: " + DateTime.Now.ToString("dddd, MMM d, yyyy");
+        lblDataDate.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
+        lblDataDate.ForeColor = Color.FromArgb(135, 135, 145);
+        lblDataDate.Dock = DockStyle.Top;
+        lblDataDate.Height = 22;
+
+        TableLayoutPanel cardsGrid = new TableLayoutPanel();
+        cardsGrid.Dock = DockStyle.Top;
+        cardsGrid.Height = 160;
+        cardsGrid.ColumnCount = 2;
+        cardsGrid.RowCount = 2;
+        cardsGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
+        cardsGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
+        cardsGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 50f));
+        cardsGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 50f));
+
+        lblDataCoinsVal = CreateDataCard(cardsGrid, 0, 0, "COINS CLAIMED TODAY", "+0 Coins");
+        lblData25GemsVal = CreateDataCard(cardsGrid, 1, 0, "25-GEM CYCLES HIT", "0 times");
+        lblDataOffersVal = CreateDataCard(cardsGrid, 0, 1, "OFFERS CLAIMED TODAY", "0 claims");
+        lblDataQuizzesVal = CreateDataCard(cardsGrid, 1, 1, "QUIZZES & ADS TODAY", "0 Solved | 0 Ads");
+
+        Panel lifeBar = new Panel();
+        lifeBar.Dock = DockStyle.Top;
+        lifeBar.Height = 52;
+        lifeBar.BackColor = Color.FromArgb(8, 8, 10);
+
+        lblData25GemsSub = new Label { Text = "0 Gems today", Location = new Point(8, 6), AutoSize = true, ForeColor = Color.Gray, Font = new Font("Segoe UI", 8f) };
+        lblLifetimeCoins = new Label { Text = "Lifetime: 0 Coins", Location = new Point(8, 24), AutoSize = true, ForeColor = Color.Silver, Font = new Font("Segoe UI", 9f, FontStyle.Bold) };
+        lblLifetime25Gems = new Label { Text = "Cycles: 0", Location = new Point(200, 24), AutoSize = true, ForeColor = Color.Silver, Font = new Font("Segoe UI", 9f, FontStyle.Bold) };
+        lblLifetimeQuizzes = new Label { Text = "Solved: 0", Location = new Point(350, 24), AutoSize = true, ForeColor = Color.Silver, Font = new Font("Segoe UI", 9f, FontStyle.Bold) };
+        lifeBar.Controls.AddRange(new Control[] { lblData25GemsSub, lblLifetimeCoins, lblLifetime25Gems, lblLifetimeQuizzes });
+
+        Panel dataActions = new Panel { Dock = DockStyle.Bottom, Height = 44 };
+
+        TableLayoutPanel dataBtnGrid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2 };
+        dataBtnGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
+        dataBtnGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
+        dataActions.Controls.Add(dataBtnGrid);
+
+        btnDataRefresh = CreateFlatButton("Refresh Data", Color.FromArgb(14, 14, 18), Color.White, Color.FromArgb(32, 32, 38));
+        btnDataRefresh.Click += delegate { UpdateDataDashboard(); };
+        btnDataResetToday = CreateFlatButton("Reset Today Stats", Color.FromArgb(14, 14, 18), Color.FromArgb(180, 140, 140), Color.FromArgb(40, 28, 30));
+        btnDataResetToday.Click += delegate
         {
-            @"C:\ProgramData\BlueStacks_nxt\bluestacks.conf",
-            @"D:\ProgramData\BlueStacks_nxt\bluestacks.conf",
-            @"E:\ProgramData\BlueStacks_nxt\bluestacks.conf",
-            @"C:\ProgramData\BlueStacks\bluestacks.conf"
+            if (ShowDarkConfirm("Reset Today Stats", "Reset today's coins, 25-gem cycles, and claim history to 0?"))
+            {
+                lock (statsLock)
+                {
+                    todayCoinsClaimed = 0; today25GemsCount = 0; todayOffersClaimed = 0; todaySolved = 0; gemsEarned = 0;
+                    claimsHistory.Clear();
+                }
+                SaveStatsToFile();
+                UpdateDataDashboard();
+                UpdateDashboard(lastCaptcha);
+                Log("[Data] Today's statistics reset.");
+            }
         };
+        dataBtnGrid.Controls.Add(btnDataRefresh, 0, 0);
+        dataBtnGrid.Controls.Add(btnDataResetToday, 1, 0);
 
-        foreach (string confPath in confCandidates)
-        {
-            if (File.Exists(confPath))
-            {
-                try
-                {
-                    string conf = File.ReadAllText(confPath);
-                    MatchCollection matches = Regex.Matches(conf, @"bst\.instance\.([^.]+)\.(?:status\.)?adb_port=""(\d+)""");
-                    Dictionary<string, string> instPorts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                    foreach (Match m in matches)
-                    {
-                        string inst = m.Groups[1].Value.Trim();
-                        string p = m.Groups[2].Value.Trim();
-                        instPorts[inst] = p;
-                    }
+        txtClaimsLog = new RichTextBox();
+        txtClaimsLog.Dock = DockStyle.Fill;
+        txtClaimsLog.BackColor = Color.FromArgb(5, 5, 7);
+        txtClaimsLog.ForeColor = Color.FromArgb(185, 185, 195);
+        txtClaimsLog.Font = new Font("Consolas", 9f);
+        txtClaimsLog.BorderStyle = BorderStyle.FixedSingle;
+        txtClaimsLog.ReadOnly = true;
+        txtClaimsLog.ScrollBars = RichTextBoxScrollBars.Vertical;
 
-                    foreach (var kvp in instPorts)
-                    {
-                        string inst = kvp.Key;
-                        string port = kvp.Value;
-                        string displayName = inst;
-                        Match mName = Regex.Match(conf, @"bst\.instance\." + Regex.Escape(inst) + @"\.display_name=""([^""]+)""");
-                        if (mName.Success) displayName = mName.Groups[1].Value.Trim();
-
-                        bool exists = false;
-                        foreach (var item in list)
-                        {
-                            if (item.Port == port || item.InstanceName.Equals(inst, StringComparison.OrdinalIgnoreCase))
-                            {
-                                exists = true;
-                                break;
-                            }
-                        }
-                        if (!exists)
-                        {
-                            list.Add(new BlueStacksInstance { InstanceName = inst, DisplayName = displayName, Port = port });
-                        }
-                    }
-                    if (list.Count > 0) break;
-                }
-                catch {}
-            }
-        }
-
-        if (list.Count == 0)
-        {
-            list.Add(new BlueStacksInstance { InstanceName = "Tiramisu64", DisplayName = "BlueStacks App Player 1", Port = "5556" });
-            list.Add(new BlueStacksInstance { InstanceName = "Tiramisu64_3", DisplayName = "BlueStacks App Player 3", Port = "5585" });
-            list.Add(new BlueStacksInstance { InstanceName = "Tiramisu64_4", DisplayName = "BlueStacks App Player 4", Port = "5595" });
-        }
-
-        return list;
+        // Add Fill first (index 0 -> docks last), then Bottom -> Top in reverse visual order
+        pnlDataView.Controls.Add(txtClaimsLog);
+        pnlDataView.Controls.Add(lifeBar);
+        pnlDataView.Controls.Add(cardsGrid);
+        pnlDataView.Controls.Add(lblDataDate);
+        pnlDataView.Controls.Add(lblDataTitle);
+        pnlDataView.Controls.Add(dataActions);
     }
 
-    private void UniversalAdbAutoWatchLoop()
+    private Label CreateDataCard(TableLayoutPanel parent, int col, int row, string head, string val)
     {
-        int checkCycle = 0;
-        while (!this.IsDisposed)
-        {
-            try
-            {
-                checkCycle++;
-                List<BlueStacksInstance> instances = DiscoverBlueStacksInstances();
-                int connectedCount = 0;
-                string bstExe = null;
-                string unusedArg;
-
-                foreach (var inst in instances)
-                {
-                    string targetDev = "127.0.0.1:" + inst.Port;
-
-                    // 1. Check state or connect if not online
-                    string state = RunAdbDevice(targetDev, "get-state").Trim();
-                    bool isDeviceOnline = state.Equals("device", StringComparison.OrdinalIgnoreCase);
-                    if (!isDeviceOnline)
-                    {
-                        RunAdb(string.Format("connect {0}", targetDev));
-                        state = RunAdbDevice(targetDev, "get-state").Trim();
-                        isDeviceOnline = state.Equals("device", StringComparison.OrdinalIgnoreCase);
-                    }
-
-                    // If offline and auto-recovery is enabled:
-                    if (!isDeviceOnline && autoRecoverBlueStacks)
-                    {
-                        RunAdb(string.Format("disconnect {0}", targetDev));
-                        if (bstExe == null) bstExe = DetectBlueStacks(out unusedArg);
-                        if (!string.IsNullOrEmpty(bstExe) && File.Exists(bstExe))
-                        {
-                            Log(string.Format("[🛡️ APK Watchdog] BlueStacks '{0}' ({1}) offline! Auto-launching...", inst.DisplayName, targetDev));
-                            try
-                            {
-                                ProcessStartInfo psi = new ProcessStartInfo();
-                                psi.FileName = bstExe;
-                                psi.WorkingDirectory = Path.GetDirectoryName(bstExe);
-                                psi.Arguments = string.Format("--instance {0}", inst.InstanceName);
-                                psi.UseShellExecute = true;
-                                Process.Start(psi);
-                            }
-                            catch (Exception ex)
-                            {
-                                Log(string.Format("[🛡️ APK Watchdog] Launch error on {0}: {1}", inst.InstanceName, ex.Message));
-                            }
-                        }
-                    }
-
-                    if (isDeviceOnline)
-                    {
-                        connectedCount++;
-                        if (string.IsNullOrEmpty(adbPort)) adbPort = targetDev;
-
-                        // 2. ONLY run watchdog recovery actions if Watchdog is explicitly ON!
-                        if (autoRecoverBlueStacks)
-                        {
-                            // Batched status query in ONE single ADB process to minimize PC CPU usage:
-                            string batchCmd = "shell \"getprop sys.boot_completed; echo '###'; settings get secure enabled_accessibility_services; echo '###'; pidof com.quiz.earn.money.game; echo '###'; pidof com.quizearn.assistant; echo '###'; dumpsys window | grep mCurrentFocus\"";
-                            string batchOut = RunAdbDevice(targetDev, batchCmd);
-                            string[] parts = batchOut.Split(new string[] { "###" }, StringSplitOptions.None);
-                            if (parts.Length >= 5)
-                            {
-                                string boot = parts[0].Trim();
-                                string secServices = parts[1].Trim();
-                                string pidQuiz = parts[2].Trim();
-                                string pidBot = parts[3].Trim();
-                                string curFocus = parts[4].Trim();
-
-                                if (boot == "1")
-                                {
-                                    // A. Ensure Accessibility Service is enabled for APK Bot
-                                    if (!secServices.Contains("com.quizearn.assistant/.QuizEarnAccessibilityService"))
-                                    {
-                                        RunAdbDevice(targetDev, "shell settings put secure enabled_accessibility_services com.quizearn.assistant/.QuizEarnAccessibilityService; settings put secure accessibility_enabled 1");
-                                        Log(string.Format("[🛡️ APK Watchdog] Enabled Accessibility Service on {0} ({1}).", inst.DisplayName, targetDev));
-                                    }
-
-                                    // B. Ensure Quiz & Earn App is running (only if crashed/killed to launcher)
-                                    bool isLauncher = curFocus.Contains("launcher") || curFocus.Contains("home") || curFocus.Contains("com.bluestacks");
-                                    bool relaunchedApp = false;
-                                    if (string.IsNullOrEmpty(pidQuiz) || isLauncher)
-                                    {
-                                        RunAdbDevice(targetDev, "shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
-                                        Log(string.Format("[🛡️ APK Watchdog] Relaunched Quiz & Earn app on {0} ({1}).", inst.DisplayName, targetDev));
-                                        relaunchedApp = true;
-                                        Thread.Sleep(2000);
-                                    }
-
-                                    // C. Ensure APK Bot is running in players (only if process died or app was freshly relaunched)
-                                    if (relaunchedApp || string.IsNullOrEmpty(pidBot))
-                                    {
-                                        RunAdbDevice(targetDev, "shell am start-foreground-service -a com.quizearn.assistant.START com.quizearn.assistant/.FloatingOverlayService");
-                                        Log(string.Format("[🛡️ APK Watchdog] Turned ON and started APK Bot on {0} ({1})!", inst.DisplayName, targetDev));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Update UI state
-                if (connectedCount > 0)
-                {
-                    isAdbConnected = true;
-                    if (this.InvokeRequired)
-                    {
-                        SafeBeginInvoke(new Action(delegate {
-                            UpdatePortLabel(string.Format("Multi-Instance ({0}/{1} Online)", connectedCount, instances.Count));
-                            if (!isRunning && !isAutoOffering && !isBoosting)
-                            {
-                                if (autoRecoverBlueStacks)
-                                {
-                                    lblStatus.Text = string.Format("🛡️ WATCHDOG ACTIVE ({0}/{1} Devices Healthy)", connectedCount, instances.Count);
-                                    lblStatus.ForeColor = Color.FromArgb(76, 175, 80);
-                                }
-                                else
-                                {
-                                    lblStatus.Text = string.Format("🛡️ WATCHDOG PAUSED ({0}/{1} Connected)", connectedCount, instances.Count);
-                                    lblStatus.ForeColor = Color.FromArgb(140, 140, 145);
-                                }
-                            }
-                        }));
-                    }
-                }
-                else
-                {
-                    isAdbConnected = false;
-                    if (this.InvokeRequired)
-                    {
-                        SafeBeginInvoke(new Action(delegate {
-                            UpdatePortLabel("Waiting for BlueStacks / ADB...");
-                            if (!isRunning && !isAutoOffering && !isBoosting)
-                            {
-                                lblStatus.Text = "WAITING FOR BLUESTACKS / ADB";
-                                lblStatus.ForeColor = Color.FromArgb(95, 95, 100);
-                            }
-                        }));
-                    }
-                }
-
-                if (checkCycle % 5 == 0 && connectedCount > 0)
-                {
-                    Log(string.Format("[🛡️ APK Watchdog] Status OK: {0}/{1} BlueStacks instance(s) running & APK bot active.", connectedCount, instances.Count));
-                }
-            }
-            catch {}
-            Thread.Sleep(12000);
-        }
+        Panel p = new Panel { Dock = DockStyle.Fill, Margin = new Padding(4), BackColor = Color.FromArgb(8, 8, 10), Padding = new Padding(10) };
+        Label lh = new Label { Text = head, Dock = DockStyle.Top, Height = 18, Font = new Font("Segoe UI", 7.5f, FontStyle.Bold), ForeColor = Color.Gray };
+        Label lv = new Label { Text = val, Dock = DockStyle.Fill, Font = new Font("Segoe UI", 13.5f, FontStyle.Bold), ForeColor = Color.White };
+        p.Controls.Add(lv);
+        p.Controls.Add(lh);
+        parent.Controls.Add(p, col, row);
+        return lv;
     }
 
-    private void BtnWatchdog_Click(object sender, EventArgs e)
+    private void BuildSettingsView()
     {
-        autoRecoverBlueStacks = !autoRecoverBlueStacks;
-        UpdateWatchdogButtonState();
-        if (chkSettingsAutoRecoverBst != null)
+        pnlSettingsView = new Panel();
+        pnlSettingsView.Dock = DockStyle.Fill;
+        pnlSettingsView.BackColor = Color.Black;
+        pnlSettingsView.Padding = new Padding(18, 14, 18, 10);
+        pnlSettingsView.AutoScroll = true;
+        pnlSettingsView.Visible = false;
+        this.Controls.Add(pnlSettingsView);
+
+        Label lblSettingsTitle = new Label { Text = "Settings & Cloud Updater", Font = new Font("Segoe UI", 14.5f, FontStyle.Bold), ForeColor = Color.White, Location = new Point(18, 14), AutoSize = true };
+        pnlSettingsView.Controls.Add(lblSettingsTitle);
+
+        Panel pnlUpdateCard = new Panel { BackColor = Color.FromArgb(8, 8, 10), Location = new Point(18, 52), Size = new Size(508, 92), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+        pnlSettingsView.Controls.Add(pnlUpdateCard);
+
+        lblCurrentVersion = new Label { Text = "Current Installed: v" + APP_VERSION, Font = new Font("Segoe UI", 11.5f, FontStyle.Bold), ForeColor = Color.White, Location = new Point(12, 12), AutoSize = true };
+        lblUpdateStatus = new Label { Text = "Status: Up to date.", Font = new Font("Segoe UI", 8.5f), ForeColor = Color.Gray, Location = new Point(14, 42), Size = new Size(320, 36) };
+        btnCheckUpdate = new Button { Text = "Check for Updates", Location = new Point(342, 24), Size = new Size(152, 36), Anchor = AnchorStyles.Top | AnchorStyles.Right, FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(18, 18, 22), ForeColor = Color.White, Font = new Font("Segoe UI", 9f, FontStyle.Bold), Cursor = Cursors.Hand };
+        btnCheckUpdate.Click += delegate { CheckForUpdatesAsync(true); };
+        pnlUpdateCard.Controls.AddRange(new Control[] { lblCurrentVersion, lblUpdateStatus, btnCheckUpdate });
+
+        Panel pnlPrefsCard = new Panel { BackColor = Color.FromArgb(8, 8, 10), Location = new Point(18, 156), Size = new Size(508, 210), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+        pnlSettingsView.Controls.Add(pnlPrefsCard);
+
+        chkAutoCheckUpdates = new DarkToggleSwitch { Checked = autoCheckUpdates };
+        CreateToggleRow(pnlPrefsCard, "Auto-check for updates on startup", chkAutoCheckUpdates, 16, () => { autoCheckUpdates = chkAutoCheckUpdates.Checked; SaveStatsToFile(); });
+
+        chkSettingsAutoMute = new DarkToggleSwitch { Checked = autoMuteEnabled };
+        CreateToggleRow(pnlPrefsCard, "Auto-Mute Ads while bot runs", chkSettingsAutoMute, 52, () => { autoMuteEnabled = chkSettingsAutoMute.Checked; SaveStatsToFile(); });
+
+        chkSettingsTurbo = new DarkToggleSwitch { Checked = turboSpeedEnabled };
+        CreateToggleRow(pnlPrefsCard, "Turbo Speed Quiz Solver", chkSettingsTurbo, 88, () => { turboSpeedEnabled = chkSettingsTurbo.Checked; SaveStatsToFile(); });
+
+        chkSettingsAlwaysOnTop = new DarkToggleSwitch { Checked = false };
+        CreateToggleRow(pnlPrefsCard, "Always On Top window mode", chkSettingsAlwaysOnTop, 124, () => { this.TopMost = chkSettingsAlwaysOnTop.Checked; });
+
+        chkSettingsAutoRecoverBst = new DarkToggleSwitch { Checked = autoRecoverBlueStacks };
+        CreateToggleRow(pnlPrefsCard, "Auto-Watchdog: Recover BlueStacks & Android APK Bot", chkSettingsAutoRecoverBst, 160, () => { autoRecoverBlueStacks = chkSettingsAutoRecoverBst.Checked; UpdateWatchdogButtonState(); SaveStatsToFile(); });
+    }
+
+    private void SwitchToHomeView()
+    {
+        SafeBeginInvoke(delegate
         {
+            pnlHomeView.Visible = true;
+            pnlDataView.Visible = false;
+            pnlSettingsView.Visible = false;
+            SetActiveNavButton(btnNavHome);
+        });
+    }
+
+    private void SwitchToDataView()
+    {
+        SafeBeginInvoke(delegate
+        {
+            UpdateDataDashboard();
+            pnlHomeView.Visible = false;
+            pnlDataView.Visible = true;
+            pnlSettingsView.Visible = false;
+            SetActiveNavButton(btnNavData);
+        });
+    }
+
+    private void SwitchToSettingsView()
+    {
+        SafeBeginInvoke(delegate
+        {
+            pnlHomeView.Visible = false;
+            pnlDataView.Visible = false;
+            pnlSettingsView.Visible = true;
+            chkAutoCheckUpdates.Checked = autoCheckUpdates;
+            chkSettingsAutoMute.Checked = autoMuteEnabled;
+            chkSettingsTurbo.Checked = turboSpeedEnabled;
+            chkSettingsAlwaysOnTop.Checked = this.TopMost;
             chkSettingsAutoRecoverBst.Checked = autoRecoverBlueStacks;
-        }
-        SaveStatsToFile();
-        Log(string.Format("[🛡️ Watchdog] APK Bot Watchdog {0} by user.", autoRecoverBlueStacks ? "ACTIVATED (ON)" : "PAUSED (OFF)"));
-
-        // If Watchdog turned OFF, pause APK bots across all players so user can claim coins undisturbed!
-        new Thread(new ThreadStart(delegate {
-            try
-            {
-                List<BlueStacksInstance> instances = DiscoverBlueStacksInstances();
-                string action = autoRecoverBlueStacks ? "START" : "STOP";
-                foreach (var inst in instances)
-                {
-                    RunAdbDevice("127.0.0.1:" + inst.Port, string.Format("shell am start-foreground-service -a com.quizearn.assistant.{0} com.quizearn.assistant/.FloatingOverlayService", action));
-                }
-            }
-            catch {}
-        })).Start();
-
-        if (!autoRecoverBlueStacks)
-        {
-            Log("[🛡️ Watchdog] Paused all APK bots across all players so you can freely claim coins!");
-        }
-        else
-        {
-            Log("[🛡️ Watchdog] Resumed all APK bots across all players!");
-        }
+            SetActiveNavButton(btnNavSettings);
+        });
     }
 
-    private void UpdateWatchdogButtonState()
+    private void SetActiveNavButton(Button activeBtn)
     {
-        if (btnWatchdog == null) return;
-        if (this.InvokeRequired)
+        foreach (Button b in new Button[] { btnNavHome, btnNavData, btnNavSettings })
         {
-            SafeBeginInvoke(new Action(UpdateWatchdogButtonState));
-            return;
+            if (b == activeBtn) { b.ForeColor = Color.White; b.BackColor = Color.FromArgb(24, 24, 30); b.FlatAppearance.BorderColor = Color.FromArgb(55, 55, 65); }
+            else { b.ForeColor = Color.FromArgb(125, 125, 135); b.BackColor = Color.FromArgb(8, 8, 10); b.FlatAppearance.BorderColor = Color.FromArgb(22, 22, 26); }
         }
-        if (autoRecoverBlueStacks)
-        {
-            btnWatchdog.Text = "[ 🛡️ WATCHDOG: ON ]";
-            btnWatchdog.ForeColor = Color.FromArgb(76, 175, 80);
-            btnWatchdog.BackColor = Color.FromArgb(10, 24, 14);
-            btnWatchdog.FlatAppearance.BorderColor = Color.FromArgb(46, 125, 50);
-        }
-        else
-        {
-            btnWatchdog.Text = "[ 🛡️ WATCHDOG: OFF ]";
-            btnWatchdog.ForeColor = Color.FromArgb(140, 140, 145);
-            btnWatchdog.BackColor = Color.FromArgb(12, 12, 14);
-            btnWatchdog.FlatAppearance.BorderColor = Color.FromArgb(28, 28, 32);
-        }
-    }
-
-    private void BtnRestartApp_Click(object sender, EventArgs e)
-    {
-        Log("[Action] Manual App Restart requested.");
-        if (btnRestartApp != null)
-        {
-            btnRestartApp.Text = "Restarting...";
-            btnRestartApp.ForeColor = Color.FromArgb(56, 189, 248);
-            System.Threading.Tasks.Task.Delay(1500).ContinueWith(t => {
-                try
-                {
-                    if (this.InvokeRequired)
-                    {
-                        SafeBeginInvoke(new Action(() => {
-                            btnRestartApp.Text = "Restart App";
-                            btnRestartApp.ForeColor = Color.FromArgb(120, 120, 125);
-                        }));
-                    }
-                    else
-                    {
-                        btnRestartApp.Text = "Restart App";
-                        btnRestartApp.ForeColor = Color.FromArgb(120, 120, 125);
-                    }
-                }
-                catch { }
-            });
-        }
-        RestartApp();
-    }
-
-    private void RestartApp()
-    {
-        new Thread(new ThreadStart(delegate {
-            try
-            {
-                if (autoRecoverBlueStacks && !IsBlueStacksProcessRunning())
-                {
-                    EnsureBlueStacksAliveAndReady("Restart App");
-                }
-                else
-                {
-                    EnsureConnected();
-                }
-
-                // Discover all connected devices so restart works across multi-instance BlueStacks & phones
-                List<string> targetDevices = new List<string>();
-                string devicesRaw = RunAdb("devices");
-                if (!string.IsNullOrEmpty(devicesRaw))
-                {
-                    foreach (string line in devicesRaw.Split('\n'))
-                    {
-                        string tr = line.Trim();
-                        if (tr.EndsWith("device") && !tr.StartsWith("List") && !tr.StartsWith("*"))
-                        {
-                            string id = tr.Split(new char[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries)[0].Trim();
-                            if (!string.IsNullOrEmpty(id) && !targetDevices.Contains(id))
-                            {
-                                targetDevices.Add(id);
-                            }
-                        }
-                    }
-                }
-                if (targetDevices.Count == 0 && !string.IsNullOrEmpty(adbPort))
-                {
-                    targetDevices.Add(adbPort);
-                }
-
-                string[] targetPkgs = new string[] { "com.quiz.earn.money.game", "com.rayole.cashmafia2" };
-                foreach (string dev in targetDevices)
-                {
-                    foreach (string pkg in targetPkgs)
-                    {
-                        RunAdb(string.Format("-s {0} shell am force-stop {1}", dev, pkg));
-                    }
-                }
-                Thread.Sleep(800);
-
-                foreach (string dev in targetDevices)
-                {
-                    bool launched = false;
-                    foreach (string pkg in targetPkgs)
-                    {
-                        string check = RunAdb(string.Format("-s {0} shell pm path {1}", dev, pkg));
-                        if (!string.IsNullOrEmpty(check) && check.Contains("package:"))
-                        {
-                            RunAdb(string.Format("-s {0} shell monkey -p {1} -c android.intent.category.LAUNCHER 1", dev, pkg));
-                            launched = true;
-                            break;
-                        }
-                    }
-                    if (!launched)
-                    {
-                        RunAdb(string.Format("-s {0} shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1", dev));
-                    }
-                    // Auto-enable Accessibility & start QuizEarn APK Bot on restart!
-                    RunAdb(string.Format("-s {0} shell settings put secure enabled_accessibility_services com.quizearn.assistant/.QuizEarnAccessibilityService", dev));
-                    RunAdb(string.Format("-s {0} shell settings put secure accessibility_enabled 1", dev));
-                    RunAdb(string.Format("-s {0} shell am start-foreground-service -a com.quizearn.assistant.START com.quizearn.assistant/.FloatingOverlayService", dev));
-                }
-                Log(string.Format("[App] Quiz & Earn / Cash Mafia & APK Bot restarted cleanly on {0} device(s).", targetDevices.Count));
-            }
-            catch (Exception ex)
-            {
-                Log("[Error] Failed to restart app: " + ex.Message);
-            }
-        })).Start();
-    }
-
-    private void BtnResetAdId_Click(object sender, EventArgs e)
-    {
-        Log("[Action] Resetting Ad ID and clearing cache...");
-        new Thread(new ThreadStart(delegate {
-            try
-            {
-                EnsureConnected();
-                RunAdb("shell pm clear com.google.android.gms");
-                Thread.Sleep(800);
-                RunAdb("shell am broadcast -a com.google.android.gms.ads.identifier.service.START");
-                Log("[Ad ID] Google Advertising ID & cache reset successfully.");
-            }
-            catch (Exception ex)
-            {
-                Log("[Error] Failed to reset Ad ID: " + ex.Message);
-            }
-        })).Start();
-    }
-
-    private void BtnSendLastSS_Click(object sender, EventArgs e)
-    {
-        Log("[Screenshot] Auto-capturing BlueStacks screen and syncing to Gallery...");
-        new Thread(new ThreadStart(delegate {
-            SendLastScreenshotToBlueStacks();
-        })).Start();
-    }
-
-    private Image CaptureBlueStacksWindow(out string methodUsed)
-    {
-        methodUsed = "Windows Desktop Capture";
-        try
-        {
-            Process[] bstkProcs = Process.GetProcessesByName("HD-Player");
-            IntPtr targetHwnd = IntPtr.Zero;
-
-            // 1. Match by window title containing "BlueStacks"
-            EnumWindows(delegate(IntPtr hWnd, IntPtr lParam) {
-                if (!IsWindowVisible(hWnd)) return true;
-                StringBuilder sb = new StringBuilder(256);
-                GetWindowText(hWnd, sb, 256);
-                string title = sb.ToString();
-                if (title.IndexOf("BlueStacks", StringComparison.OrdinalIgnoreCase) >= 0 &&
-                    title.IndexOf("Multi-Instance", StringComparison.OrdinalIgnoreCase) < 0)
-                {
-                    RECT r;
-                    if (GetWindowRect(hWnd, out r) && (r.Right - r.Left) > 200 && (r.Bottom - r.Top) > 200)
-                    {
-                        targetHwnd = hWnd;
-                        return false;
-                    }
-                }
-                return true;
-            }, IntPtr.Zero);
-
-            // 2. Match by process ID of HD-Player
-            if (targetHwnd == IntPtr.Zero && bstkProcs.Length > 0)
-            {
-                EnumWindows(delegate(IntPtr hWnd, IntPtr lParam) {
-                    if (!IsWindowVisible(hWnd)) return true;
-                    int pid = 0;
-                    GetWindowThreadProcessId(hWnd, out pid);
-                    foreach (Process p in bstkProcs)
-                    {
-                        if (p.Id == pid)
-                        {
-                            RECT r;
-                            if (GetWindowRect(hWnd, out r) && (r.Right - r.Left) > 250 && (r.Bottom - r.Top) > 300)
-                            {
-                                targetHwnd = hWnd;
-                                return false;
-                            }
-                        }
-                    }
-                    return true;
-                }, IntPtr.Zero);
-            }
-
-            if (targetHwnd != IntPtr.Zero)
-            {
-                ShowWindow(targetHwnd, 9); // SW_RESTORE
-                SetForegroundWindow(targetHwnd);
-                Thread.Sleep(130);
-
-                RECT rect;
-                if (GetWindowRect(targetHwnd, out rect))
-                {
-                    int w = rect.Right - rect.Left;
-                    int h = rect.Bottom - rect.Top;
-                    if (w > 100 && h > 100)
-                    {
-                        Rectangle screenBounds = Screen.PrimaryScreen.Bounds;
-                        int x = Math.Max(0, rect.Left);
-                        int y = Math.Max(0, rect.Top);
-                        int capW = Math.Min(w, screenBounds.Width - x);
-                        int capH = Math.Min(h, screenBounds.Height - y);
-
-                        if (capW > 100 && capH > 100)
-                        {
-                            Bitmap bmp = new Bitmap(capW, capH);
-                            using (Graphics g = Graphics.FromImage(bmp))
-                            {
-                                g.CopyFromScreen(x, y, 0, 0, new Size(capW, capH));
-                            }
-                            return CropBlueStacksChrome(bmp);
-                        }
-                    }
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            Log("[Screenshot Debug] Window capture error: " + ex.Message);
-        }
-        return null;
-    }
-
-    private static Bitmap CropBlueStacksChrome(Bitmap src)
-    {
-        if (src == null) return null;
-        try
-        {
-            if (src.Width < 250 || src.Height < 400) return src;
-
-            int cropLeft = 6;
-            int cropTop = 72;
-            int cropRight = 43;
-            int cropBottom = 12;
-
-            // Adaptive refinement: scan right edge for dark BlueStacks toolbar (R < 60, G < 60, B < 95)
-            for (int x = src.Width - 1; x >= src.Width - 70 && x > 150; x--)
-            {
-                int midY = src.Height / 2;
-                Color c = src.GetPixel(x, midY);
-                if (!(c.R < 60 && c.G < 60 && c.B < 95))
-                {
-                    cropRight = Math.Max(40, src.Width - 1 - x);
-                    break;
-                }
-            }
-
-            int targetW = src.Width - cropLeft - cropRight;
-            int targetH = src.Height - cropTop - cropBottom;
-
-            if (targetW > 150 && targetH > 250)
-            {
-                Rectangle rect = new Rectangle(cropLeft, cropTop, targetW, targetH);
-                Bitmap cropped = src.Clone(rect, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-                src.Dispose();
-                return cropped;
-            }
-        }
-        catch { }
-        return src;
-    }
-
-    private void SendLastScreenshotToBlueStacks()
-    {
-        try
-        {
-            string screenshotPath = null;
-            string destFileName = string.Format("Screenshot_{0:yyyyMMdd_HHmmss}.png", DateTime.Now);
-            string remotePath = "/sdcard/Pictures/Screenshots/" + destFileName;
-
-            // 1. PRIMARY: Capture the LIVE BlueStacks screen RIGHT NOW with edges trimmed
-            string methodUsed;
-            Image liveImg = CaptureBlueStacksWindow(out methodUsed);
-            if (liveImg != null)
-            {
-                string tempDir = Path.Combine(Path.GetTempPath(), "BlueStacksSS");
-                if (!Directory.Exists(tempDir)) Directory.CreateDirectory(tempDir);
-                string tFile = Path.Combine(tempDir, destFileName);
-                liveImg.Save(tFile, System.Drawing.Imaging.ImageFormat.Png);
-                liveImg.Dispose();
-                screenshotPath = tFile;
-                Log("[Screenshot] Captured LIVE BlueStacks screen (edges cleanly trimmed).");
-            }
-
-            EnsureConnected();
-
-            // Find all connected devices
-            List<string> targetDevices = new List<string>();
-            string devicesRaw = RunAdb("devices");
-            if (!string.IsNullOrEmpty(devicesRaw))
-            {
-                foreach (string line in devicesRaw.Split('\n'))
-                {
-                    string tr = line.Trim();
-                    if (tr.EndsWith("device") && !tr.StartsWith("List"))
-                    {
-                        string id = tr.Split('\t')[0].Trim();
-                        if (!string.IsNullOrEmpty(id) && !targetDevices.Contains(id))
-                        {
-                            targetDevices.Add(id);
-                        }
-                    }
-                }
-            }
-
-            if (targetDevices.Count == 0 && !string.IsNullOrEmpty(adbPort))
-            {
-                targetDevices.Add(adbPort);
-            }
-
-            // 2. FALLBACK: If window was minimized or not captured, take live screencap via ADB
-            if (string.IsNullOrEmpty(screenshotPath) || !File.Exists(screenshotPath))
-            {
-                Log("[Screenshot] Capturing live screen directly via ADB screencap...");
-                foreach (string dev in targetDevices)
-                {
-                    RunAdb(string.Format("-s {0} shell mkdir -p /sdcard/Pictures/Screenshots", dev));
-                    RunAdb(string.Format("-s {0} shell screencap -p {1}", dev, remotePath));
-                    RunAdb(string.Format("-s {0} shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d \"file://{1}\"", dev, remotePath));
-                }
-                Log("[SUCCESS] Live screen captured & pushed directly to BlueStacks Gallery!");
-            }
-            else
-            {
-                // Push fresh live trimmed image to all target devices
-                int sentCount = 0;
-                foreach (string dev in targetDevices)
-                {
-                    RunAdb(string.Format("-s {0} shell mkdir -p /sdcard/Pictures/Screenshots", dev));
-                    RunAdb(string.Format("-s {0} push \"{1}\" {2}", dev, screenshotPath, remotePath));
-                    RunAdb(string.Format("-s {0} shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d \"file://{1}\"", dev, remotePath));
-                    sentCount++;
-                }
-                Log(string.Format("[SUCCESS] Sent LIVE '{0}' to BlueStacks Gallery ({1} device(s))!", Path.GetFileName(screenshotPath), sentCount));
-            }
-
-            // Visual feedback on button (Green toast animation)
-            if (this.InvokeRequired)
-            {
-                this.BeginInvoke(new Action(delegate {
-                    btnSendLastSS.Text = "✓ Saved to Gallery!";
-                    btnSendLastSS.ForeColor = Color.FromArgb(100, 255, 160);
-                    btnSendLastSS.BackColor = Color.FromArgb(12, 38, 24);
-                    btnSendLastSS.FlatAppearance.BorderColor = Color.FromArgb(40, 160, 80);
-                }));
-
-                Thread.Sleep(2500);
-
-                this.BeginInvoke(new Action(delegate {
-                    btnSendLastSS.Text = "Auto SS to Gallery";
-                    btnSendLastSS.ForeColor = Color.FromArgb(80, 175, 255);
-                    btnSendLastSS.BackColor = Color.FromArgb(14, 26, 42);
-                    btnSendLastSS.FlatAppearance.BorderColor = Color.FromArgb(42, 90, 150);
-                }));
-            }
-
-            try
-            {
-                System.Media.SystemSounds.Asterisk.Play();
-            }
-            catch { }
-
-            Log("[Ready] Open Quiz & Earn -> Upload Screenshot -> Pick the top image in Gallery!");
-        }
-        catch (Exception ex)
-        {
-            Log("[Screenshot Error] Failed to capture/send screenshot: " + ex.Message);
-        }
-    }
-
-    private void BtnTimerToggle_Click(object sender, EventArgs e)
-    {
-        if (!isTimerRunning)
-        {
-            countdownSeconds = 30;
-            isTimerRunning = true;
-            uiCountdownTimer.Start();
-            btnTimerToggle.Text = "Timer: 30s";
-            Log("[Timer] Ad countdown timer started (30s).");
-        }
-        else
-        {
-            BtnTimerRestart_Click(sender, e);
-        }
-    }
-
-    private void BtnTimerRestart_Click(object sender, EventArgs e)
-    {
-        countdownSeconds = 30;
-        UpdateTimerDisplay();
-    }
-
-    private void UiCountdownTimer_Tick(object sender, EventArgs e)
-    {
-        countdownSeconds--;
-        UpdateTimerDisplay();
-        if (countdownSeconds <= 0)
-        {
-            uiCountdownTimer.Stop();
-            isTimerRunning = false;
-            btnTimerToggle.Text = "Timer: Ready";
-            PlayTimerNoise();
-            Log("[Timer] Ad countdown elapsed. Auto-dismissing...");
-            new Thread(new ThreadStart(CloseAdActively)).Start();
-        }
-    }
-
-    private void UpdateTimerDisplay()
-    {
-        if (this.InvokeRequired)
-        {
-            this.BeginInvoke(new Action(UpdateTimerDisplay));
-            return;
-        }
-        btnTimerToggle.Text = string.Format("Timer: {0}s", countdownSeconds);
-    }
-
-    private void PlayTimerNoise()
-    {
-        try { System.Media.SystemSounds.Beep.Play(); } catch {}
-    }
-
-    private void Play25GemsMilestoneAlert()
-    {
-        new Thread(new ThreadStart(delegate {
-            try
-            {
-                SilenceAudio(false);
-                Console.Beep(987, 200);
-                Thread.Sleep(60);
-                Console.Beep(1318, 250);
-                Thread.Sleep(60);
-                Console.Beep(1760, 450);
-                System.Media.SystemSounds.Exclamation.Play();
-            }
-            catch {}
-        })).Start();
-    }
-
-    private void BtnToggle_Click(object sender, EventArgs e)
-    {
-        if (!isRunning)
-        {
-            StartBot();
-        }
-        else
-        {
-            StopBot();
-        }
-    }
-
-    private void StartBot()
-    {
-        isRunning = true;
-        isPending25thGemStop = false;
-        hasCountedThis25GemCycle = false;
-        botStartTime = DateTime.Now;
-        lastProgressTime = DateTime.Now;
-
-        btnToggle.Text = "[ || ]  STOP BOT (RUNNING)";
-        btnToggle.BackColor = Color.FromArgb(14, 14, 14);
-        btnToggle.ForeColor = Color.FromArgb(165, 165, 170);
-        btnToggle.FlatAppearance.BorderColor = Color.FromArgb(36, 36, 36);
-
-        lblStatus.Text = "RUNNING (Auto-Quiz + Reward Active)";
-        lblStatus.ForeColor = Color.FromArgb(145, 145, 150);
-
-        if (chkAutoMute.Checked)
-        {
-            SilenceAudio(true);
-        }
-
-        new Thread(new ThreadStart(delegate {
-            try
-            {
-                RunAdb("shell settings put system accelerometer_rotation 0");
-                RunAdb("shell settings put system user_rotation 0");
-                RunAdb("shell cmd window user-rotation lock 0");
-            }
-            catch {}
-        })).Start();
-
-        botThread = new Thread(new ThreadStart(BotWorkerLoop));
-        botThread.IsBackground = true;
-        botThread.Start();
-        Log(">>> Bot started.");
-    }
-
-    private void StopBot()
-    {
-        isRunning = false;
-        isPending25thGemStop = false;
-        hasCountedThis25GemCycle = false;
-
-        if (this.InvokeRequired)
-        {
-            SafeBeginInvoke(new Action(delegate {
-                btnToggle.Text = "[ > ]  START QUIZ & EARN BOT";
-                btnToggle.BackColor = Color.FromArgb(8, 8, 8);
-                btnToggle.ForeColor = Color.FromArgb(150, 150, 155);
-                btnToggle.FlatAppearance.BorderColor = Color.FromArgb(24, 24, 24);
-
-                if (!lblStatus.Text.Contains("25 Gems"))
-                {
-                    lblStatus.Text = isAdbConnected ? string.Format("READY (Connected: {0})", adbPort) : "WAITING FOR ADB (Turn on ADB)";
-                    lblStatus.ForeColor = isAdbConnected ? Color.FromArgb(135, 135, 140) : Color.FromArgb(95, 95, 100);
-                }
-            }));
-        }
-        else
-        {
-            btnToggle.Text = "[ > ]  START QUIZ & EARN BOT";
-            btnToggle.BackColor = Color.FromArgb(8, 8, 8);
-            btnToggle.ForeColor = Color.FromArgb(150, 150, 155);
-            btnToggle.FlatAppearance.BorderColor = Color.FromArgb(24, 24, 24);
-
-            if (!lblStatus.Text.Contains("25 Gems"))
-            {
-                lblStatus.Text = isAdbConnected ? string.Format("READY (Connected: {0})", adbPort) : "WAITING FOR ADB (Turn on ADB)";
-                lblStatus.ForeColor = isAdbConnected ? Color.FromArgb(135, 135, 140) : Color.FromArgb(95, 95, 100);
-            }
-        }
-
-        SilenceAudio(false);
-        if (IsEmulatorDevice(adbPort))
-        {
-            RunAdb("shell settings put global window_animation_scale 1.0");
-            RunAdb("shell settings put global transition_animation_scale 1.0");
-            RunAdb("shell settings put global animator_duration_scale 1.0");
-        }
-        Log("<<< Bot stopped.");
-    }
-
-    private void SilenceAudio(bool mute)
-    {
-        try
-        {
-            if (mute)
-            {
-                RunAdb("shell cmd media_session volume --stream 3 --set 0");
-                Log("[Audio] Device media audio muted.");
-            }
-            else
-            {
-                RunAdb("shell cmd media_session volume --stream 3 --set 12");
-                Log("[Audio] Device sound restored.");
-            }
-        }
-        catch {}
-    }
-
-    private void SafeBeginInvoke(Action action)
-    {
-        try {
-            if (this.IsHandleCreated && !this.IsDisposed) {
-                this.BeginInvoke(action);
-            }
-        } catch {}
     }
 
     private void Log(string message)
     {
-        if (this.InvokeRequired)
+        string line = string.Format("[{0:HH:mm:ss}] {1}\n", DateTime.Now, message);
+        lock (logLock)
         {
-            try {
-                if (this.IsHandleCreated && !this.IsDisposed) {
-                    this.BeginInvoke(new Action<string>(Log), message);
-                }
-            } catch {}
-            return;
+            try
+            {
+                string logFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "bot_run.log");
+                File.AppendAllText(logFile, line, Encoding.UTF8);
+            }
+            catch { }
         }
-        string time = DateTime.Now.ToString("HH:mm:ss");
-        string line = string.Format("[{0}] {1}\n", time, message);
-        txtLog.AppendText(line);
-        txtLog.SelectionStart = txtLog.Text.Length;
-        txtLog.ScrollToCaret();
 
-        try
+        SafeBeginInvoke(delegate
         {
-            string logFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "bot_run.log");
-            File.AppendAllText(logFile, line);
-        }
-        catch {}
+            if (txtLog != null && !txtLog.IsDisposed)
+            {
+                if (txtLog.TextLength > 80000) txtLog.Clear();
+                txtLog.AppendText(line);
+                txtLog.SelectionStart = txtLog.Text.Length;
+                txtLog.ScrollToCaret();
+            }
+        });
     }
 
     private void LoadStatsFromFile()
     {
-        try
+        lock (statsLock)
         {
-            string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "quizearn_stats.json");
-            if (!File.Exists(path))
+            try
             {
-                path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cashmafia_stats.json");
-            }
-            if (File.Exists(path))
-            {
-                string json = File.ReadAllText(path);
-
-                string fileDate = "";
-                Match mDate = Regex.Match(json, @"""todayDate"":\s*""([^""]+)""");
-                if (mDate.Success) fileDate = mDate.Groups[1].Value;
-
+                string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "quizearn_stats.json");
+                if (!File.Exists(path)) return;
+                string json = File.ReadAllText(path, Encoding.UTF8);
                 string todayStr = DateTime.Now.ToString("yyyy-MM-dd");
-                bool isSameDay = (fileDate == todayStr);
+                Match mDate = Regex.Match(json, @"""todayDate"":\s*""([^""]+)""");
+                bool isSameDay = mDate.Success && mDate.Groups[1].Value == todayStr;
 
-                Match mToday = Regex.Match(json, @"""todaySolved"":\s*(\d+)");
-                if (mToday.Success && isSameDay) todaySolved = int.Parse(mToday.Groups[1].Value);
-
-                Match mGems = Regex.Match(json, @"""gemsEarned"":\s*(\d+)");
-                if (mGems.Success) gemsEarned = int.Parse(mGems.Groups[1].Value);
-
-                Match mAds = Regex.Match(json, @"""adsClosed"":\s*(\d+)");
-                if (mAds.Success) adsClosed = int.Parse(mAds.Groups[1].Value);
-
-                Match mTot = Regex.Match(json, @"""totalSolved"":\s*(\d+)");
-                if (mTot.Success) totalGems = int.Parse(mTot.Groups[1].Value);
-
-                Match mTodayCoins = Regex.Match(json, @"""todayCoinsClaimed"":\s*(\d+)");
-                if (mTodayCoins.Success && isSameDay) todayCoinsClaimed = int.Parse(mTodayCoins.Groups[1].Value);
-
-                Match mTotalCoins = Regex.Match(json, @"""totalCoinsClaimed"":\s*(\d+)");
-                if (mTotalCoins.Success) totalCoinsClaimed = int.Parse(mTotalCoins.Groups[1].Value);
-
-                Match mToday25 = Regex.Match(json, @"""today25GemsCount"":\s*(\d+)");
-                if (mToday25.Success && isSameDay) today25GemsCount = int.Parse(mToday25.Groups[1].Value);
-
-                Match mTotal25 = Regex.Match(json, @"""total25GemsCount"":\s*(\d+)");
-                if (mTotal25.Success) total25GemsCount = int.Parse(mTotal25.Groups[1].Value);
-
-                Match mTodayOff = Regex.Match(json, @"""todayOffersClaimed"":\s*(\d+)");
-                if (mTodayOff.Success && isSameDay) todayOffersClaimed = int.Parse(mTodayOff.Groups[1].Value);
-
-                Match mTotalOff = Regex.Match(json, @"""totalOffersClaimed"":\s*(\d+)");
-                if (mTotalOff.Success) totalOffersClaimed = int.Parse(mTotalOff.Groups[1].Value);
-
-                Match mAutoUp = Regex.Match(json, @"""autoCheckUpdates"":\s*(true|false)", RegexOptions.IgnoreCase);
-                if (mAutoUp.Success) autoCheckUpdates = bool.Parse(mAutoUp.Groups[1].Value);
-
-                Match mBst = Regex.Match(json, @"""autoRecoverBlueStacks"":\s*(true|false)", RegexOptions.IgnoreCase);
-                if (mBst.Success) autoRecoverBlueStacks = bool.Parse(mBst.Groups[1].Value);
-
-                Match mFeed = Regex.Match(json, @"""updateFeedUrl"":\s*""([^""]+)""");
-                if (mFeed.Success && !string.IsNullOrEmpty(mFeed.Groups[1].Value))
+                if (isSameDay)
                 {
-                    string feed = mFeed.Groups[1].Value.Trim();
-                    if (feed.Contains("raw.githubusercontent.com/THESHMIL/"))
-                        feed = feed.Replace("raw.githubusercontent.com/THESHMIL/", "raw.githubusercontent.com/THESHMIL0/");
-                    updateFeedUrl = feed;
+                    todaySolved = ExtractInt(json, "todaySolved", 0);
+                    todayCoinsClaimed = ExtractInt(json, "todayCoinsClaimed", 0);
+                    today25GemsCount = ExtractInt(json, "today25GemsCount", 0);
+                    todayOffersClaimed = ExtractInt(json, "todayOffersClaimed", 0);
                 }
+                gemsEarned = ExtractInt(json, "gemsEarned", 0);
+                adsClosed = ExtractInt(json, "adsClosed", 0);
+                totalGems = ExtractInt(json, "totalSolved", 0);
+                totalCoinsClaimed = ExtractInt(json, "totalCoinsClaimed", 0);
+                total25GemsCount = ExtractInt(json, "total25GemsCount", 0);
+                totalOffersClaimed = ExtractInt(json, "totalOffersClaimed", 0);
+
+                autoCheckUpdates = ExtractBool(json, "autoCheckUpdates", true);
+                autoRecoverBlueStacks = ExtractBool(json, "autoRecoverBlueStacks", true);
+                autoMuteEnabled = ExtractBool(json, "autoMuteEnabled", true);
+                turboSpeedEnabled = ExtractBool(json, "turboSpeedEnabled", true);
+
+                Match mPkg = Regex.Match(json, @"""targetAppPackage"":\s*""([^""]+)""");
+                if (mPkg.Success && IsKnownQuizApp(mPkg.Groups[1].Value)) targetAppPackage = mPkg.Groups[1].Value;
 
                 claimsHistory.Clear();
                 if (isSameDay)
@@ -2144,756 +934,113 @@ public class QuizEarnApp : Form
                     Match mHist = Regex.Match(json, @"""claimsHistory"":\s*\[(.*?)\]", RegexOptions.Singleline);
                     if (mHist.Success)
                     {
-                        MatchCollection items = Regex.Matches(mHist.Groups[1].Value, @"""((?:\\.|[^""\\])*)""");
-                        foreach (Match it in items)
+                        foreach (Match it in Regex.Matches(mHist.Groups[1].Value, @"""((?:\\.|[^""\\])*)"""))
                         {
-                            string decoded = it.Groups[1].Value.Replace("\\\"", "\"").Replace("\\\\", "\\");
-                            claimsHistory.Add(decoded);
+                            claimsHistory.Add(it.Groups[1].Value.Replace("\\\"", "\"").Replace("\\\\", "\\"));
                         }
                     }
                 }
             }
+            catch { }
         }
-        catch {}
+    }
+
+    private int ExtractInt(string json, string key, int defVal)
+    {
+        Match m = Regex.Match(json, @"""" + key + @""":\s*(\d+)");
+        int v; return (m.Success && int.TryParse(m.Groups[1].Value, out v)) ? v : defVal;
+    }
+
+    private bool ExtractBool(string json, string key, bool defVal)
+    {
+        Match m = Regex.Match(json, @"""" + key + @""":\s*(true|false)", RegexOptions.IgnoreCase);
+        bool v; return (m.Success && bool.TryParse(m.Groups[1].Value, out v)) ? v : defVal;
     }
 
     private void SaveStatsToFile()
     {
-        try
+        lock (statsLock)
         {
-            string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "quizearn_stats.json");
-            StringBuilder histJson = new StringBuilder();
-            if (claimsHistory != null)
+            try
             {
+                string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "quizearn_stats.json");
+                string tmpPath = path + ".tmp";
+                StringBuilder histJson = new StringBuilder();
                 for (int i = 0; i < claimsHistory.Count; i++)
                 {
                     if (i > 0) histJson.Append(", ");
-                    string escaped = claimsHistory[i].Replace("\\", "\\\\").Replace("\"", "\\\"");
-                    histJson.Append("\"" + escaped + "\"");
-                }
-            }
-
-            string json = string.Format(
-                "{{\n" +
-                "  \"todayDate\": \"{0}\",\n" +
-                "  \"todaySolved\": {1},\n" +
-                "  \"totalSolved\": {2},\n" +
-                "  \"gemsEarned\": {3},\n" +
-                "  \"adsClosed\": {4},\n" +
-                "  \"todayCoinsClaimed\": {5},\n" +
-                "  \"totalCoinsClaimed\": {6},\n" +
-                "  \"today25GemsCount\": {7},\n" +
-                "  \"total25GemsCount\": {8},\n" +
-                "  \"todayOffersClaimed\": {9},\n" +
-                "  \"totalOffersClaimed\": {10},\n" +
-                "  \"autoCheckUpdates\": {11},\n" +
-                "  \"autoRecoverBlueStacks\": {12},\n" +
-                "  \"updateFeedUrl\": \"{13}\",\n" +
-                "  \"claimsHistory\": [{14}]\n" +
-                "}}",
-                DateTime.Now.ToString("yyyy-MM-dd"),
-                todaySolved,
-                totalGems + todaySolved,
-                gemsEarned,
-                adsClosed,
-                todayCoinsClaimed,
-                totalCoinsClaimed,
-                today25GemsCount,
-                total25GemsCount,
-                todayOffersClaimed,
-                totalOffersClaimed,
-                autoCheckUpdates.ToString().ToLower(),
-                autoRecoverBlueStacks.ToString().ToLower(),
-                updateFeedUrl.Replace("\\", "\\\\").Replace("\"", "\\\""),
-                histJson.ToString()
-            );
-            File.WriteAllText(path, json);
-        }
-        catch {}
-    }
-
-    private void SwitchToHomeView()
-    {
-        if (this.InvokeRequired)
-        {
-            this.BeginInvoke(new Action(SwitchToHomeView));
-            return;
-        }
-
-        if (pnlHomeView != null) pnlHomeView.Visible = true;
-        if (pnlDataView != null) pnlDataView.Visible = false;
-        if (pnlSettingsView != null) pnlSettingsView.Visible = false;
-
-        SetActiveNavButton(btnNavHome);
-    }
-
-    private void SwitchToDataView()
-    {
-        if (this.InvokeRequired)
-        {
-            this.BeginInvoke(new Action(SwitchToDataView));
-            return;
-        }
-
-        UpdateDataDashboard();
-
-        if (pnlHomeView != null) pnlHomeView.Visible = false;
-        if (pnlDataView != null) pnlDataView.Visible = true;
-        if (pnlSettingsView != null) pnlSettingsView.Visible = false;
-
-        SetActiveNavButton(btnNavData);
-    }
-
-    private void SwitchToSettingsView()
-    {
-        if (this.InvokeRequired)
-        {
-            this.BeginInvoke(new Action(SwitchToSettingsView));
-            return;
-        }
-
-        if (pnlHomeView != null) pnlHomeView.Visible = false;
-        if (pnlDataView != null) pnlDataView.Visible = false;
-        if (pnlSettingsView != null) pnlSettingsView.Visible = true;
-
-        if (chkAutoCheckUpdates != null) chkAutoCheckUpdates.Checked = autoCheckUpdates;
-        if (chkSettingsAutoMute != null && chkAutoMute != null) chkSettingsAutoMute.Checked = chkAutoMute.Checked;
-        if (chkSettingsTurbo != null && chkTurboSpeed != null) chkSettingsTurbo.Checked = chkTurboSpeed.Checked;
-        if (chkSettingsAlwaysOnTop != null) chkSettingsAlwaysOnTop.Checked = this.TopMost;
-        if (chkSettingsAutoRecoverBst != null) chkSettingsAutoRecoverBst.Checked = autoRecoverBlueStacks;
-
-        SetActiveNavButton(btnNavSettings);
-    }
-
-    private void SetActiveNavButton(Button activeBtn)
-    {
-        Button[] all = new Button[] { btnNavHome, btnNavData, btnNavSettings };
-        foreach (Button b in all)
-        {
-            if (b == null) continue;
-            if (b == activeBtn)
-            {
-                b.ForeColor = Color.White;
-                b.BackColor = Color.FromArgb(20, 20, 24);
-                b.FlatAppearance.BorderColor = Color.FromArgb(45, 45, 52);
-            }
-            else
-            {
-                b.ForeColor = Color.FromArgb(110, 110, 115);
-                b.BackColor = Color.FromArgb(6, 6, 8);
-                b.FlatAppearance.BorderColor = Color.FromArgb(18, 18, 20);
-            }
-        }
-    }
-
-    private void ShowDarkAlert(string title, string message, string buttonText = "OK")
-    {
-        if (this.InvokeRequired)
-        {
-            this.BeginInvoke(new Action(() => ShowDarkAlert(title, message, buttonText)));
-            return;
-        }
-
-        using (Form dlg = new Form())
-        {
-            dlg.Text = title;
-            dlg.ClientSize = new Size(430, 185);
-            dlg.StartPosition = FormStartPosition.CenterParent;
-            dlg.FormBorderStyle = FormBorderStyle.FixedDialog;
-            dlg.MaximizeBox = false;
-            dlg.MinimizeBox = false;
-            dlg.ShowInTaskbar = false;
-            dlg.BackColor = Color.FromArgb(8, 8, 10);
-            dlg.ForeColor = Color.FromArgb(220, 220, 225);
-            try { dlg.Icon = this.Icon; } catch {}
-
-            dlg.HandleCreated += delegate {
-                ApplyDwmDarkTo(dlg.Handle);
-            };
-
-            dlg.Paint += delegate(object s, PaintEventArgs pe) {
-                ControlPaint.DrawBorder(pe.Graphics, dlg.ClientRectangle, Color.FromArgb(36, 36, 44), ButtonBorderStyle.Solid);
-            };
-
-            bool isSuccess = title.IndexOf("Up to Date", StringComparison.OrdinalIgnoreCase) >= 0 || title.IndexOf("Success", StringComparison.OrdinalIgnoreCase) >= 0;
-            bool isWarning = title.IndexOf("Check", StringComparison.OrdinalIgnoreCase) >= 0 || title.IndexOf("Warning", StringComparison.OrdinalIgnoreCase) >= 0 || title.IndexOf("Error", StringComparison.OrdinalIgnoreCase) >= 0;
-
-            Label lblBadge = new Label();
-            lblBadge.Font = new Font("Segoe UI", 12f, FontStyle.Bold);
-            lblBadge.Size = new Size(24, 24);
-            lblBadge.Location = new Point(22, 18);
-            lblBadge.TextAlign = ContentAlignment.MiddleCenter;
-            if (isSuccess)
-            {
-                lblBadge.Text = "âœ“";
-                lblBadge.ForeColor = Color.FromArgb(70, 210, 130);
-            }
-            else if (isWarning)
-            {
-                lblBadge.Text = "!";
-                lblBadge.ForeColor = Color.FromArgb(240, 170, 50);
-            }
-            else
-            {
-                lblBadge.Text = "âœ¦";
-                lblBadge.ForeColor = Color.FromArgb(170, 170, 180);
-            }
-            dlg.Controls.Add(lblBadge);
-
-            Label lblTitle = new Label();
-            lblTitle.Text = title;
-            lblTitle.Font = new Font("Segoe UI", 11.5f, FontStyle.Bold);
-            lblTitle.ForeColor = Color.White;
-            lblTitle.Location = new Point(50, 19);
-            lblTitle.AutoSize = true;
-            dlg.Controls.Add(lblTitle);
-
-            Label lblMsg = new Label();
-            lblMsg.Text = message;
-            lblMsg.Font = new Font("Segoe UI", 9.5f);
-            lblMsg.ForeColor = Color.FromArgb(170, 170, 175);
-            lblMsg.Location = new Point(24, 52);
-            lblMsg.Size = new Size(382, 60);
-            dlg.Controls.Add(lblMsg);
-
-            Button btnOk = new Button();
-            btnOk.Text = buttonText;
-            btnOk.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
-            btnOk.ForeColor = Color.White;
-            btnOk.BackColor = Color.FromArgb(24, 24, 28);
-            btnOk.FlatStyle = FlatStyle.Flat;
-            btnOk.FlatAppearance.BorderColor = Color.FromArgb(48, 48, 56);
-            btnOk.FlatAppearance.BorderSize = 1;
-            btnOk.Location = new Point(140, 124);
-            btnOk.Size = new Size(150, 38);
-            btnOk.Cursor = Cursors.Hand;
-            btnOk.TabStop = false;
-            btnOk.MouseEnter += delegate { btnOk.BackColor = Color.FromArgb(36, 36, 42); btnOk.FlatAppearance.BorderColor = Color.FromArgb(70, 70, 80); };
-            btnOk.MouseLeave += delegate { btnOk.BackColor = Color.FromArgb(24, 24, 28); btnOk.FlatAppearance.BorderColor = Color.FromArgb(48, 48, 56); };
-            btnOk.Click += delegate { dlg.Close(); };
-            dlg.Controls.Add(btnOk);
-
-            dlg.AcceptButton = btnOk;
-            dlg.CancelButton = btnOk;
-
-            dlg.ShowDialog(this);
-        }
-    }
-
-    private bool ShowDarkConfirm(string title, string message, string yesText = "Yes", string noText = "No")
-    {
-        if (this.InvokeRequired)
-        {
-            return (bool)this.Invoke(new Func<bool>(() => ShowDarkConfirm(title, message, yesText, noText)));
-        }
-
-        bool result = false;
-        using (Form dlg = new Form())
-        {
-            dlg.Text = title;
-            dlg.ClientSize = new Size(430, 185);
-            dlg.StartPosition = FormStartPosition.CenterParent;
-            dlg.FormBorderStyle = FormBorderStyle.FixedDialog;
-            dlg.MaximizeBox = false;
-            dlg.MinimizeBox = false;
-            dlg.ShowInTaskbar = false;
-            dlg.BackColor = Color.FromArgb(8, 8, 10);
-            dlg.ForeColor = Color.FromArgb(220, 220, 225);
-            try { dlg.Icon = this.Icon; } catch {}
-
-            dlg.HandleCreated += delegate {
-                ApplyDwmDarkTo(dlg.Handle);
-            };
-
-            dlg.Paint += delegate(object s, PaintEventArgs pe) {
-                ControlPaint.DrawBorder(pe.Graphics, dlg.ClientRectangle, Color.FromArgb(36, 36, 44), ButtonBorderStyle.Solid);
-            };
-
-            Label lblBadge = new Label();
-            lblBadge.Font = new Font("Segoe UI", 12f, FontStyle.Bold);
-            lblBadge.Size = new Size(24, 24);
-            lblBadge.Location = new Point(22, 18);
-            lblBadge.TextAlign = ContentAlignment.MiddleCenter;
-            lblBadge.Text = "?";
-            lblBadge.ForeColor = Color.FromArgb(140, 140, 220);
-            dlg.Controls.Add(lblBadge);
-
-            Label lblTitle = new Label();
-            lblTitle.Text = title;
-            lblTitle.Font = new Font("Segoe UI", 11.5f, FontStyle.Bold);
-            lblTitle.ForeColor = Color.White;
-            lblTitle.Location = new Point(50, 19);
-            lblTitle.AutoSize = true;
-            dlg.Controls.Add(lblTitle);
-
-            Label lblMsg = new Label();
-            lblMsg.Text = message;
-            lblMsg.Font = new Font("Segoe UI", 9.5f);
-            lblMsg.ForeColor = Color.FromArgb(170, 170, 175);
-            lblMsg.Location = new Point(24, 52);
-            lblMsg.Size = new Size(382, 60);
-            dlg.Controls.Add(lblMsg);
-
-            Button btnYes = new Button();
-            btnYes.Text = yesText;
-            btnYes.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
-            btnYes.ForeColor = Color.White;
-            btnYes.BackColor = Color.FromArgb(32, 32, 38);
-            btnYes.FlatStyle = FlatStyle.Flat;
-            btnYes.FlatAppearance.BorderColor = Color.FromArgb(60, 60, 72);
-            btnYes.FlatAppearance.BorderSize = 1;
-            btnYes.Location = new Point(80, 124);
-            btnYes.Size = new Size(125, 38);
-            btnYes.Cursor = Cursors.Hand;
-            btnYes.TabStop = false;
-            btnYes.MouseEnter += delegate { btnYes.BackColor = Color.FromArgb(44, 44, 52); btnYes.FlatAppearance.BorderColor = Color.FromArgb(80, 80, 95); };
-            btnYes.MouseLeave += delegate { btnYes.BackColor = Color.FromArgb(32, 32, 38); btnYes.FlatAppearance.BorderColor = Color.FromArgb(60, 60, 72); };
-            btnYes.Click += delegate { result = true; dlg.Close(); };
-            dlg.Controls.Add(btnYes);
-
-            Button btnNo = new Button();
-            btnNo.Text = noText;
-            btnNo.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
-            btnNo.ForeColor = Color.FromArgb(160, 160, 170);
-            btnNo.BackColor = Color.FromArgb(14, 14, 18);
-            btnNo.FlatStyle = FlatStyle.Flat;
-            btnNo.FlatAppearance.BorderColor = Color.FromArgb(32, 32, 40);
-            btnNo.FlatAppearance.BorderSize = 1;
-            btnNo.Location = new Point(225, 124);
-            btnNo.Size = new Size(125, 38);
-            btnNo.Cursor = Cursors.Hand;
-            btnNo.TabStop = false;
-            btnNo.MouseEnter += delegate { btnNo.BackColor = Color.FromArgb(24, 24, 30); btnNo.FlatAppearance.BorderColor = Color.FromArgb(48, 48, 58); };
-            btnNo.MouseLeave += delegate { btnNo.BackColor = Color.FromArgb(14, 14, 18); btnNo.FlatAppearance.BorderColor = Color.FromArgb(32, 32, 40); };
-            btnNo.Click += delegate { result = false; dlg.Close(); };
-            dlg.Controls.Add(btnNo);
-
-            dlg.AcceptButton = btnYes;
-            dlg.CancelButton = btnNo;
-
-            dlg.ShowDialog(this);
-        }
-        return result;
-    }
-
-    private void ShowUpdateDialog(string newVersion, string changelog, string downloadUrl)
-    {
-        if (this.InvokeRequired)
-        {
-            this.BeginInvoke(new Action(() => ShowUpdateDialog(newVersion, changelog, downloadUrl)));
-            return;
-        }
-
-        Form dlg = new Form();
-        dlg.Text = "Update Available - Quiz & Earn Bot";
-        dlg.ClientSize = new Size(460, 280);
-        dlg.StartPosition = FormStartPosition.CenterParent;
-        dlg.FormBorderStyle = FormBorderStyle.FixedDialog;
-        dlg.MaximizeBox = false;
-        dlg.MinimizeBox = false;
-        dlg.ShowInTaskbar = false;
-        dlg.BackColor = Color.FromArgb(8, 8, 10);
-        dlg.ForeColor = Color.FromArgb(220, 220, 225);
-        dlg.AutoScroll = false;
-        try { dlg.Icon = this.Icon; } catch {}
-        dlg.HandleCreated += delegate {
-            ApplyDwmDarkTo(dlg.Handle);
-        };
-
-        dlg.Paint += delegate(object s, PaintEventArgs pe) {
-            ControlPaint.DrawBorder(pe.Graphics, dlg.ClientRectangle, Color.FromArgb(32, 32, 38), ButtonBorderStyle.Solid);
-        };
-
-        Label lblTitle = new Label();
-        lblTitle.Text = string.Format("New Update Available! (v{0})", newVersion);
-        lblTitle.Font = new Font("Segoe UI", 12.5f, FontStyle.Bold);
-        lblTitle.ForeColor = Color.White;
-        lblTitle.Location = new Point(22, 16);
-        lblTitle.AutoSize = true;
-        dlg.Controls.Add(lblTitle);
-
-        Label lblSub = new Label();
-        lblSub.Text = "A new version of Quiz & Earn Bot is ready to install:";
-        lblSub.Font = new Font("Segoe UI", 8.5f);
-        lblSub.ForeColor = Color.FromArgb(140, 140, 145);
-        lblSub.Location = new Point(24, 44);
-        lblSub.AutoSize = true;
-        dlg.Controls.Add(lblSub);
-
-        TextBox txtNotes = new TextBox();
-        txtNotes.Multiline = true;
-        txtNotes.ReadOnly = true;
-        txtNotes.ScrollBars = ScrollBars.None;
-        txtNotes.BackColor = Color.Black;
-        txtNotes.ForeColor = Color.FromArgb(180, 180, 185);
-        txtNotes.Font = new Font("Consolas", 8.5f);
-        txtNotes.BorderStyle = BorderStyle.FixedSingle;
-        txtNotes.Location = new Point(22, 68);
-        txtNotes.Size = new Size(416, 75);
-        txtNotes.Text = string.IsNullOrEmpty(changelog) ? "• General performance enhancements and bug fixes." : changelog;
-        dlg.Controls.Add(txtNotes);
-
-        Label lblStatus = new Label();
-        lblStatus.Text = "";
-        lblStatus.Font = new Font("Segoe UI", 8.5f);
-        lblStatus.ForeColor = Color.FromArgb(160, 160, 165);
-        lblStatus.Location = new Point(22, 150);
-        lblStatus.Size = new Size(416, 20);
-        dlg.Controls.Add(lblStatus);
-
-        ProgressBar prg = new ProgressBar();
-        prg.Location = new Point(22, 174);
-        prg.Size = new Size(416, 6);
-        prg.Visible = false;
-        dlg.Controls.Add(prg);
-
-        Button btnUpdate = new Button();
-        btnUpdate.Text = "Update Now";
-        btnUpdate.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
-        btnUpdate.ForeColor = Color.White;
-        btnUpdate.BackColor = Color.FromArgb(24, 24, 28);
-        btnUpdate.FlatStyle = FlatStyle.Flat;
-        btnUpdate.FlatAppearance.BorderColor = Color.FromArgb(48, 48, 56);
-        btnUpdate.FlatAppearance.BorderSize = 1;
-        btnUpdate.Location = new Point(22, 210);
-        btnUpdate.Size = new Size(202, 44);
-        btnUpdate.Cursor = Cursors.Hand;
-        dlg.Controls.Add(btnUpdate);
-
-        Button btnLater = new Button();
-        btnLater.Text = "Later";
-        btnLater.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
-        btnLater.ForeColor = Color.FromArgb(135, 135, 140);
-        btnLater.BackColor = Color.FromArgb(10, 10, 12);
-        btnLater.FlatStyle = FlatStyle.Flat;
-        btnLater.FlatAppearance.BorderColor = Color.FromArgb(24, 24, 28);
-        btnLater.FlatAppearance.BorderSize = 1;
-        btnLater.Location = new Point(236, 210);
-        btnLater.Size = new Size(202, 44);
-        btnLater.Cursor = Cursors.Hand;
-        btnLater.Click += delegate {
-            isUpdateIgnored = true;
-            dlg.Close();
-        };
-        dlg.Controls.Add(btnLater);
-
-        bool isDownloaded = false;
-        string updaterBat = "";
-
-        btnUpdate.Click += delegate {
-            if (isDownloaded && !string.IsNullOrEmpty(updaterBat))
-            {
-                try
-                {
-                    ProcessStartInfo psi = new ProcessStartInfo();
-                    psi.FileName = updaterBat;
-                    psi.CreateNoWindow = true;
-                    psi.UseShellExecute = false;
-                    psi.WindowStyle = ProcessWindowStyle.Hidden;
-                    Process.Start(psi);
-                    Application.Exit();
-                }
-                catch (Exception ex)
-                {
-                    ShowDarkAlert("Update Error", "Could not launch updater: " + ex.Message);
-                }
-                return;
-            }
-
-            btnLater.Visible = false;
-            btnUpdate.Enabled = false;
-            btnUpdate.Location = new Point(22, 210);
-            btnUpdate.Size = new Size(416, 44);
-            btnUpdate.Text = "Downloading update...";
-            prg.Visible = true;
-            prg.Value = 0;
-            lblStatus.Text = "Connecting to update server...";
-
-            Thread downloadThread = new Thread(new ThreadStart(delegate {
-                try
-                {
-                    System.Net.ServicePointManager.SecurityProtocol = (System.Net.SecurityProtocolType)3072;
-                    string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-                    string tempExe = Path.Combine(baseDir, "QuizEarnBot_update.exe");
-                    string finalExe = Path.Combine(baseDir, "QuizEarnBot.exe");
-                    updaterBat = Path.Combine(baseDir, "apply_update.bat");
-
-                    using (System.Net.WebClient wc = new System.Net.WebClient())
-                    {
-                        wc.Headers["User-Agent"] = "QuizEarnBot/" + APP_VERSION;
-                        wc.DownloadProgressChanged += (s, pe) => {
-                            dlg.BeginInvoke(new Action(() => {
-                                prg.Value = pe.ProgressPercentage;
-                                lblStatus.Text = string.Format("Downloading update... {0}%", pe.ProgressPercentage);
-                                btnUpdate.Text = string.Format("Downloading {0}%...", pe.ProgressPercentage);
-                            }));
-                        };
-                        wc.DownloadFile(downloadUrl, tempExe);
-                    }
-
-                    FileInfo fi = new FileInfo(tempExe);
-                    if (!fi.Exists || fi.Length < 10240)
-                    {
-                        throw new Exception("Downloaded file is incomplete or invalid.");
-                    }
-
-                    string batScript = string.Format(
-                        "@echo off\r\n" +
-                        "timeout /t 1 /nobreak > nul\r\n" +
-                        "copy /y \"{0}\" \"{1}\" > nul\r\n" +
-                        "del \"{0}\" > nul\r\n" +
-                        "start \"\" \"{1}\"\r\n" +
-                        "del \"%~f0\" > nul\r\n",
-                        tempExe, finalExe
-                    );
-                    File.WriteAllText(updaterBat, batScript);
-
-                    isDownloaded = true;
-
-                    dlg.BeginInvoke(new Action(() => {
-                        prg.Value = 100;
-                        lblStatus.Text = "✓ Update downloaded successfully! Restart the app to apply.";
-                        lblStatus.ForeColor = Color.FromArgb(235, 235, 240);
-                        btnUpdate.Text = "Restart App Now";
-                        btnUpdate.BackColor = Color.FromArgb(32, 32, 38);
-                        btnUpdate.FlatAppearance.BorderColor = Color.FromArgb(70, 70, 80);
-                        btnUpdate.Enabled = true;
-                    }));
-                }
-                catch (Exception ex)
-                {
-                    dlg.BeginInvoke(new Action(() => {
-                        lblStatus.Text = "Download failed: " + ex.Message;
-                        lblStatus.ForeColor = Color.FromArgb(220, 110, 110);
-                        btnUpdate.Text = "Retry Download";
-                        btnUpdate.Enabled = true;
-                        btnLater.Visible = true;
-                        btnUpdate.Size = new Size(202, 44);
-                        btnLater.Location = new Point(236, 210);
-                        btnLater.Size = new Size(202, 44);
-                    }));
-                }
-            }));
-            downloadThread.IsBackground = true;
-            downloadThread.Start();
-        };
-
-        dlg.ShowDialog(this);
-        dlg.Dispose();
-    }
-
-    private void CheckForUpdatesAsync(bool manualCheck)
-    {
-        Thread t = new Thread(new ThreadStart(delegate {
-            try
-            {
-                if (manualCheck)
-                {
-                    SafeBeginInvoke(new Action(() => {
-                        if (lblUpdateStatus != null) lblUpdateStatus.Text = "Checking update server...";
-                        if (btnCheckUpdate != null) btnCheckUpdate.Enabled = false;
-                    }));
+                    histJson.Append("\"" + claimsHistory[i].Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"");
                 }
 
-                System.Net.ServicePointManager.SecurityProtocol = (System.Net.SecurityProtocolType)3072;
+                string json = string.Format(
+                    "{{\n  \"todayDate\": \"{0}\",\n  \"todaySolved\": {1},\n  \"totalSolved\": {2},\n  \"gemsEarned\": {3},\n  \"adsClosed\": {4},\n  \"todayCoinsClaimed\": {5},\n  \"totalCoinsClaimed\": {6},\n  \"today25GemsCount\": {7},\n  \"total25GemsCount\": {8},\n  \"todayOffersClaimed\": {9},\n  \"totalOffersClaimed\": {10},\n  \"autoCheckUpdates\": {11},\n  \"autoRecoverBlueStacks\": {12},\n  \"autoMuteEnabled\": {13},\n  \"turboSpeedEnabled\": {14},\n  \"targetAppPackage\": \"{15}\",\n  \"claimsHistory\": [{16}]\n}}",
+                    DateTime.Now.ToString("yyyy-MM-dd"), todaySolved, totalGems + todaySolved, gemsEarned, adsClosed,
+                    todayCoinsClaimed, totalCoinsClaimed, today25GemsCount, total25GemsCount, todayOffersClaimed, totalOffersClaimed,
+                    autoCheckUpdates.ToString().ToLower(), autoRecoverBlueStacks.ToString().ToLower(),
+                    autoMuteEnabled.ToString().ToLower(), turboSpeedEnabled.ToString().ToLower(),
+                    GetTargetPackage(), histJson.ToString()
+                );
 
-                if (string.IsNullOrEmpty(updateFeedUrl) || updateFeedUrl.Contains("raw.githubusercontent.com/THESHMIL/"))
-                {
-                    updateFeedUrl = "https://raw.githubusercontent.com/THESHMIL0/QuizEarnBot/main/version.json";
-                }
-
-                string json = "";
-                using (System.Net.WebClient wc = new System.Net.WebClient())
-                {
-                    wc.Headers["User-Agent"] = "QuizEarnBot/" + APP_VERSION;
-                    wc.Headers["Cache-Control"] = "no-cache";
-                    json = wc.DownloadString(updateFeedUrl);
-                }
-
-                if (!string.IsNullOrEmpty(json))
-                {
-                    Match mv = Regex.Match(json, @"""version"":\s*""([^""]+)""");
-                    if (mv.Success) remoteVersion = mv.Groups[1].Value.Trim();
-
-                    Match mvc = Regex.Match(json, @"""(?:versionCode|version_code)"":\s*(\d+)");
-                    if (mvc.Success) remoteVersionCode = int.Parse(mvc.Groups[1].Value);
-
-                    Match murl = Regex.Match(json, @"""(?:downloadUrl|download_url)"":\s*""([^""]+)""");
-                    if (murl.Success) remoteDownloadUrl = murl.Groups[1].Value.Trim();
-
-                    Match mlog = Regex.Match(json, @"""changelog"":\s*""((?:\\.|[^""\\])*)""");
-                    if (mlog.Success) remoteChangelog = mlog.Groups[1].Value.Replace("\\n", "\n").Replace("\\\"", "\"");
-
-                    bool isNewerVersion = (remoteVersionCode > APP_VERSION_CODE) || 
-                                          (!string.IsNullOrEmpty(remoteVersion) && remoteVersion != APP_VERSION && remoteVersionCode >= APP_VERSION_CODE);
-
-                    if (isNewerVersion && !string.IsNullOrEmpty(remoteDownloadUrl))
-                    {
-                        isUpdateAvailable = true;
-
-                        SafeBeginInvoke(new Action(() => {
-                            if (lblUpdateStatus != null)
-                            {
-                                lblUpdateStatus.Text = string.Format("New Version v{0} available!", remoteVersion);
-                                lblUpdateStatus.ForeColor = Color.FromArgb(235, 235, 240);
-                            }
-                            if (btnNavSettings != null)
-                            {
-                                btnNavSettings.Text = "SETTINGS ✦";
-                            }
-                            if (btnCheckUpdate != null) btnCheckUpdate.Enabled = true;
-
-                            Log(string.Format("[Update] New version v{0} detected! Opening update prompt...", remoteVersion));
-                            ShowUpdateDialog(remoteVersion, remoteChangelog, remoteDownloadUrl);
-                        }));
-                        return;
-                    }
-                }
-
-                // Up to date
-                isUpdateAvailable = false;
-                SafeBeginInvoke(new Action(() => {
-                    if (lblUpdateStatus != null)
-                    {
-                        lblUpdateStatus.Text = string.Format("Status: Up to date (v{0}).", APP_VERSION);
-                        lblUpdateStatus.ForeColor = Color.FromArgb(140, 140, 145);
-                    }
-                    if (btnNavSettings != null) btnNavSettings.Text = "SETTINGS";
-                    if (btnCheckUpdate != null) btnCheckUpdate.Enabled = true;
-                    if (manualCheck)
-                    {
-                        Log("[Update] App is up to date (v" + APP_VERSION + ").");
-                        ShowDarkAlert("Quiz & Earn Bot - Up to Date", "You are already running the latest version of Quiz & Earn Bot (v" + APP_VERSION + ")!\n\nNo updates are needed.");
-                    }
-                }));
+                File.WriteAllText(tmpPath, json, Encoding.UTF8);
+                File.Copy(tmpPath, path, true);
+                try { File.Delete(tmpPath); } catch { }
             }
-            catch
-            {
-                SafeBeginInvoke(new Action(() => {
-                    if (lblUpdateStatus != null)
-                    {
-                        lblUpdateStatus.Text = "Status: Up to date (offline mode).";
-                        lblUpdateStatus.ForeColor = Color.FromArgb(135, 135, 140);
-                    }
-                    if (btnCheckUpdate != null) btnCheckUpdate.Enabled = true;
-                    if (manualCheck)
-                    {
-                        ShowDarkAlert("Update Check", "Could not reach the update server.\nPlease check your internet connection.");
-                    }
-                }));
-            }
-        }));
-        t.IsBackground = true;
-        t.Start();
+            catch { }
+        }
     }
 
     private void AddClaimHistory(string text)
     {
-        try
+        lock (statsLock)
         {
-            string entry = string.Format("[{0}] {1}", DateTime.Now.ToString("hh:mm tt"), text);
-            if (claimsHistory == null) claimsHistory = new List<string>();
+            string entry = string.Format("[{0:hh:mm tt}] {1}", DateTime.Now, text);
             claimsHistory.Insert(0, entry);
-            if (claimsHistory.Count > 100)
-            {
-                claimsHistory.RemoveRange(100, claimsHistory.Count - 100);
-            }
-            SaveStatsToFile();
-            UpdateDataDashboard();
+            if (claimsHistory.Count > 100) claimsHistory.RemoveRange(100, claimsHistory.Count - 100);
         }
-        catch {}
-    }
-
-    private void UpdateDataDashboard()
-    {
-        if (this.InvokeRequired)
-        {
-            this.BeginInvoke(new Action(UpdateDataDashboard));
-            return;
-        }
-
-        if (lblDataCoinsVal != null)
-            lblDataCoinsVal.Text = string.Format("+{0:N0} Coins", todayCoinsClaimed);
-
-        if (lblData25GemsVal != null)
-            lblData25GemsVal.Text = string.Format("{0} times", today25GemsCount);
-
-        if (lblData25GemsSub != null)
-            lblData25GemsSub.Text = string.Format("{0} Gems earned from quizzes today", gemsEarned);
-
-        if (lblDataOffersVal != null)
-            lblDataOffersVal.Text = string.Format("{0} claims", todayOffersClaimed);
-
-        if (lblDataQuizzesVal != null)
-            lblDataQuizzesVal.Text = string.Format("{0} Solved | {1} Ads", todaySolved, adsClosed);
-
-        if (lblLifetimeCoins != null)
-            lblLifetimeCoins.Text = string.Format("{0:N0} Coins", totalCoinsClaimed);
-
-        if (lblLifetime25Gems != null)
-            lblLifetime25Gems.Text = string.Format("{0} times", total25GemsCount);
-
-        if (lblLifetimeQuizzes != null)
-            lblLifetimeQuizzes.Text = string.Format("{0:N0} Solved", (totalGems + todaySolved));
-
-        if (lblDataDate != null)
-            lblDataDate.Text = "Today: " + DateTime.Now.ToString("dddd, MMM d, yyyy");
-
-        if (txtClaimsLog != null)
-        {
-            txtClaimsLog.Clear();
-            if (claimsHistory == null || claimsHistory.Count == 0)
-            {
-                txtClaimsLog.SelectionColor = Color.FromArgb(90, 90, 95);
-                txtClaimsLog.AppendText("No claims recorded yet today.\nStart the 1-Click Auto-Offer Claimer or Quiz Solver to see live earnings!");
-            }
-            else
-            {
-                for (int i = 0; i < claimsHistory.Count; i++)
-                {
-                    string item = claimsHistory[i];
-                    if (item.Contains("Coins") || item.Contains("+") || item.Contains("25 Gem") || item.Contains("Milestone"))
-                        txtClaimsLog.SelectionColor = Color.FromArgb(220, 220, 225);
-                    else
-                        txtClaimsLog.SelectionColor = Color.FromArgb(140, 140, 145);
-
-                    txtClaimsLog.AppendText(item + "\n");
-                }
-            }
-        }
+        SaveStatsToFile();
+        UpdateDataDashboard();
     }
 
     private void UpdateDashboard(string lastCaptchaDigit)
     {
-        if (this.InvokeRequired)
+        SafeBeginInvoke(delegate
         {
-            SafeBeginInvoke(new Action(delegate { UpdateDashboard(lastCaptchaDigit); }));
-            return;
-        }
+            lblTodaySolved.Text = string.Format("{0}\nSolved", todaySolved);
+            lblGems.Text = string.Format("{0}/25\nOffer Gems", currentOfferGems);
+            lblCaptcha.Text = string.Format("{0}\nLast Captcha", lastCaptchaDigit);
+            lblStats.Text = string.Format("{0}\nAds Closed", adsClosed);
+            UpdateDataDashboard();
+        });
+    }
 
-        lblTodaySolved.Text = string.Format("{0}\nToday Solved", todaySolved);
-        lblGems.Text = string.Format("{0}/25\nOffer Progress", currentOfferGems);
-        lblCaptcha.Text = string.Format("{0}\nLast Captcha", lastCaptchaDigit);
-        lblStats.Text = string.Format("{0}\nAds Watched", adsClosed);
+    private void UpdateDataDashboard()
+    {
+        SafeBeginInvoke(delegate
+        {
+            lblDataCoinsVal.Text = string.Format("+{0:N0} Coins", todayCoinsClaimed);
+            lblData25GemsVal.Text = string.Format("{0} times", today25GemsCount);
+            lblData25GemsSub.Text = string.Format("{0} Gems earned today", gemsEarned);
+            lblDataOffersVal.Text = string.Format("{0} claims", todayOffersClaimed);
+            lblDataQuizzesVal.Text = string.Format("{0} Solved | {1} Ads", todaySolved, adsClosed);
+            lblLifetimeCoins.Text = string.Format("Lifetime: {0:N0} Coins", totalCoinsClaimed);
+            lblLifetime25Gems.Text = string.Format("Cycles: {0}", total25GemsCount);
+            lblLifetimeQuizzes.Text = string.Format("Solved: {0:N0}", totalGems + todaySolved);
+            lblDataDate.Text = "Today: " + DateTime.Now.ToString("dddd, MMM d, yyyy");
 
-        UpdateDataDashboard();
+            if (txtClaimsLog != null)
+            {
+                txtClaimsLog.Clear();
+                List<string> snapshot;
+                lock (statsLock) { snapshot = new List<string>(claimsHistory); }
+                if (snapshot.Count == 0) txtClaimsLog.AppendText("No claims recorded yet today.");
+                else foreach (string item in snapshot) txtClaimsLog.AppendText(item + "\n");
+            }
+        });
     }
 
     private void UpdatePortLabel(string text)
     {
-        if (this.InvokeRequired)
-        {
-            SafeBeginInvoke(new Action(delegate { UpdatePortLabel(text); }));
-            return;
-        }
-        if (text.StartsWith("Connected:") || text.StartsWith("ADB:") || text.StartsWith("Waiting") || text.StartsWith("Device") || text.StartsWith("Allow"))
-        {
-            lblPort.Text = text;
-        }
-        else
-        {
-            lblPort.Text = "ADB: " + text;
-        }
+        SafeBeginInvoke(delegate { lblPort.Text = text; });
     }
 
     private string RunAdbDevice(string deviceId, string arguments)
@@ -2904,50 +1051,53 @@ public class QuizEarnApp : Form
 
     private string RunAdb(string arguments)
     {
+        return RunAdbInternal(arguments, 0);
+    }
+
+    private string RunAdbInternal(string arguments, int retryDepth)
+    {
         try
         {
-            Process p = new Process();
-            p.StartInfo.FileName = adbExe;
-            bool isGlobalCmd = string.IsNullOrEmpty(adbPort) || 
-                               arguments.StartsWith("-s ") ||
-                               arguments.StartsWith("devices") || 
-                               arguments.StartsWith("connect") || 
-                               arguments.StartsWith("disconnect") || 
-                               arguments.StartsWith("reconnect") || 
-                               arguments.StartsWith("kill-server") || 
-                               arguments.StartsWith("start-server");
-            p.StartInfo.Arguments = isGlobalCmd ? arguments : string.Format("-s {0} {1}", adbPort, arguments);
-            p.StartInfo.UseShellExecute = false;
-            p.StartInfo.RedirectStandardOutput = true;
-            p.StartInfo.RedirectStandardError = true;
-            p.StartInfo.CreateNoWindow = true;
-
-            StringBuilder sb = new StringBuilder();
-            p.OutputDataReceived += delegate(object sender, DataReceivedEventArgs e) {
-                if (e.Data != null) sb.AppendLine(e.Data);
-            };
-            p.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs e) {
-                if (e.Data != null) sb.AppendLine(e.Data);
-            };
-
-            p.Start();
-            p.BeginOutputReadLine();
-            p.BeginErrorReadLine();
-            bool exited = p.WaitForExit(6000);
-            if (!exited)
+            using (Process p = new Process())
             {
-                try { p.Kill(); } catch {}
-            }
-            string res = sb.ToString();
-            if ((res.Contains("not found") || res.Contains("offline") || res.Contains("error: device")) && !isGlobalCmd)
-            {
-                EnsureConnected();
-                if (!string.IsNullOrEmpty(adbPort))
+                p.StartInfo.FileName = adbExe;
+                bool isGlobalCmd = string.IsNullOrEmpty(adbPort) || arguments.StartsWith("-s ") ||
+                    arguments.StartsWith("devices") || arguments.StartsWith("connect") ||
+                    arguments.StartsWith("disconnect") || arguments.StartsWith("kill-server") ||
+                    arguments.StartsWith("start-server");
+                p.StartInfo.Arguments = isGlobalCmd ? arguments : string.Format("-s {0} {1}", adbPort, arguments);
+                p.StartInfo.UseShellExecute = false;
+                p.StartInfo.RedirectStandardOutput = true;
+                p.StartInfo.RedirectStandardError = true;
+                p.StartInfo.CreateNoWindow = true;
+
+                StringBuilder sb = new StringBuilder();
+                p.OutputDataReceived += (s, e) => { if (e.Data != null) sb.AppendLine(e.Data); };
+                p.ErrorDataReceived += (s, e) => { if (e.Data != null) sb.AppendLine(e.Data); };
+
+                p.Start();
+                p.BeginOutputReadLine();
+                p.BeginErrorReadLine();
+
+                bool exited = p.WaitForExit(6000);
+                if (!exited)
                 {
-                    return RunAdb(string.Format("-s {0} {1}", adbPort, arguments));
+                    try { p.Kill(); } catch { }
+                    try { p.WaitForExit(500); } catch { }
                 }
+                else
+                {
+                    p.WaitForExit();
+                }
+
+                string res = sb.ToString();
+                if (retryDepth == 0 && !isGlobalCmd && (res.Contains("not found") || res.Contains("offline") || res.Contains("error: device")))
+                {
+                    EnsureConnected();
+                    if (!string.IsNullOrEmpty(adbPort)) return RunAdbInternal(arguments, 1);
+                }
+                return res;
             }
-            return res;
         }
         catch { return ""; }
     }
@@ -2962,125 +1112,132 @@ public class QuizEarnApp : Form
             {
                 int w = int.Parse(m.Groups[1].Value);
                 int h = int.Parse(m.Groups[2].Value);
-                if (w > 0 && h > 0)
+                if (w > 0 && h > 0 && (devWidth != w || devHeight != h))
                 {
-                    if (devWidth != w || devHeight != h)
-                    {
-                        devWidth = w;
-                        devHeight = h;
-                        Log(string.Format("[Screen] Device resolution detected: {0}x{1}", devWidth, devHeight));
-                    }
+                    devWidth = w; devHeight = h;
+                    Log(string.Format("[Screen] Resolution detected: {0}x{1}", devWidth, devHeight));
                 }
             }
         }
-        catch {}
+        catch { }
     }
 
     private void AdbTap(int x, int y)
     {
-        RunAdb(string.Format("shell input tap {0} {1}", x, y));
+        RunAdb(string.Format("shell input tap {0} {1}", Math.Max(1, Math.Min(devWidth - 1, x)), Math.Max(1, Math.Min(devHeight - 1, y))));
     }
 
     private void AdbTapRef(int refX, int refY)
     {
-        if (devWidth <= 0 || devHeight <= 0 || (devWidth == 900 && devHeight == 1600))
-        {
-            AdbTap(refX, refY);
-            return;
-        }
-        int actualX = (int)Math.Round((double)refX * devWidth / 900.0);
-        int actualY = (int)Math.Round((double)refY * devHeight / 1600.0);
+        int actualX = (devWidth == 900) ? refX : (int)Math.Round((double)refX * devWidth / 900.0);
+        int actualY = (devHeight == 1600) ? refY : (int)Math.Round((double)refY * devHeight / 1600.0);
         AdbTap(actualX, actualY);
     }
 
-    private void AdbKey(int keyCode)
+    private void AdbSwipeRef(int x1, int y1, int x2, int y2, int durationMs)
     {
-        RunAdb(string.Format("shell input keyevent {0}", keyCode));
+        int sx1 = (int)Math.Round((double)x1 * devWidth / 900.0);
+        int sy1 = (int)Math.Round((double)y1 * devHeight / 1600.0);
+        int sx2 = (int)Math.Round((double)x2 * devWidth / 900.0);
+        int sy2 = (int)Math.Round((double)y2 * devHeight / 1600.0);
+        RunAdb(string.Format("shell input swipe {0} {1} {2} {3} {4}", sx1, sy1, sx2, sy2, durationMs));
     }
 
-    private static bool IsTcpPortOpen(int port)
+    private void AdbKey(int keyCode) { RunAdb(string.Format("shell input keyevent {0}", keyCode)); }
+
+    private int GetDeviceSdkInt(string deviceId)
     {
-        try
+        string raw = RunAdbDevice(deviceId, "shell getprop ro.build.version.sdk").Trim();
+        int sdk; return int.TryParse(raw, out sdk) ? sdk : 30;
+    }
+
+    private void StartOrStopOverlayService(string deviceId, string action)
+    {
+        int sdk = GetDeviceSdkInt(deviceId);
+        string cmd = (sdk >= 26 && action == "START")
+            ? string.Format("shell am start-foreground-service -a {0}.{1} {2}", PKG_BOT_ASSISTANT, action, OVERLAY_COMPONENT)
+            : string.Format("shell am startservice -a {0}.{1} {2}", PKG_BOT_ASSISTANT, action, OVERLAY_COMPONENT);
+        RunAdbDevice(deviceId, cmd);
+    }
+
+    private void EnsureAccessibilityEnabled(string deviceId, string currentServices)
+    {
+        string cur = (currentServices ?? "").Trim();
+        if (cur == "null") cur = "";
+        if (cur.Contains(A11Y_COMPONENT)) return;
+
+        string next = string.IsNullOrEmpty(cur) ? A11Y_COMPONENT : (cur + ":" + A11Y_COMPONENT);
+        RunAdbDevice(deviceId, string.Format("shell settings put secure enabled_accessibility_services \"{0}\"", next));
+        RunAdbDevice(deviceId, "shell settings put secure accessibility_enabled 1");
+    }
+
+    private void LaunchTargetAppOnDevice(string deviceId)
+    {
+        string pkg = GetTargetPackage();
+        RunAdbDevice(deviceId, string.Format("shell monkey -p {0} -c android.intent.category.LAUNCHER 1", pkg));
+    }
+
+    private void ForceStopTargetApp(string deviceId, string pkg)
+    {
+        RunAdbDevice(deviceId, "shell input keyevent 3");
+        Thread.Sleep(250);
+        string suStop = RunAdbDevice(deviceId, string.Format("shell su -c \"am force-stop {0}\"", pkg));
+        if (suStop.Contains("not found") || suStop.Contains("Permission denied"))
         {
-            using (var tcp = new TcpClient())
+            RunAdbDevice(deviceId, string.Format("shell am force-stop {0}", pkg));
+        }
+        RunAdbDevice(deviceId, string.Format("shell am kill {0}", pkg));
+    }
+
+    private List<string> GetAllConnectedAdbDevices()
+    {
+        List<string> result = new List<string>();
+        string raw = RunAdb("devices");
+        foreach (string line in raw.Split('\n'))
+        {
+            string tr = line.Trim();
+            if (string.IsNullOrEmpty(tr) || tr.StartsWith("List of") || tr.StartsWith("*")) continue;
+            string[] parts = tr.Split(new char[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length >= 2 && parts[1].Equals("device", StringComparison.OrdinalIgnoreCase) && !result.Contains(parts[0]))
             {
-                var ar = tcp.BeginConnect("127.0.0.1", port, null, null);
-                bool ok = ar.AsyncWaitHandle.WaitOne(20);
-                if (ok)
-                {
-                    tcp.EndConnect(ar);
-                    return true;
-                }
+                result.Add(parts[0]);
             }
         }
-        catch {}
-        return false;
+        return result;
     }
 
-    private List<string> DiscoverUniversalAdbPorts()
+    private bool EnsureConnected()
     {
-        List<string> candidatePorts = new List<string>();
-
-        // 1. BlueStacks 5 & 4 bluestacks.conf files across drives
-        string[] confCandidates = new string[]
+        List<string> connected = GetAllConnectedAdbDevices();
+        string chosen = connected.FirstOrDefault(id => IsEmulatorDevice(id)) ?? connected.FirstOrDefault();
+        if (!string.IsNullOrEmpty(chosen))
         {
-            @"C:\ProgramData\BlueStacks_nxt\bluestacks.conf",
-            @"D:\ProgramData\BlueStacks_nxt\bluestacks.conf",
-            @"E:\ProgramData\BlueStacks_nxt\bluestacks.conf",
-            @"C:\ProgramData\BlueStacks\bluestacks.conf",
-            @"D:\ProgramData\BlueStacks\bluestacks.conf"
-        };
+            adbPort = chosen;
+            UpdatePortLabel((IsEmulatorDevice(chosen) ? "Emulator: " : "Phone: ") + chosen);
+            UpdateScreenResolution();
+            return true;
+        }
 
-        foreach (string conf in confCandidates)
+        foreach (string port in DiscoverUniversalAdbPorts())
         {
-            try
+            if (port.StartsWith("127.0.0.1:"))
             {
-                if (File.Exists(conf))
+                string res = RunAdb("connect " + port);
+                if (res.Contains("connected to") || res.Contains("already connected"))
                 {
-                    string[] lines = File.ReadAllLines(conf);
-                    foreach (string line in lines)
+                    if (RunAdbDevice(port, "get-state").Trim().Equals("device", StringComparison.OrdinalIgnoreCase))
                     {
-                        Match m = Regex.Match(line, @"(?:status\.adb_port|adb_port)=""(\d+)""");
-                        if (m.Success)
-                        {
-                            string p = "127.0.0.1:" + m.Groups[1].Value;
-                            if (!candidatePorts.Contains(p)) candidatePorts.Add(p);
-                        }
+                        adbPort = port;
+                        UpdatePortLabel("Emulator: " + port);
+                        UpdateScreenResolution();
+                        return true;
                     }
                 }
             }
-            catch {}
         }
 
-        // 2. Comprehensive well-known emulator ADB port list (Probing listening ports)
-        int[] commonPorts = new int[]
-        {
-            5555, 5556, 5565, 5575, 5585, 5595, 5605, 5615, 5625, 5635, 5645, 5655, // BlueStacks, LDPlayer, Genymotion
-            62001, 62025, 62026, 59865, // NoxPlayer
-            21503, 21513, 21523,        // MEmu
-            7555, 16384, 16416,         // MuMu Player
-            58526                       // Windows Subsystem for Android (WSA)
-        };
-
-        foreach (int port in commonPorts)
-        {
-            string ep = "127.0.0.1:" + port;
-            if (!candidatePorts.Contains(ep) && IsTcpPortOpen(port))
-            {
-                candidatePorts.Add(ep);
-            }
-        }
-
-        // Fallback common ports (ONLY if port is actually open)
-        int[] fallbackPorts = new int[] { 5556, 5555, 5585, 5595 };
-        foreach (int port in fallbackPorts)
-        {
-            string ep = "127.0.0.1:" + port;
-            if (!candidatePorts.Contains(ep) && IsTcpPortOpen(port)) candidatePorts.Add(ep);
-        }
-        if (!candidatePorts.Contains("emulator-5554")) candidatePorts.Add("emulator-5554");
-
-        return candidatePorts;
+        UpdatePortLabel("No Device Connected");
+        return false;
     }
 
     private bool IsEmulatorDevice(string id)
@@ -3090,323 +1247,334 @@ public class QuizEarnApp : Form
         return lower.StartsWith("emulator-") || lower.StartsWith("127.0.0.1:") || lower.StartsWith("localhost:");
     }
 
-    private bool EnsureConnected()
+    private static bool IsTcpPortOpen(int port)
     {
-        // 1. Check existing connected devices (Emulators first, then any physical Android device)
-        string devOut = RunAdb("devices");
-        string physicalFallback = null;
-        foreach (string line in devOut.Split('\n'))
+        try
         {
-            string trimmed = line.Trim();
-            if (string.IsNullOrEmpty(trimmed) || trimmed.StartsWith("List of") || trimmed.StartsWith("*"))
-                continue;
-
-            string[] parts = trimmed.Split(new char[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length >= 2 && parts[1].ToLower() == "device")
+            using (var tcp = new TcpClient())
             {
-                string id = parts[0];
-                if (IsEmulatorDevice(id))
-                {
-                    string state = RunAdbDevice(id, "get-state").Trim();
-                    if (state.Equals("device", StringComparison.OrdinalIgnoreCase))
-                    {
-                        adbPort = id;
-                        UpdatePortLabel("Emulator: " + adbPort);
-                        UpdateScreenResolution();
-                        return true;
-                    }
-                }
-                else if (string.IsNullOrEmpty(physicalFallback))
-                {
-                    physicalFallback = id;
-                }
+                var ar = tcp.BeginConnect("127.0.0.1", port, null, null);
+                if (ar.AsyncWaitHandle.WaitOne(25)) { tcp.EndConnect(ar); return true; }
             }
         }
-
-        // 2. Discover and connect listening emulator ports
-        List<string> ports = DiscoverUniversalAdbPorts();
-        foreach (string port in ports)
-        {
-            if (port.StartsWith("127.0.0.1:"))
-            {
-                string res = RunAdb(string.Format("connect {0}", port));
-                if (res.Contains("connected to") || res.Contains("already connected"))
-                {
-                    string state = RunAdbDevice(port, "get-state").Trim();
-                    if (state.Equals("device", StringComparison.OrdinalIgnoreCase))
-                    {
-                        adbPort = port;
-                        UpdatePortLabel("Emulator: " + adbPort);
-                        UpdateScreenResolution();
-                        return true;
-                    }
-                }
-            }
-        }
-
-        // 3. Connect to physical phone if plugged in
-        if (!string.IsNullOrEmpty(physicalFallback))
-        {
-            string pstate = RunAdbDevice(physicalFallback, "get-state").Trim();
-            if (pstate.Equals("device", StringComparison.OrdinalIgnoreCase))
-            {
-                adbPort = physicalFallback;
-                UpdatePortLabel("Phone: " + adbPort);
-                UpdateScreenResolution();
-                Log(string.Format("[ADB] Connected to physical Android device: {0}", adbPort));
-                return true;
-            }
-        }
-
-        // 4. Final verification: accept ANY live device
-        devOut = RunAdb("devices");
-        foreach (string line in devOut.Split('\n'))
-        {
-            string trimmed = line.Trim();
-            if (string.IsNullOrEmpty(trimmed) || trimmed.StartsWith("List of") || trimmed.StartsWith("*"))
-                continue;
-
-            string[] parts = trimmed.Split(new char[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length >= 2 && parts[1].ToLower() == "device")
-            {
-                string state = RunAdbDevice(parts[0], "get-state").Trim();
-                if (state.Equals("device", StringComparison.OrdinalIgnoreCase))
-                {
-                    adbPort = parts[0];
-                    UpdatePortLabel("Device: " + adbPort);
-                    UpdateScreenResolution();
-                    Log(string.Format("[ADB] Connected to device: {0}", adbPort));
-                    return true;
-                }
-            }
-        }
-
-        UpdatePortLabel("No Device Connected");
-        Log("[ADB] No Android device or emulator detected. Connect phone via USB with USB Debugging enabled, or start BlueStacks.");
+        catch { }
         return false;
+    }
+
+    private List<string> DiscoverUniversalAdbPorts()
+    {
+        List<string> ports = new List<string>();
+        foreach (var inst in DiscoverBlueStacksInstances())
+        {
+            string ep = "127.0.0.1:" + inst.Port;
+            if (!ports.Contains(ep)) ports.Add(ep);
+        }
+        foreach (int p in new int[] { 5555, 5556, 5565, 5575, 5585, 5595, 5605, 5615, 62001, 21503, 7555, 16384, 58526 })
+        {
+            string ep = "127.0.0.1:" + p;
+            if (!ports.Contains(ep) && IsTcpPortOpen(p)) ports.Add(ep);
+        }
+        return ports;
+    }
+
+    private class BlueStacksInstance { public string InstanceName, DisplayName, Port; }
+
+    private List<BlueStacksInstance> DiscoverBlueStacksInstances()
+    {
+        List<BlueStacksInstance> list = new List<BlueStacksInstance>();
+        foreach (string confPath in new string[] {
+            @"C:\ProgramData\BlueStacks_nxt\bluestacks.conf",
+            @"D:\ProgramData\BlueStacks_nxt\bluestacks.conf",
+            @"E:\ProgramData\BlueStacks_nxt\bluestacks.conf",
+            @"C:\ProgramData\BlueStacks\bluestacks.conf" })
+        {
+            if (!File.Exists(confPath)) continue;
+            try
+            {
+                string conf = File.ReadAllText(confPath);
+                foreach (Match m in Regex.Matches(conf, @"bst\.instance\.([^.]+)\.(?:status\.)?adb_port=""(\d+)"""))
+                {
+                    string inst = m.Groups[1].Value.Trim();
+                    string port = m.Groups[2].Value.Trim();
+                    if (!list.Any(x => x.Port == port || x.InstanceName.Equals(inst, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        Match mName = Regex.Match(conf, @"bst\.instance\." + Regex.Escape(inst) + @"\.display_name=""([^""]+)""");
+                        list.Add(new BlueStacksInstance
+                        {
+                            InstanceName = inst,
+                            DisplayName = mName.Success ? mName.Groups[1].Value.Trim() : inst,
+                            Port = port
+                        });
+                    }
+                }
+                if (list.Count > 0) break;
+            }
+            catch { }
+        }
+        return list;
     }
 
     private bool IsBlueStacksProcessRunning()
     {
-        try
-        {
-            Process[] procs = Process.GetProcessesByName("HD-Player");
-            return procs != null && procs.Length > 0;
-        }
-        catch
-        {
-            return false;
-        }
+        try { return Process.GetProcessesByName("HD-Player").Length > 0; } catch { return false; }
     }
 
     private string DetectBlueStacks(out string instanceArg)
     {
         instanceArg = "";
-        string bstExe = "";
-
-        // 1. Check standard 64-bit and 32-bit Program Files
         string[] candidates = new string[] {
             @"C:\Program Files\BlueStacks_nxt\HD-Player.exe",
             @"C:\Program Files (x86)\BlueStacks_nxt\HD-Player.exe",
-            @"C:\Program Files\BlueStacks\HD-Player.exe",
-            @"C:\Program Files (x86)\BlueStacks\HD-Player.exe"
+            @"C:\Program Files\BlueStacks\HD-Player.exe"
         };
-        foreach (string c in candidates)
+        foreach (string c in candidates) if (File.Exists(c)) return c;
+        try
         {
-            if (File.Exists(c)) { bstExe = c; break; }
-        }
-
-        // 2. Registry fallback
-        if (string.IsNullOrEmpty(bstExe))
-        {
-            try
+            using (RegistryKey rk = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\BlueStacks_nxt"))
             {
-                using (RegistryKey rk = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\BlueStacks_nxt"))
+                if (rk != null && rk.GetValue("InstallDir") != null)
                 {
-                    if (rk != null)
-                    {
-                        object dir = rk.GetValue("InstallDir");
-                        if (dir != null)
-                        {
-                            string p = Path.Combine(dir.ToString(), "HD-Player.exe");
-                            if (File.Exists(p)) bstExe = p;
-                        }
-                    }
+                    string p = Path.Combine(rk.GetValue("InstallDir").ToString(), "HD-Player.exe");
+                    if (File.Exists(p)) return p;
                 }
             }
-            catch {}
         }
-
-        // 3. Detect instance name from bluestacks.conf
-        string[] confCandidates = new string[]
-        {
-            @"C:\ProgramData\BlueStacks_nxt\bluestacks.conf",
-            @"D:\ProgramData\BlueStacks_nxt\bluestacks.conf",
-            @"E:\ProgramData\BlueStacks_nxt\bluestacks.conf",
-            @"C:\ProgramData\BlueStacks\bluestacks.conf"
-        };
-
-        foreach (string confPath in confCandidates)
-        {
-            if (File.Exists(confPath))
-            {
-                try
-                {
-                    string conf = File.ReadAllText(confPath);
-                    string portNum = "5555";
-                    if (!string.IsNullOrEmpty(adbPort) && adbPort.Contains(":"))
-                    {
-                        string[] pp = adbPort.Split(':');
-                        if (pp.Length == 2) portNum = pp[1].Trim();
-                    }
-
-                    Match m = Regex.Match(conf, @"bst\.instance\.([^.]+)\.status\.adb_port=""" + portNum + @"""");
-                    if (m.Success)
-                    {
-                        instanceArg = "--instance " + m.Groups[1].Value.Trim();
-                        break;
-                    }
-                    else
-                    {
-                        Match m5555 = Regex.Match(conf, @"bst\.instance\.([^.]+)\.status\.adb_port=""5555""");
-                        if (m5555.Success)
-                        {
-                            instanceArg = "--instance " + m5555.Groups[1].Value.Trim();
-                            break;
-                        }
-                        else
-                        {
-                            Match mAny = Regex.Match(conf, @"bst\.instance\.([^.]+)\.display_name");
-                            if (mAny.Success)
-                            {
-                                instanceArg = "--instance " + mAny.Groups[1].Value.Trim();
-                                break;
-                            }
-                        }
-                    }
-                }
-                catch {}
-            }
-        }
-
-        return bstExe;
+        catch { }
+        return "";
     }
 
     private bool EnsureBlueStacksAliveAndReady(string callerContext)
     {
         if (!autoRecoverBlueStacks) return false;
+        if (IsBlueStacksProcessRunning() && EnsureConnected()) return true;
 
-        bool bstRunning = IsBlueStacksProcessRunning();
-        bool adbAlive = false;
-
-        if (bstRunning)
+        Log(string.Format("[Watchdog] Recovery triggered during {0}...", callerContext));
+        if (!IsBlueStacksProcessRunning())
         {
-            try
+            string args;
+            string bstExe = DetectBlueStacks(out args);
+            if (!string.IsNullOrEmpty(bstExe) && File.Exists(bstExe))
             {
-                string state = RunAdb("get-state").Trim();
-                if (state.Equals("device", StringComparison.OrdinalIgnoreCase))
-                {
-                    adbAlive = true;
-                }
-            }
-            catch {}
-        }
-
-        if (bstRunning && adbAlive)
-        {
-            return true;
-        }
-
-        Log(string.Format("[ðŸ›¡ï¸ Watchdog] BlueStacks crash/closure detected during {0}! Initializing recovery...", callerContext));
-
-        if (!bstRunning)
-        {
-            string bstArgs;
-            string bstExe = DetectBlueStacks(out bstArgs);
-            if (string.IsNullOrEmpty(bstExe) || !File.Exists(bstExe))
-            {
-                Log("[ðŸ›¡ï¸ Watchdog] Could not find BlueStacks executable (HD-Player.exe) to auto-launch.");
-                return false;
-            }
-
-            Log(string.Format("[ðŸ›¡ï¸ Watchdog] Auto-launching BlueStacks ({0} {1})...", Path.GetFileName(bstExe), bstArgs));
-            try
-            {
-                ProcessStartInfo psi = new ProcessStartInfo();
-                psi.FileName = bstExe;
-                psi.WorkingDirectory = Path.GetDirectoryName(bstExe);
-                psi.Arguments = bstArgs;
-                psi.UseShellExecute = true;
-                Process.Start(psi);
-            }
-            catch (Exception ex)
-            {
-                Log("[ðŸ›¡ï¸ Watchdog] Error launching BlueStacks: " + ex.Message);
-                return false;
+                var insts = DiscoverBlueStacksInstances();
+                if (insts.Count > 0) args = "--instance " + insts[0].InstanceName;
+                try { Process.Start(new ProcessStartInfo { FileName = bstExe, WorkingDirectory = Path.GetDirectoryName(bstExe), Arguments = args, UseShellExecute = true }); } catch { }
             }
         }
-        else
-        {
-            Log("[ðŸ›¡ï¸ Watchdog] BlueStacks process is running but ADB connection dropped. Waiting for ADB recovery...");
-        }
 
-        // Wait for Android OS to boot: sys.boot_completed == 1
-        Log("[🛡️ APK Watchdog] Waiting for BlueStacks Android OS to finish booting (up to 90s)...");
-        int waitSeconds = 0;
-        bool bootCompleted = false;
-
-        List<BlueStacksInstance> instances = DiscoverBlueStacksInstances();
-        while (waitSeconds < 90)
+        for (int wait = 0; wait < 90; wait += 3)
         {
             Thread.Sleep(3000);
-            waitSeconds += 3;
-
-            foreach (var inst in instances)
+            if (EnsureConnected() && RunAdb("shell getprop sys.boot_completed").Trim() == "1")
             {
-                RunAdb(string.Format("connect 127.0.0.1:{0}", inst.Port));
-            }
-
-            string bootProp = RunAdb("shell getprop sys.boot_completed").Trim();
-            if (bootProp == "1")
-            {
-                bootCompleted = true;
-                break;
-            }
-
-            if (waitSeconds % 15 == 0)
-            {
-                Log(string.Format("[🛡️ APK Watchdog] Still booting Android OS... ({0}s elapsed)", waitSeconds));
+                Thread.Sleep(2500);
+                foreach (string dev in GetAllConnectedAdbDevices())
+                {
+                    EnsureAccessibilityEnabled(dev, RunAdbDevice(dev, "shell settings get secure enabled_accessibility_services"));
+                    LaunchTargetAppOnDevice(dev);
+                    StartOrStopOverlayService(dev, "START");
+                }
+                return true;
             }
         }
+        return false;
+    }
 
-        if (!bootCompleted)
+    private void UniversalAdbAutoWatchLoop()
+    {
+        int checkCycle = 0;
+        while (!this.IsDisposed)
         {
-            Log("[🛡️ APK Watchdog] Android boot timeout (90s exceeded). Could not complete BlueStacks recovery.");
-            return false;
-        }
-
-        Log("[🛡️ APK Watchdog] BlueStacks Android OS boot completed! Stabilizing services (3s)...");
-        Thread.Sleep(3000);
-
-        EnsureConnected();
-
-        foreach (var inst in instances)
-        {
-            string targetDev = "127.0.0.1:" + inst.Port;
-            RunAdb(string.Format("connect {0}", targetDev));
-            string state = RunAdbDevice(targetDev, "get-state").Trim();
-            if (state.Equals("device", StringComparison.OrdinalIgnoreCase))
+            try
             {
-                RunAdbDevice(targetDev, "shell settings put secure enabled_accessibility_services com.quizearn.assistant/.QuizEarnAccessibilityService");
-                RunAdbDevice(targetDev, "shell settings put secure accessibility_enabled 1");
-                RunAdbDevice(targetDev, "shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
-                RunAdbDevice(targetDev, "shell am start-foreground-service -a com.quizearn.assistant.START com.quizearn.assistant/.FloatingOverlayService");
-            }
-        }
-        Thread.Sleep(2000);
+                checkCycle++;
+                List<string> onlineDevices = GetAllConnectedAdbDevices();
+                foreach (var inst in DiscoverBlueStacksInstances())
+                {
+                    string ep = "127.0.0.1:" + inst.Port;
+                    if (!onlineDevices.Contains(ep))
+                    {
+                        RunAdb("connect " + ep);
+                        if (RunAdbDevice(ep, "get-state").Trim().Equals("device", StringComparison.OrdinalIgnoreCase))
+                            onlineDevices.Add(ep);
+                    }
+                }
 
-        Log(string.Format("[🛡️ APK Watchdog] Recovery successful! Resuming {0}...", callerContext));
-        return true;
+                string targetPkg = GetTargetPackage();
+                foreach (string dev in onlineDevices)
+                {
+                    if (!autoRecoverBlueStacks) continue;
+                    string batchCmd = string.Format("shell \"getprop sys.boot_completed; echo '###'; settings get secure enabled_accessibility_services; echo '###'; pidof {0}; echo '###'; pidof {1}; echo '###'; dumpsys window | grep mCurrentFocus\"", targetPkg, PKG_BOT_ASSISTANT);
+                    string[] parts = RunAdbDevice(dev, batchCmd).Split(new string[] { "###" }, StringSplitOptions.None);
+                    if (parts.Length >= 5 && parts[0].Trim() == "1")
+                    {
+                        EnsureAccessibilityEnabled(dev, parts[1]);
+                        bool isLauncher = parts[4].Contains("launcher") || parts[4].Contains("com.bluestacks");
+                        bool relaunched = false;
+                        if (string.IsNullOrEmpty(parts[2].Trim()) || isLauncher)
+                        {
+                            LaunchTargetAppOnDevice(dev);
+                            relaunched = true;
+                            Thread.Sleep(2000);
+                        }
+                        if (relaunched || string.IsNullOrEmpty(parts[3].Trim()))
+                        {
+                            StartOrStopOverlayService(dev, "START");
+                        }
+                    }
+                }
+
+                isAdbConnected = onlineDevices.Count > 0;
+                if (isAdbConnected && string.IsNullOrEmpty(adbPort)) adbPort = onlineDevices[0];
+
+                SafeBeginInvoke(delegate
+                {
+                    UpdatePortLabel(isAdbConnected
+                        ? string.Format("Connected ({0} device{1})", onlineDevices.Count, onlineDevices.Count == 1 ? "" : "s")
+                        : "Waiting for ADB / BlueStacks / USB Phone...");
+                    if (!isRunning && !isAutoOffering && !isBoosting)
+                    {
+                        lblStatus.Text = isAdbConnected
+                            ? (autoRecoverBlueStacks ? "WATCHDOG ACTIVE" : "READY (Watchdog Paused)")
+                            : "WAITING FOR DEVICE";
+                        lblStatus.ForeColor = isAdbConnected && autoRecoverBlueStacks ? Color.FromArgb(76, 175, 80) : Color.FromArgb(140, 140, 150);
+                    }
+                });
+
+                if (checkCycle % 5 == 0 && onlineDevices.Count > 0)
+                {
+                    Log(string.Format("[Watchdog] Status OK: {0} connected device(s) on {1}.", onlineDevices.Count, GetTargetAppLabel()));
+                }
+            }
+            catch { }
+            Thread.Sleep(12000);
+        }
+    }
+
+    private void BtnWatchdog_Click(object sender, EventArgs e)
+    {
+        autoRecoverBlueStacks = !autoRecoverBlueStacks;
+        UpdateWatchdogButtonState();
+        SaveStatsToFile();
+        Log(string.Format("[Watchdog] {0} by user.", autoRecoverBlueStacks ? "ACTIVATED (ON)" : "PAUSED (OFF)"));
+        new Thread(() =>
+        {
+            string action = autoRecoverBlueStacks ? "START" : "STOP";
+            foreach (string dev in GetAllConnectedAdbDevices()) StartOrStopOverlayService(dev, action);
+        }) { IsBackground = true }.Start();
+    }
+
+    private void UpdateWatchdogButtonState()
+    {
+        SafeBeginInvoke(delegate
+        {
+            if (btnWatchdog == null) return;
+            btnWatchdog.Text = autoRecoverBlueStacks ? "[ WATCHDOG: ON ]" : "[ WATCHDOG: OFF ]";
+            btnWatchdog.ForeColor = autoRecoverBlueStacks ? Color.FromArgb(76, 175, 80) : Color.FromArgb(160, 160, 170);
+            btnWatchdog.BackColor = autoRecoverBlueStacks ? Color.FromArgb(12, 32, 18) : Color.FromArgb(16, 16, 20);
+            btnWatchdog.FlatAppearance.BorderColor = autoRecoverBlueStacks ? Color.FromArgb(46, 125, 50) : Color.FromArgb(34, 34, 40);
+        });
+    }
+
+    private void BtnRestartApp_Click(object sender, EventArgs e)
+    {
+        Log("[Action] Restarting " + GetTargetAppLabel() + " across connected devices...");
+        new Thread(() =>
+        {
+            EnsureConnected();
+            string pkg = GetTargetPackage();
+            foreach (string dev in GetAllConnectedAdbDevices())
+            {
+                ForceStopTargetApp(dev, pkg);
+                Thread.Sleep(600);
+                LaunchTargetAppOnDevice(dev);
+                EnsureAccessibilityEnabled(dev, RunAdbDevice(dev, "shell settings get secure enabled_accessibility_services"));
+                StartOrStopOverlayService(dev, "START");
+            }
+            Log("[App] Clean restart complete (no uninstall/data loss).");
+        }) { IsBackground = true }.Start();
+    }
+
+    private void BtnResetAdId_Click(object sender, EventArgs e)
+    {
+        Log("[Action] Resetting Advertising ID...");
+        new Thread(() =>
+        {
+            EnsureConnected();
+            RunAdb("shell pm clear com.google.android.gms");
+            Thread.Sleep(800);
+            RunAdb("shell am broadcast -a com.google.android.gms.ads.identifier.service.START");
+            Log("[Ad ID] Google Advertising ID cache cleared.");
+        }) { IsBackground = true }.Start();
+    }
+
+    private void BtnSendLastSS_Click(object sender, EventArgs e)
+    {
+        Log("[Screenshot] Capturing screen & syncing to device Gallery...");
+        new Thread(() =>
+        {
+            EnsureConnected();
+            string destName = string.Format("Screenshot_{0:yyyyMMdd_HHmmss}.png", DateTime.Now);
+            string remotePath = "/sdcard/Pictures/Screenshots/" + destName;
+            foreach (string dev in GetAllConnectedAdbDevices())
+            {
+                RunAdbDevice(dev, "shell mkdir -p /sdcard/Pictures/Screenshots");
+                RunAdbDevice(dev, "shell screencap -p " + remotePath);
+                RunAdbDevice(dev, string.Format("shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d \"file://{0}\"", remotePath));
+            }
+            Log("[Screenshot] Saved fresh capture to Gallery.");
+        }) { IsBackground = true }.Start();
+    }
+
+    private void BtnToggle_Click(object sender, EventArgs e)
+    {
+        if (!isRunning) StartBot(); else StopBot();
+    }
+
+    private void StartBot()
+    {
+        isRunning = true;
+        collectGemNoAdCount = 0;
+        isPending25thGemStop = false;
+        hasCountedThis25GemCycle = false;
+        lastProgressTime = DateTime.Now;
+
+        SafeBeginInvoke(delegate
+        {
+            btnToggle.Text = "[ || ]  STOP BOT (RUNNING)";
+            btnToggle.BackColor = Color.FromArgb(65, 22, 24);
+            btnToggle.FlatAppearance.BorderColor = Color.FromArgb(145, 50, 55);
+            lblStatus.Text = "RUNNING (" + GetTargetAppLabel() + ")";
+        });
+
+        if (autoMuteEnabled) SilenceAudio(true);
+
+        botThread = new Thread(new ThreadStart(BotWorkerLoop)) { IsBackground = true };
+        botThread.Start();
+        Log(">>> Bot started for " + GetTargetAppLabel() + ".");
+    }
+
+    private void StopBot()
+    {
+        isRunning = false;
+        isPending25thGemStop = false;
+        hasCountedThis25GemCycle = false;
+
+        SafeBeginInvoke(delegate
+        {
+            btnToggle.Text = "[ > ]  START BOT";
+            btnToggle.BackColor = Color.FromArgb(14, 48, 34);
+            btnToggle.FlatAppearance.BorderColor = Color.FromArgb(24, 110, 74);
+            if (!lblStatus.Text.Contains("25 Gems"))
+                lblStatus.Text = isAdbConnected ? "READY (" + adbPort + ")" : "WAITING FOR ADB";
+        });
+
+        if (autoMuteEnabled) SilenceAudio(false);
+        Log("<<< Bot stopped.");
+    }
+
+    private void SilenceAudio(bool mute)
+    {
+        try { RunAdb("shell cmd media_session volume --stream 3 --set " + (mute ? "0" : "12")); } catch { }
     }
 
     private string GetCurrentFocus()
@@ -3414,42 +1582,103 @@ public class QuizEarnApp : Form
         string dump = RunAdb("shell \"dumpsys activity activities | grep -E 'topResumedActivity|mResumedActivity'\"");
         Match m = Regex.Match(dump, @"ActivityRecord\{[^\r\n]+");
         if (m.Success) return m.Value;
-
-        string winDump = RunAdb("shell \"dumpsys window | grep mCurrentFocus\"");
-        Match wm = Regex.Match(winDump, @"mCurrentFocus=Window\{[^\r\n]+");
-        if (wm.Success) return wm.Value;
-
-        return "";
+        Match wm = Regex.Match(RunAdb("shell \"dumpsys window | grep mCurrentFocus\""), @"mCurrentFocus=Window\{[^\r\n]+");
+        return wm.Success ? wm.Value : "";
     }
 
     private string ExtractPackageName(string rawFocus)
     {
-        if (string.IsNullOrEmpty(rawFocus)) return "";
-        Match m = Regex.Match(rawFocus, @"([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)+)/");
-        if (m.Success) return m.Groups[1].Value;
-        return "";
+        Match m = Regex.Match(rawFocus ?? "", @"([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)+)/");
+        return m.Success ? m.Groups[1].Value : "";
+    }
+
+    private string DumpAndReadXml(string remotePath)
+    {
+        try
+        {
+            RunAdb(string.Format("shell uiautomator dump --compressed {0}", remotePath));
+            string content = RunAdb("shell cat " + remotePath);
+            return (!string.IsNullOrEmpty(content) && content.Contains("<hierarchy")) ? content : "";
+        }
+        catch { return ""; }
+    }
+
+    private bool TryFindNodeBounds(string xml, string keyword, out int centerX, out int centerY)
+    {
+        centerX = 0; centerY = 0;
+        if (string.IsNullOrEmpty(xml) || string.IsNullOrEmpty(keyword)) return false;
+        int safeBottom = (int)(devHeight * 0.97);
+
+        MatchCollection nodes = Regex.Matches(xml, @"<node\s+[^>]*>", RegexOptions.Singleline);
+        for (int pass = 0; pass < 4; pass++)
+        {
+            foreach (Match n in nodes)
+            {
+                string tag = n.Value;
+                bool isClickable = tag.IndexOf("clickable=\"true\"", StringComparison.OrdinalIgnoreCase) >= 0 || tag.IndexOf("Button", StringComparison.OrdinalIgnoreCase) >= 0;
+                bool isExact = tag.IndexOf(string.Format("text=\"{0}\"", keyword), StringComparison.OrdinalIgnoreCase) >= 0 ||
+                               tag.IndexOf(string.Format("content-desc=\"{0}\"", keyword), StringComparison.OrdinalIgnoreCase) >= 0;
+                bool isContains = !tag.ToLower().Contains("to start using") && tag.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0;
+
+                bool ok = (pass == 0 && isExact && isClickable) || (pass == 1 && isExact) ||
+                          (pass == 2 && isContains && isClickable) || (pass == 3 && isContains);
+                if (!ok) continue;
+
+                Match bm = Regex.Match(tag, @"bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
+                if (bm.Success)
+                {
+                    int x1 = int.Parse(bm.Groups[1].Value), y1 = int.Parse(bm.Groups[2].Value);
+                    int x2 = int.Parse(bm.Groups[3].Value), y2 = int.Parse(bm.Groups[4].Value);
+                    if (y2 < safeBottom && x2 > x1) { centerX = (x1 + x2) / 2; centerY = (y1 + y2) / 2; return true; }
+                }
+            }
+        }
+        return false;
+    }
+
+    private bool isLastDismissCrash = false;
+
+    private bool DismissAppDialogs()
+    {
+        isLastDismissCrash = false;
+        string cur = GetCurrentFocus();
+        if (string.IsNullOrEmpty(cur) || IsKnownQuizApp(cur)) return false;
+
+        string xml = DumpAndReadXml("/sdcard/app_popup.xml");
+        if (string.IsNullOrEmpty(xml)) return false;
+
+        bool isCrash = Regex.IsMatch(xml, @"(keeps stopping|has stopped|isn't responding)", RegexOptions.IgnoreCase);
+        foreach (Match n in Regex.Matches(xml, @"<node\s+[^>]*>", RegexOptions.Singleline))
+        {
+            string tag = n.Value;
+            bool match = (isCrash && Regex.IsMatch(tag, @"text=""[^""]*(Close app|Close|OK)\b[^""]*""", RegexOptions.IgnoreCase)) ||
+                         Regex.IsMatch(tag, @"text=""[^""]*(don.*?allow|\bdeny\b|Not now|Maybe later|Dismiss)\b[^""]*""", RegexOptions.IgnoreCase);
+            if (!match) continue;
+
+            Match bm = Regex.Match(tag, @"bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
+            if (bm.Success)
+            {
+                int cx = (int.Parse(bm.Groups[1].Value) + int.Parse(bm.Groups[3].Value)) / 2;
+                int cy = (int.Parse(bm.Groups[2].Value) + int.Parse(bm.Groups[4].Value)) / 2;
+                if (cx > 0 && cy > 0 && cx < devWidth && cy < devHeight)
+                {
+                    AdbTap(cx, cy);
+                    if (isCrash) isLastDismissCrash = true;
+                    Thread.Sleep(1100);
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private void StartUsageBooster(int minutes)
     {
-        if (isBoosting)
-        {
-            Log(string.Format("[⚡ Booster] Boost is already active ({0}s left). Click Stop first if you want to switch.", boostSecondsRemaining));
-            return;
-        }
-
-        if (!isAdbConnected)
-        {
-            Log("[⚡ Booster] ADB not connected yet! Turn on ADB in your emulator or phone first.");
-            return;
-        }
-
+        if (isBoosting) { Log("[Booster] Already running. Click Stop Boost first."); return; }
+        if (!isAdbConnected) { Log("[Booster] Connect ADB first."); return; }
         isBoosting = true;
-        boostTotalSeconds = minutes * 60;
-        boostSecondsRemaining = boostTotalSeconds;
-
-        boosterThread = new Thread(new ParameterizedThreadStart(BoosterWorkerLoop));
-        boosterThread.IsBackground = true;
+        boostSecondsRemaining = minutes * 60;
+        boosterThread = new Thread(BoosterWorkerLoop) { IsBackground = true };
         boosterThread.Start(minutes);
     }
 
@@ -3458,1157 +1687,166 @@ public class QuizEarnApp : Form
         if (isBoosting)
         {
             isBoosting = false;
-            Log("[⚡ Booster] Usage Booster stopped by user.");
-            SafeBeginInvoke(new Action(() => {
-                if (lblBoostStatus != null)
-                {
-                    lblBoostStatus.Text = "Booster: Stopped";
-                    lblBoostStatus.ForeColor = Color.FromArgb(135, 135, 140);
-                }
-            }));
-        }
-        else
-        {
-            Log("[⚡ Booster] No boost session is currently running.");
+            Log("[Booster] Usage Booster stopped by user.");
+            SafeBeginInvoke(() => lblBoostStatus.Text = "Booster: Stopped");
         }
     }
 
     private void BoosterWorkerLoop(object param)
     {
         int minutes = (int)param;
-        Log(string.Format("[⚡ Booster] Starting {0}-minute AFK Usage Boost...", minutes));
-
         try
         {
-            // 1. Identify or launch target sponsored app
-            string currentFocus = GetCurrentFocus();
-            string targetPkg = "";
-
-            if (!string.IsNullOrEmpty(currentFocus) && 
-                !currentFocus.Contains("com.quiz.earn.money.game") && 
-                !currentFocus.Contains("launcher") && 
-                !currentFocus.Contains("systemui"))
-            {
-                // Already inside target app
-                targetPkg = ExtractPackageName(currentFocus);
-                if (string.IsNullOrEmpty(targetPkg)) targetPkg = currentFocus;
-                Log(string.Format("[⚡ Booster] Active in target offer app: {0}", targetPkg));
-            }
-            else
-            {
-                // Currently in Quiz & Earn: scan screen for "Open App" button
-                Log("[⚡ Booster] Scanning screen for 'Open App' button...");
-                RunAdb("shell rm -f /sdcard/boost_ui.xml && shell uiautomator dump --compressed /sdcard/boost_ui.xml");
-                string xml = RunAdb("shell cat /sdcard/boost_ui.xml");
-
-                Match m = Regex.Match(xml, @"text=""Open App""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""", RegexOptions.IgnoreCase);
-                if (m.Success)
-                {
-                    int x1 = int.Parse(m.Groups[1].Value);
-                    int y1 = int.Parse(m.Groups[2].Value);
-                    int x2 = int.Parse(m.Groups[3].Value);
-                    int y2 = int.Parse(m.Groups[4].Value);
-                    int tapX = (x1 + x2) / 2;
-                    int tapY = (y1 + y2) / 2;
-                    Log(string.Format("[⚡ Booster] Found 'Open App' button! Launching offer app at ({0}, {1})...", tapX, tapY));
-                    AdbTap(tapX, tapY);
-                    Thread.Sleep(3000);
-                }
-
-                currentFocus = GetCurrentFocus();
-                if (!string.IsNullOrEmpty(currentFocus) && !currentFocus.Contains("com.quiz.earn.money.game") && !currentFocus.Contains("launcher"))
-                {
-                    targetPkg = ExtractPackageName(currentFocus);
-                    if (string.IsNullOrEmpty(targetPkg)) targetPkg = currentFocus;
-                    Log(string.Format("[⚡ Booster] Launched offer app: {0}", targetPkg));
-                }
-                else
-                {
-                    Log("[⚡ Booster] Note: If app did not open automatically, tap 'Open App' manually. Booster will keep it alive!");
-                }
-            }
-
-            boostTargetPackage = targetPkg;
-            DismissAppDialogs();
-
-            int keepAliveCounter = 0;
+            string cur = GetCurrentFocus();
+            boostTargetPackage = (!string.IsNullOrEmpty(cur) && !IsKnownQuizApp(cur) && !cur.Contains("launcher")) ? ExtractPackageName(cur) : "";
+            int ticks = 0;
             while (isBoosting && boostSecondsRemaining > 0)
             {
-                int mLeft = boostSecondsRemaining / 60;
-                int sLeft = boostSecondsRemaining % 60;
-                string pkgDisplay = string.IsNullOrEmpty(boostTargetPackage) ? "Offer App" : boostTargetPackage;
-                if (pkgDisplay.Contains("."))
-                {
-                    string[] parts = pkgDisplay.Split('.');
-                    pkgDisplay = parts[parts.Length - 1];
-                }
-
-                string statusText = string.Format("⚡ {0:D2}:{1:D2} left ({2})", mLeft, sLeft, pkgDisplay);
-                SafeBeginInvoke(new Action(() => {
-                    if (lblBoostStatus != null)
-                    {
-                        lblBoostStatus.Text = statusText;
-                        lblBoostStatus.ForeColor = Color.FromArgb(180, 180, 185);
-                    }
-                }));
-
-                // Auto-dismiss blocking notification/permission dialogs if they appear
-                if (keepAliveCounter == 3 || keepAliveCounter == 7 || (keepAliveCounter > 0 && keepAliveCounter % 20 == 0))
-                {
-                    DismissAppDialogs();
-                }
-
-                // Every 15 seconds: ensure app is active and send non-intrusive micro-swipe
-                if (keepAliveCounter % 15 == 0)
-                {
-                    if (autoRecoverBlueStacks && !IsBlueStacksProcessRunning())
-                    {
-                        EnsureBlueStacksAliveAndReady("Usage Booster Loop");
-                    }
-                    string curFocus = GetCurrentFocus();
-                    if (!string.IsNullOrEmpty(boostTargetPackage) && !string.IsNullOrEmpty(curFocus) && 
-                        !curFocus.Contains(boostTargetPackage) && !curFocus.Contains("com.quiz.earn.money.game"))
-                    {
-                        // Relaunch if minimized
-                        RunAdb(string.Format("shell monkey -p {0} -c android.intent.category.LAUNCHER 1", boostTargetPackage));
-                    }
-
-                    // Keep screen and app active via gentle swipe in safe space (center drag 20px)
-                    RunAdb("shell input swipe 450 700 450 720 120");
-                }
-
+                SafeBeginInvoke(() => lblBoostStatus.Text = string.Format("Boost {0:D2}:{1:D2} ({2})", boostSecondsRemaining / 60, boostSecondsRemaining % 60, string.IsNullOrEmpty(boostTargetPackage) ? "App" : boostTargetPackage));
+                if (ticks % 10 == 0) DismissAppDialogs();
+                if (ticks % 15 == 0) AdbSwipeRef(450, 700, 450, 725, 120);
                 Thread.Sleep(1000);
                 boostSecondsRemaining--;
-                keepAliveCounter++;
+                ticks++;
             }
-
             if (isBoosting)
             {
-                Log(string.Format("[⚡ Booster] COMPLETE! {0} minute(s) fulfilled.", minutes));
-                Log("[⚡ Booster] Returning to Quiz & Earn to collect reward...");
-
-                // Switch back to Quiz & Earn
-                RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
-                Thread.Sleep(3000);
-
-                // Auto-tap "Verify Usage" or "Claim" upon returning from Booster!
-                string boostXml = DumpAndReadXml("/sdcard/boost_after.xml");
-                int bvx, bvy;
-                if (TryFindNodeBounds(boostXml, "Verify Usage", out bvx, out bvy) || 
-                    TryFindNodeBounds(boostXml, "Verify", out bvx, out bvy))
-                {
-                    Log(string.Format("[⚡ Booster] Returned from app! Tapping 'Verify Usage' at ({0}, {1})...", bvx, bvy));
-                    AdbTap(bvx, bvy);
-                    Thread.Sleep(3500);
-                    boostXml = DumpAndReadXml("/sdcard/boost_after2.xml");
-                }
-                int bcx, bcy;
-                if (TryFindNodeBounds(boostXml, "Claim", out bcx, out bcy))
-                {
-                    Log(string.Format("[⚡ Booster] Tapping 'Claim' at ({0}, {1})...", bcx, bcy));
-                    AdbTap(bcx, bcy);
-                }
-
-                try { System.Media.SystemSounds.Asterisk.Play(); } catch {}
-
-                SafeBeginInvoke(new Action(() => {
-                    if (lblBoostStatus != null)
-                    {
-                        lblBoostStatus.Text = "⚡ Completed! Verified & claimed.";
-                        lblBoostStatus.ForeColor = Color.FromArgb(76, 175, 80);
-                    }
-                }));
+                LaunchTargetAppOnDevice(adbPort);
+                Thread.Sleep(2500);
+                SafeBeginInvoke(() => lblBoostStatus.Text = string.Format("Boost complete ({0}m)!", minutes));
             }
         }
-        catch (Exception ex)
-        {
-            Log("[⚡ Booster] Error: " + ex.Message);
-        }
-        finally
-        {
-            isBoosting = false;
-        }
+        finally { isBoosting = false; }
     }
 
-    private bool TryFindNodeBounds(string xml, string textKeyword, out int centerX, out int centerY)
+    private void BtnAutoOffer_Click(object sender, EventArgs e) { StartAutoOfferClaimer(); }
+    private void BtnAutoOfferStop_Click(object sender, EventArgs e)
     {
-        centerX = 0;
-        centerY = 0;
-        try
-        {
-            if (string.IsNullOrEmpty(xml) || string.IsNullOrEmpty(textKeyword)) return false;
-
-            MatchCollection nodes = Regex.Matches(xml, @"<node\s+[^>]*>", RegexOptions.Singleline);
-            
-            // Pass 1: Look for exact text or content-desc match on a clickable or Button node
-            foreach (Match n in nodes)
-            {
-                string tag = n.Value;
-                bool isClickable = tag.IndexOf("clickable=\"true\"", StringComparison.OrdinalIgnoreCase) >= 0;
-                bool isButton = tag.IndexOf("Button", StringComparison.OrdinalIgnoreCase) >= 0;
-                
-                bool isExactMatch = tag.IndexOf(string.Format("text=\"{0}\"", textKeyword), StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                    tag.IndexOf(string.Format("content-desc=\"{0}\"", textKeyword), StringComparison.OrdinalIgnoreCase) >= 0;
-
-                if (isExactMatch && (isClickable || isButton))
-                {
-                    Match bm = Regex.Match(tag, @"bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
-                    if (bm.Success)
-                    {
-                        int x1 = int.Parse(bm.Groups[1].Value);
-                        int y1 = int.Parse(bm.Groups[2].Value);
-                        int x2 = int.Parse(bm.Groups[3].Value);
-                        int y2 = int.Parse(bm.Groups[4].Value);
-                        if (y2 < 1560)
-                        {
-                            centerX = (x1 + x2) / 2;
-                            centerY = (y1 + y2) / 2;
-                            return true;
-                        }
-                    }
-                }
-            }
-
-            // Pass 2: Look for exact match on ANY node
-            foreach (Match n in nodes)
-            {
-                string tag = n.Value;
-                bool isExactMatch = tag.IndexOf(string.Format("text=\"{0}\"", textKeyword), StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                    tag.IndexOf(string.Format("content-desc=\"{0}\"", textKeyword), StringComparison.OrdinalIgnoreCase) >= 0;
-
-                if (isExactMatch)
-                {
-                    Match bm = Regex.Match(tag, @"bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
-                    if (bm.Success)
-                    {
-                        int x1 = int.Parse(bm.Groups[1].Value);
-                        int y1 = int.Parse(bm.Groups[2].Value);
-                        int x2 = int.Parse(bm.Groups[3].Value);
-                        int y2 = int.Parse(bm.Groups[4].Value);
-                        if (y2 < 1560)
-                        {
-                            centerX = (x1 + x2) / 2;
-                            centerY = (y1 + y2) / 2;
-                            return true;
-                        }
-                    }
-                }
-            }
-
-            // Pass 3: Look for clickable nodes containing keyword (excluding descriptive helper text)
-            foreach (Match n in nodes)
-            {
-                string tag = n.Value;
-                bool isClickable = tag.IndexOf("clickable=\"true\"", StringComparison.OrdinalIgnoreCase) >= 0;
-                bool isButton = tag.IndexOf("Button", StringComparison.OrdinalIgnoreCase) >= 0;
-                bool isLongInstruction = tag.IndexOf("to start using", StringComparison.OrdinalIgnoreCase) >= 0;
-
-                if ((isClickable || isButton) && !isLongInstruction && tag.IndexOf(textKeyword, StringComparison.OrdinalIgnoreCase) >= 0)
-                {
-                    Match bm = Regex.Match(tag, @"bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
-                    if (bm.Success)
-                    {
-                        int x1 = int.Parse(bm.Groups[1].Value);
-                        int y1 = int.Parse(bm.Groups[2].Value);
-                        int x2 = int.Parse(bm.Groups[3].Value);
-                        int y2 = int.Parse(bm.Groups[4].Value);
-                        if (y2 < 1560)
-                        {
-                            centerX = (x1 + x2) / 2;
-                            centerY = (y1 + y2) / 2;
-                            return true;
-                        }
-                    }
-                }
-            }
-
-            // Pass 4: Fallback to any node containing keyword (excluding descriptive helper text)
-            foreach (Match n in nodes)
-            {
-                string tag = n.Value;
-                bool isLongInstruction = tag.IndexOf("to start using", StringComparison.OrdinalIgnoreCase) >= 0;
-                if (!isLongInstruction && tag.IndexOf(textKeyword, StringComparison.OrdinalIgnoreCase) >= 0)
-                {
-                    Match bm = Regex.Match(tag, @"bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
-                    if (bm.Success)
-                    {
-                        int x1 = int.Parse(bm.Groups[1].Value);
-                        int y1 = int.Parse(bm.Groups[2].Value);
-                        int x2 = int.Parse(bm.Groups[3].Value);
-                        int y2 = int.Parse(bm.Groups[4].Value);
-                        if (y2 < 1560)
-                        {
-                            centerX = (x1 + x2) / 2;
-                            centerY = (y1 + y2) / 2;
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-        catch {}
-        return false;
+        isAutoOffering = false; isBoosting = false;
+        Log("[Claimer] Stopped by user.");
+        SafeBeginInvoke(() => lblBoostStatus.Text = "Claimer: Stopped");
     }
 
-    private bool TryFindExactNodeBounds(string xml, string exactText, out int centerX, out int centerY)
+    private void StartAutoOfferClaimer()
     {
-        return TryFindNodeBounds(xml, exactText, out centerX, out centerY);
+        if (isAutoOffering) return;
+        if (!EnsureConnected()) { Log("[Claimer] ADB not connected."); return; }
+        isAdbConnected = true;
+        isAutoOffering = true;
+        isBoosting = true;
+        autoOfferThread = new Thread(AutoOfferWorkerLoop) { IsBackground = true };
+        autoOfferThread.Start();
     }
 
-    private string DumpAndReadXml(string remotePath)
+    private void ProcessOfferAppDetails(string targetTitle, HashSet<string> cycleCompletedApps)
     {
-        try
-        {
-            RunAdb(string.Format("shell uiautomator dump {0}", remotePath));
-            string content = RunAdb(string.Format("shell cat {0}", remotePath));
-            if (string.IsNullOrEmpty(content) || !content.Contains("<hierarchy"))
-            {
-                return "";
-            }
-            return content;
-        }
-        catch { return ""; }
-    }
-
-    private bool isLastDismissCrash = false;
-
-    private bool DismissAppDialogs()
-    {
-        try
-        {
-            isLastDismissCrash = false;
-            string cur = GetCurrentFocus();
-            if (string.IsNullOrEmpty(cur) || cur.Contains("com.quiz.earn.money.game"))
-            {
-                return false;
-            }
-
-            string xml = DumpAndReadXml("/sdcard/app_popup.xml");
-            if (string.IsNullOrEmpty(xml)) return false;
-
-            MatchCollection nodes = Regex.Matches(xml, @"<node\s+[^>]*>", RegexOptions.Singleline);
-
-            // Priority 0: Crash / Keeps stopping dialog!
-            bool isCrash = Regex.IsMatch(xml, @"(keeps stopping|has stopped|isn't responding|repeatedly closed)", RegexOptions.IgnoreCase);
-            if (isCrash)
-            {
-                foreach (Match n in nodes)
-                {
-                    string tag = n.Value;
-                    if (Regex.IsMatch(tag, @"text=""[^""]*(Close app|Close|OK)\b[^""]*""", RegexOptions.IgnoreCase))
-                    {
-                        Match bm = Regex.Match(tag, @"bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
-                        if (bm.Success)
-                        {
-                            int x1 = int.Parse(bm.Groups[1].Value);
-                            int y1 = int.Parse(bm.Groups[2].Value);
-                            int x2 = int.Parse(bm.Groups[3].Value);
-                            int y2 = int.Parse(bm.Groups[4].Value);
-                            int cx = (x1 + x2) / 2;
-                            int cy = (y1 + y2) / 2;
-                            Log(string.Format("[🛡️ Safety] App crashed / keeps stopping! Dismissing dialog at ({0}, {1})...", cx, cy));
-                            AdbTap(cx, cy);
-                            isLastDismissCrash = true;
-                            Thread.Sleep(1200);
-                            return true;
-                        }
-                    }
-                }
-            }
-            
-            // Priority 1: Check for "Don't allow" variants or "Deny"
-            foreach (Match n in nodes)
-            {
-                string tag = n.Value;
-                bool isDeny = Regex.IsMatch(tag, @"text=""[^""]*don.*?allow[^""]*""", RegexOptions.IgnoreCase) ||
-                              Regex.IsMatch(tag, @"text=""[^""]*\bdeny\b[^""]*""", RegexOptions.IgnoreCase) ||
-                              Regex.IsMatch(tag, @"resource-id=""[^""]*permission_deny[^""]*""", RegexOptions.IgnoreCase);
-
-                if (isDeny)
-                {
-                    Match bm = Regex.Match(tag, @"bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
-                    if (bm.Success)
-                    {
-                        int x1 = int.Parse(bm.Groups[1].Value);
-                        int y1 = int.Parse(bm.Groups[2].Value);
-                        int x2 = int.Parse(bm.Groups[3].Value);
-                        int y2 = int.Parse(bm.Groups[4].Value);
-                        int cx = (x1 + x2) / 2;
-                        int cy = (y1 + y2) / 2;
-                        if (cx > 0 && cy > 0 && cx < 900 && cy < 1600)
-                        {
-                            Log(string.Format("[💎 Claimer] Dismissing notification/permission dialog ('Don't allow') at ({0}, {1})...", cx, cy));
-                            AdbTap(cx, cy);
-                            Thread.Sleep(1200);
-                            return true;
-                        }
-                    }
-                }
-            }
-
-            // Priority 2: Check for other common startup modal dismissal buttons: "Not now", "Maybe later", "Dismiss"
-            foreach (Match n in nodes)
-            {
-                string tag = n.Value;
-                bool isDismiss = Regex.IsMatch(tag, @"text=""[^""]*(Not now|Maybe later|Dismiss)\b[^""]*""", RegexOptions.IgnoreCase);
-                if (isDismiss)
-                {
-                    Match bm = Regex.Match(tag, @"bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
-                    if (bm.Success)
-                    {
-                        int x1 = int.Parse(bm.Groups[1].Value);
-                        int y1 = int.Parse(bm.Groups[2].Value);
-                        int x2 = int.Parse(bm.Groups[3].Value);
-                        int y2 = int.Parse(bm.Groups[4].Value);
-                        int cx = (x1 + x2) / 2;
-                        int cy = (y1 + y2) / 2;
-                        if (cx > 0 && cy > 0 && cx < 900 && cy < 1600)
-                        {
-                            Log(string.Format("[💎 Claimer] Dismissing startup prompt at ({0}, {1})...", cx, cy));
-                            AdbTap(cx, cy);
-                            Thread.Sleep(1200);
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-        catch {}
-        return false;
-    }
-
-    private bool IsUsageCompleted(string xml, int buttonY = 0)
-    {
-        string cardScope = xml;
-        if (buttonY > 0)
-        {
-            try
-            {
-                MatchCollection matches = Regex.Matches(xml, @"<node [^>]*text=""([^""]*)""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
-                List<string> nearTexts = new List<string>();
-                foreach (Match m in matches)
-                {
-                    string t = m.Groups[1].Value.Trim();
-                    if (string.IsNullOrEmpty(t)) continue;
-                    int y1 = int.Parse(m.Groups[3].Value);
-                    int y2 = int.Parse(m.Groups[5].Value);
-                    int yc = (y1 + y2) / 2;
-                    if (Math.Abs(yc - buttonY) <= 140)
-                    {
-                        nearTexts.Add(t);
-                    }
-                }
-                if (nearTexts.Count > 0) cardScope = string.Join(" | ", nearTexts);
-            }
-            catch {}
-        }
-
-        return cardScope.IndexOf("Usage verified", StringComparison.OrdinalIgnoreCase) >= 0 ||
-               Regex.IsMatch(cardScope, @"\b100\s*%") ||
-               Regex.IsMatch(cardScope, @"\b0s\s*more\s*needed", RegexOptions.IgnoreCase);
-    }
-
-    private int ParseSecondsNeeded(string xml, int buttonY = 0)
-    {
-        // 1. Isolate text near buttonY (+/- 140px) to inspect the specific active card rather than global page
-        string cardScope = xml;
-        if (buttonY > 0)
-        {
-            try
-            {
-                MatchCollection matches = Regex.Matches(xml, @"<node [^>]*text=""([^""]*)""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
-                List<string> nearTexts = new List<string>();
-                foreach (Match m in matches)
-                {
-                    string t = m.Groups[1].Value.Trim();
-                    if (string.IsNullOrEmpty(t)) continue;
-                    int y1 = int.Parse(m.Groups[3].Value);
-                    int y2 = int.Parse(m.Groups[5].Value);
-                    int yc = (y1 + y2) / 2;
-                    if (Math.Abs(yc - buttonY) <= 140)
-                    {
-                        nearTexts.Add(t);
-                    }
-                }
-                if (nearTexts.Count > 0)
-                {
-                    cardScope = string.Join(" | ", nearTexts);
-                    Log(string.Format("[💎 Claimer] Card node texts near Y={0}: {1}", buttonY, cardScope.Length > 100 ? cardScope.Substring(0, 100) + "..." : cardScope));
-                }
-            }
-            catch {}
-        }
-
-        // 0. Check if usage is already verified or 100% completed on this card!
-        if (cardScope.IndexOf("Usage verified", StringComparison.OrdinalIgnoreCase) >= 0 ||
-            Regex.IsMatch(cardScope, @"\b100\s*%") ||
-            Regex.IsMatch(cardScope, @"\b0s\s*more\s*needed", RegexOptions.IgnoreCase))
-        {
-            return 0;
-        }
-
-        // A. e.g. "1m 8s more needed" or "7m 55s more needed"
-        Match m1 = Regex.Match(cardScope, @"(\d+)\s*m(?:in)?\s*(\d+)\s*s(?:ec)?\s*more\s*needed", RegexOptions.IgnoreCase);
-        if (m1.Success)
-        {
-            int mins = int.Parse(m1.Groups[1].Value);
-            int secs = int.Parse(m1.Groups[2].Value);
-            int total = (mins * 60) + secs;
-            return total > 0 ? total + 4 : 0;
-        }
-
-        // B. e.g. "1m more needed" or "5 min more needed"
-        Match m1b = Regex.Match(cardScope, @"(\d+)\s*m(?:in)?\s*more\s*needed", RegexOptions.IgnoreCase);
-        if (m1b.Success)
-        {
-            int mins = int.Parse(m1b.Groups[1].Value);
-            return mins > 0 ? (mins * 60) + 4 : 0;
-        }
-
-        // C. e.g. "45s more needed" or "30 sec more needed" or "28s more needed"
-        Match m2 = Regex.Match(cardScope, @"(\d+)\s*s(?:ec)?\s*more\s*needed", RegexOptions.IgnoreCase);
-        if (m2.Success)
-        {
-            int secs = int.Parse(m2.Groups[1].Value);
-            return secs > 0 ? secs + 4 : 0;
-        }
-
-        // D. e.g. "Usage Progress 4m 5s / 12m 0s" or "Usage Progress 3m 33s / 4m 0s"
-        Match mProgress = Regex.Match(cardScope, @"(\d+)\s*m\s*(\d+)\s*s\s*\/\s*(\d+)\s*m\s*(\d+)\s*s", RegexOptions.IgnoreCase);
-        if (mProgress.Success)
-        {
-            int doneSec = int.Parse(mProgress.Groups[1].Value) * 60 + int.Parse(mProgress.Groups[2].Value);
-            int totalSec = int.Parse(mProgress.Groups[3].Value) * 60 + int.Parse(mProgress.Groups[4].Value);
-            int diff = totalSec - doneSec;
-            if (diff > 0) return diff + 4;
-            return 0;
-        }
-
-        // E. e.g. "Usage Progress 1s / 12m 0s"
-        Match mProgressSec = Regex.Match(cardScope, @"(\d+)\s*s\s*\/\s*(\d+)\s*m\s*(\d+)\s*s", RegexOptions.IgnoreCase);
-        if (mProgressSec.Success)
-        {
-            int doneSec = int.Parse(mProgressSec.Groups[1].Value);
-            int totalSec = int.Parse(mProgressSec.Groups[2].Value) * 60 + int.Parse(mProgressSec.Groups[3].Value);
-            int diff = totalSec - doneSec;
-            if (diff > 0) return diff + 4;
-            return 0;
-        }
-
-        // F. e.g. "Use app for 12 more minutes" or "Use app for 12 minutes"
-        Match m3 = Regex.Match(cardScope, @"Use\s*app\s*for\s*(\d+)\s*(?:more\s*)?(?:min|minutes)", RegexOptions.IgnoreCase);
-        if (m3.Success)
-        {
-            int mins = int.Parse(m3.Groups[1].Value);
-            return mins > 0 ? (mins * 60) + 4 : 0;
-        }
-
-        // G. e.g. "Tap 'Open App' to start using it for 12 min"
-        Match m4 = Regex.Match(cardScope, @"using\s*it\s*for\s*(\d+)\s*(?:min|minutes)", RegexOptions.IgnoreCase);
-        if (m4.Success)
-        {
-            int mins = int.Parse(m4.Groups[1].Value);
-            return mins > 0 ? (mins * 60) + 4 : 0;
-        }
-
-        return 0;
-    }
-    private bool FindAndClickReadyOfferCard(string xml, HashSet<string> skippedApps, out string clickedTitle)
-    {
-        clickedTitle = "";
-        try
-        {
-            // Find all offer titles on the list (X in 50..220)
-            MatchCollection titleNodes = Regex.Matches(xml, @"<node [^>]*text=""([^""]+)""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
-            
-            foreach (Match tm in titleNodes)
-            {
-                string rawTitle = tm.Groups[1].Value.Trim();
-                string cleanTitle = WebUtility.HtmlDecode(rawTitle).Trim();
-                int tx1 = int.Parse(tm.Groups[2].Value);
-                int ty1 = int.Parse(tm.Groups[3].Value);
-                int tx2 = int.Parse(tm.Groups[4].Value);
-                int ty2 = int.Parse(tm.Groups[5].Value);
-
-                // Offer titles are aligned near left margin (X in 50..220) and have reasonable height
-                if (tx1 < 50 || tx1 > 220 || (ty2 - ty1) < 15 || (ty2 - ty1) > 100) continue;
-
-                // Ignore headers and guidelines
-                if (cleanTitle == "Progress" || cleanTitle == "How to Complete" || cleanTitle.Contains("Important Guidelines") || 
-                    cleanTitle == "Load More" || cleanTitle == "Pending Offers" || cleanTitle.Contains("active pending") ||
-                    cleanTitle == "My Super Offers" || cleanTitle == "Refresh offers" || cleanTitle.StartsWith("Unlocks in") ||
-                    cleanTitle.StartsWith("Installed ") || cleanTitle.EndsWith("tasks"))
-                    continue;
-
-                // Ignore off-screen cards
-                if (ty1 < 100 || ty2 > 1540) continue;
-
-                // DEDUPLICATION: If this app was already processed or verified in this cycle, skip it!
-                if (skippedApps != null && (skippedApps.Contains(rawTitle) || skippedApps.Contains(cleanTitle)))
-                {
-                    continue;
-                }
-
-                // Slice XML for this card's vertical window [ty1 - 30 to ty1 + 200]
-                int cardTop = Math.Max(0, ty1 - 30);
-                int cardBottom = ty1 + 200;
-
-                MatchCollection cardTexts = Regex.Matches(xml, @"<node [^>]*text=""([^""]+)""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
-                List<string> texts = new List<string>();
-                foreach (Match cm in cardTexts)
-                {
-                    string ct = cm.Groups[1].Value.Trim();
-                    if (string.IsNullOrEmpty(ct)) continue;
-                    int cy1 = int.Parse(cm.Groups[3].Value);
-                    int cy2 = int.Parse(cm.Groups[5].Value);
-                    if (cy1 >= cardTop && cy2 <= cardBottom + 10)
-                    {
-                        texts.Add(ct);
-                    }
-                }
-
-                string cardContent = string.Join(" | ", texts);
-
-                // Parse task progress if present (e.g. "6/7 tasks" or "6 / 7 tasks")
-                int tasksDone = -1;
-                int tasksTotal = -1;
-                Match mTasks = Regex.Match(cardContent, @"(\d+)\s*/\s*(\d+)\s*tasks", RegexOptions.IgnoreCase);
-                if (mTasks.Success)
-                {
-                    tasksDone = int.Parse(mTasks.Groups[1].Value);
-                    tasksTotal = int.Parse(mTasks.Groups[2].Value);
-                }
-
-                bool isMilestonesText = cardContent.IndexOf("All milestones completed", StringComparison.OrdinalIgnoreCase) >= 0;
-                bool isCooldown = Regex.IsMatch(cardContent, @"Unlocks\s*in\s*(?:\d+h|\d+m|[1-9]\d*s)", RegexOptions.IgnoreCase);
-                bool isReady = Regex.IsMatch(cardContent, @"(?:Use\s*app\s*for|Claim|Open\s*App|Usage\s*verified|Ready)", RegexOptions.IgnoreCase);
-
-                // Truly 100% finished: all tasks including bonus are completed (e.g. 7/7 tasks)
-                if (tasksDone >= 0 && tasksTotal > 0 && tasksDone >= tasksTotal)
-                {
-                    Log(string.Format("[Claimer] '{0}' is 100% completed ({1}/{2} tasks). Skipping.", cleanTitle, tasksDone, tasksTotal));
-                    if (skippedApps != null) { skippedApps.Add(rawTitle); skippedApps.Add(cleanTitle); }
-                    continue;
-                }
-
-                // If on cooldown on the card itself (e.g. "Unlocks in 4h")
-                if (isCooldown)
-                {
-                    if (skippedApps != null) { skippedApps.Add(rawTitle); skippedApps.Add(cleanTitle); }
-                    continue;
-                }
-
-                // CASE A: Standard ready offer (milestone ready to use or claim)
-                if (isReady)
-                {
-                    int tapX = 450;
-                    int tapY = ty1 + 75;
-                    clickedTitle = cleanTitle;
-                    if (skippedApps != null) { skippedApps.Add(rawTitle); skippedApps.Add(cleanTitle); }
-                    Log(string.Format("[ðŸ’Ž Claimer] Found ready offer '{0}'! Opening card at ({1}, {2})...", cleanTitle, tapX, tapY));
-                    AdbTap(tapX, tapY);
-                    return true;
-                }
-
-                // CASE B: "All milestones completed!" but tasks remain (e.g. 6/7 tasks) or unverified bonus!
-                // The Bonus is pending inside the detail view - must open to check if claimable or on cooldown!
-                if (isMilestonesText && (tasksDone < tasksTotal || tasksDone < 0))
-                {
-                    int tapX = 450;
-                    int tapY = ty1 + 75;
-                    clickedTitle = cleanTitle;
-                    if (skippedApps != null) { skippedApps.Add(rawTitle); skippedApps.Add(cleanTitle); }
-                    string taskInfo = (tasksDone >= 0 && tasksTotal > 0) ? string.Format(" ({0}/{1} tasks)", tasksDone, tasksTotal) : "";
-                    Log(string.Format("[ðŸŽ Bonus Verifier] '{0}'{1} has pending Bonus! Opening card to verify...", cleanTitle, taskInfo));
-                    AdbTap(tapX, tapY);
-                    return true;
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            Log("[Claimer] Error scanning offer cards: " + ex.Message);
-        }
-
-        return false;
-    }
-    private bool CheckAndClickLoadMore(string xml)
-    {
-        try
-        {
-            if (string.IsNullOrEmpty(xml)) return false;
-
-            // Robust check: match any node tag with "Load More" in text or content-desc
-            Match nodeMatch = Regex.Match(xml, @"<node\b[^>]*(?:text|content-desc)=""[^""]*Load More[^""]*""[^>]*>", RegexOptions.IgnoreCase);
-            if (nodeMatch.Success)
-            {
-                string tag = nodeMatch.Value;
-                int tapX = 450;
-                int tapY = 1450; // standard bottom-center position on 900x1600 screen
-
-                Match bMatch = Regex.Match(tag, @"bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
-                if (bMatch.Success)
-                {
-                    int x1 = int.Parse(bMatch.Groups[1].Value);
-                    int y1 = int.Parse(bMatch.Groups[2].Value);
-                    int x2 = int.Parse(bMatch.Groups[3].Value);
-                    int y2 = int.Parse(bMatch.Groups[4].Value);
-                    if (x2 > x1 && y2 > y1 && (x2 - x1) > 50 && (y2 - y1) > 15)
-                    {
-                        tapX = (x1 + x2) / 2;
-                        tapY = (y1 + y2) / 2;
-                    }
-                }
-
-                Log(string.Format("[💎 Claimer] Found 'Load More' button at ({0}, {1}). Tapping to reveal additional active offers...", tapX, tapY));
-                AdbTap(tapX, tapY);
-                Thread.Sleep(3000);
-                return true;
-            }
-        }
-        catch (Exception ex)
-        {
-            Log("[Claimer] Error in CheckAndClickLoadMore: " + ex.Message);
-        }
-        return false;
-    }
-    private void ProcessOfferAppDetails(string targetTitle, HashSet<string> cycleCompletedApps, HashSet<string> cooldownBonusApps = null)
-    {
-        int consecutiveLoops = 0;
-        int scrollAttempts = 0;
-        int consecutiveVerifyTaps = 0;
         string appTitle = targetTitle ?? "";
-        string offerPkg = "";
-
+        int verifyRetries = 0;
         try
         {
-            while (isAutoOffering && consecutiveLoops < 20)
+            for (int loop = 0; loop < 18 && isAutoOffering; loop++)
             {
-                consecutiveLoops++;
                 string xml = DumpAndReadXml("/sdcard/detail_chk.xml");
-                if (string.IsNullOrEmpty(xml))
+                if (string.IsNullOrEmpty(xml)) { Thread.Sleep(1000); continue; }
+
+                int cx, cy;
+                if (TryFindNodeBounds(xml, "Claim", out cx, out cy) || TryFindNodeBounds(xml, "CLAIM", out cx, out cy))
                 {
-                    Thread.Sleep(1000);
+                    AdbTap(cx, cy);
+                    lock (statsLock) { todayCoinsClaimed += 100; totalCoinsClaimed += 100; todayOffersClaimed++; totalOffersClaimed++; }
+                    AddClaimHistory(string.Format("{0} (+Claimed)", string.IsNullOrEmpty(appTitle) ? "Offer" : appTitle));
+                    Thread.Sleep(2000);
                     continue;
                 }
 
-                // Extract App Title for logging and cooldown tracking
-                Match tm = Regex.Match(xml, @"<node[^>]*class=""android\.widget\.TextView""[^>]*bounds=""\[102,\d+\]\[\d+,\d+\]""[^>]*text=""([^""]+)""");
-                if (tm.Success) appTitle = tm.Groups[1].Value.Trim();
-                if (string.IsNullOrEmpty(appTitle))
-                {
-                    Match tm2 = Regex.Match(xml, @"<node[^>]*text=""([^""]+)""[^>]*class=""android\.widget\.TextView""");
-                    if (tm2.Success) appTitle = tm2.Groups[1].Value.Trim();
-                }
-
-                // Extract Offer App Package Name from top of detail page (e.g. com.booking, com.ind.circuitpath, wni.WeathernewsTouch.jp)
-                MatchCollection pms = Regex.Matches(xml, @"<node[^>]*text=""([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)+)""");
-                foreach (Match pm in pms)
-                {
-                    string candidate = pm.Groups[1].Value.Trim();
-                    if (candidate != "com.quiz.earn.money.game" && 
-                        !candidate.StartsWith("android.") && 
-                        !candidate.StartsWith("com.android.") && 
-                        !candidate.StartsWith("com.google.") && 
-                        !candidate.Contains("accessibility"))
-                    {
-                        offerPkg = candidate;
-                        break;
-                    }
-                }
-
-                // 1. Check for Claim Button first! (Matches "Claim" or "CLAIM" in text or content-desc)
-                int cx, cy;
-                if ((TryFindNodeBounds(xml, "Claim", out cx, out cy) || 
-                     TryFindNodeBounds(xml, "CLAIM", out cx, out cy)) && cy < 1560)
-                {
-                    int rewardCoins = 100;
-                    try
-                    {
-                        MatchCollection cms = Regex.Matches(xml, @"<node[^>]*text=""([0-9]{2,5})""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
-                        int bestDist = int.MaxValue;
-                        foreach (Match cm in cms)
-                        {
-                            int ny = (int.Parse(cm.Groups[3].Value) + int.Parse(cm.Groups[5].Value)) / 2;
-                            int dist = Math.Abs(ny - cy);
-                            if (dist < bestDist && dist < 160)
-                            {
-                                bestDist = dist;
-                                int val;
-                                if (int.TryParse(cm.Groups[1].Value, out val) && val > 0)
-                                {
-                                    rewardCoins = val;
-                                }
-                            }
-                        }
-                    }
-                    catch {}
-
-                    Log(string.Format("[💎 Claimer] Milestone / Bonus ready! Tapping CLAIM (+{0} Coins) at ({1}, {2})...", rewardCoins, cx, cy));
-                    AdbTap(cx, cy);
-
-                    todayCoinsClaimed += rewardCoins;
-                    totalCoinsClaimed += rewardCoins;
-                    todayOffersClaimed++;
-                    totalOffersClaimed++;
-                    string titleTag = string.IsNullOrEmpty(appTitle) ? (string.IsNullOrEmpty(targetTitle) ? "Offer Milestone" : targetTitle) : appTitle;
-                    AddClaimHistory(string.Format("{0} (+{1:N0} Coins)", titleTag, rewardCoins));
-                    SaveStatsToFile();
-                    UpdateDataDashboard();
-
-                    consecutiveVerifyTaps = 0;
-                    Thread.Sleep(2000);
-
-                    // Check for reward confirmation popup / dialog ("Awesome!", "Great", "OK", "Collect", "+100 Coins", etc.)
-                    string popupXml = DumpAndReadXml("/sdcard/claim_popup.xml");
-                    int px, py;
-                    if (TryFindNodeBounds(popupXml, "Awesome", out px, out py) ||
-                        TryFindNodeBounds(popupXml, "OK", out px, out py) ||
-                        TryFindNodeBounds(popupXml, "Collect", out px, out py) ||
-                        TryFindNodeBounds(popupXml, "Continue", out px, out py) ||
-                        TryFindNodeBounds(popupXml, "Claim", out px, out py))
-                    {
-                        Log(string.Format("[💎 Claimer] Dismissing reward confirmation dialog at ({0}, {1})...", px, py));
-                        AdbTap(px, py);
-                        Thread.Sleep(1500);
-                    }
-
-                    continue; // Re-check if next milestone unlocked on this same page!
-                }
-
-                // 2. Check for "Verify Usage" OR "Open App" Button!
+                bool isAppNotDetected = Regex.IsMatch(xml, @"(app not detected|verification failed|not recognized|please install|app not found|already in your pending)", RegexOptions.IgnoreCase);
                 int vx = 0, vy = 0;
-                bool isVerify = TryFindNodeBounds(xml, "Verify Usage", out vx, out vy) || 
+                bool isVerify = TryFindNodeBounds(xml, "Verify Usage", out vx, out vy) ||
+                                TryFindNodeBounds(xml, "Verify Installation", out vx, out vy) ||
                                 TryFindNodeBounds(xml, "Verify", out vx, out vy);
+
+                if (isAppNotDetected || (isVerify && verifyRetries >= 2))
+                {
+                    int rx, ry;
+                    if (TryFindNodeBounds(xml, "Try Different App", out rx, out ry) ||
+                        TryFindNodeBounds(xml, "Try a different app", out rx, out ry) ||
+                        TryFindNodeBounds(xml, "Restart Offer", out rx, out ry))
+                    {
+                        AdbTap(rx, ry);
+                        Thread.Sleep(1800);
+                        string confXml = DumpAndReadXml("/sdcard/restart_conf.xml");
+                        int cfx, cfy;
+                        if (TryFindNodeBounds(confXml, "Restart", out cfx, out cfy) || TryFindNodeBounds(confXml, "Confirm", out cfx, out cfy)) AdbTap(cfx, cfy);
+                        Log("[Claimer] App not detected -> switched/restarted offer cleanly (zero uninstall).");
+                        return;
+                    }
+                    AdbSwipeRef(450, 1200, 450, 500, 320);
+                    Thread.Sleep(1000);
+                    verifyRetries++;
+                    if (verifyRetries >= 4)
+                    {
+                        Log("[Claimer] App not detected persisted -> backing out of Verify loop.");
+                        return;
+                    }
+                    continue;
+                }
+
                 int ox = 0, oy = 0;
-                bool isOpenApp = !isVerify && TryFindNodeBounds(xml, "Open App", out ox, out oy);
-
-                int actionX = isVerify ? vx : (isOpenApp ? ox : 0);
-                int actionY = isVerify ? vy : (isOpenApp ? oy : 0);
-
-                if ((isVerify || isOpenApp) && actionY < 1560)
+                bool isOpen = !isVerify && TryFindNodeBounds(xml, "Open App", out ox, out oy);
+                if (isVerify)
                 {
-                    // CASE A: Button is "Open App" AND usage is already 100% or verified!
-                    if (isOpenApp && IsUsageCompleted(xml, actionY))
+                    verifyRetries++;
+                    AdbTap(vx, vy);
+                    Thread.Sleep(4500);
+                    continue;
+                }
+                if (isOpen)
+                {
+                    AdbTap(ox, oy);
+                    Thread.Sleep(3000);
+                    DismissAppDialogs();
+                    string pkg = ExtractPackageName(GetCurrentFocus());
+                    if (pkg == "com.android.vending" || pkg.Contains("vending"))
                     {
-                        Log(string.Format("[💎 Claimer] Usage is already 100% / verified! Tapping 'Open App' button at ({0}, {1}) to trigger Claim unlock...", actionX, actionY));
-                        AdbTap(actionX, actionY);
-                        Thread.Sleep(4500); // Allow target app to launch and Quiz & Earn to register open
-
-                        Log("[💎 Claimer] Returning to Quiz & Earn to collect reward...");
-                        RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
-                        Thread.Sleep(3000);
-                        continue; // Re-check screen: Claim button is now unlocked and Section 1 will claim it!
+                        AdbKey(4); Thread.Sleep(500); LaunchTargetAppOnDevice(adbPort); break;
                     }
 
-                    // CASE B: Button is "Verify Usage", tap it first to submit/refresh usage verification!
-                    if (isVerify)
+                    int crashCount = 0;
+                    for (int sec = 65; sec > 0 && isAutoOffering; sec--)
                     {
-                        Log(string.Format("[💎 Claimer] Found 'Verify Usage' at ({0}, {1}). Tapping to verify usage...", actionX, actionY));
-                        AdbTap(actionX, actionY);
-                        Thread.Sleep(4000); // Allow Quiz & Earn to query UsageStats & update card UI
-
-                        // Re-dump XML right after tapping Verify Usage
-                        string afterVerifyXml = DumpAndReadXml("/sdcard/after_verify.xml");
-                        if (!string.IsNullOrEmpty(afterVerifyXml))
+                        if (sec % 10 == 0 && DismissAppDialogs() && isLastDismissCrash)
                         {
-                            xml = afterVerifyXml;
-
-                            // Did "Claim" appear after verifying?
-                            int ncx, ncy;
-                            if ((TryFindNodeBounds(xml, "Claim", out ncx, out ncy) || 
-                                 TryFindNodeBounds(xml, "CLAIM", out ncx, out ncy)) && ncy < 1560)
+                            crashCount++;
+                            if (crashCount >= 2)
                             {
-                                Log(string.Format("[💎 Claimer] Verified! 'Claim' button unlocked at ({0}, {1}). Proceeding to claim...", ncx, ncy));
-                                continue; // Will hit Section 1 on next iteration and claim!
+                                // Clean offer state reset (zero package removal)
+                                LaunchTargetAppOnDevice(adbPort);
+                                Thread.Sleep(2500);
+                                string stuckXml = DumpAndReadXml("/sdcard/stuck.xml");
+                                int sx, sy;
+                                if (TryFindNodeBounds(stuckXml, "Restart Offer", out sx, out sy)) AdbTap(sx, sy);
+                                else AdbSwipeRef(450, 1250, 450, 550, 350);
+                                Log("[Claimer] Repeated crash -> reset offer state cleanly (zero uninstall).");
+                                return;
                             }
                         }
+                        if (sec % 15 == 0) AdbSwipeRef(450, 700, 450, 720, 120);
+                        Thread.Sleep(1000);
                     }
-
-                    // Check if more time is still needed in the app (e.g. "28s more needed", "1m more needed")
-                    int staySeconds = ParseSecondsNeeded(xml, actionY);
-
-                    // If it was "Open App" and ParseSecondsNeeded didn't find specific remaining text (and not 100%), default to 65s (1 min)
-                    if (isOpenApp && staySeconds <= 0 && !IsUsageCompleted(xml, actionY))
-                    {
-                        staySeconds = 65;
-                    }
-
-                    if (staySeconds > 0)
-                    {
-                        Log(string.Format("[💎 Claimer] Usage required: {0}s ({1}m {2}s) in app '{3}'. Launching to complete time...", 
-                            staySeconds, staySeconds / 60, staySeconds % 60, string.IsNullOrEmpty(offerPkg) ? "target app" : offerPkg));
-
-                        // CRITICAL FIX: ALWAYS tap the "Open App" button directly on screen!
-                        if (isOpenApp)
-                        {
-                            Log(string.Format("[💎 Claimer] Tapping 'Open App' button on screen at ({0}, {1})...", actionX, actionY));
-                            AdbTap(actionX, actionY);
-                            Thread.Sleep(3500);
-                        }
-                        else if (!string.IsNullOrEmpty(offerPkg))
-                        {
-                            RunAdb(string.Format("shell monkey -p {0} -c android.intent.category.LAUNCHER 1", offerPkg));
-                            Thread.Sleep(3500);
-                        }
-                        else
-                        {
-                            AdbTap(actionX, actionY);
-                            Thread.Sleep(3500);
-                        }
-
-                        // Check and dismiss any notification / permission popup immediately on launch!
-                        DismissAppDialogs();
-
-                        string targetPkg = ExtractPackageName(GetCurrentFocus());
-                        if (targetPkg == "com.android.vending" || targetPkg.Contains("vending") || targetPkg.Contains("google.android.finsky"))
-                        {
-                            Log("[Claimer] Google Play Store opened instead of installed offer app (requires Google login or app install). Closing and skipping app...");
-                            AdbKey(4);
-                            Thread.Sleep(600);
-                            RunAdb("shell am force-stop com.android.vending");
-                            RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
-                            Thread.Sleep(1500);
-                            if (!string.IsNullOrEmpty(appTitle))
-                            {
-                                cycleCompletedApps.Add(appTitle);
-                            }
-                            break;
-                        }
-
-                        if ((string.IsNullOrEmpty(targetPkg) || targetPkg == "com.quiz.earn.money.game") && !string.IsNullOrEmpty(offerPkg))
-                        {
-                            Log(string.Format("[Claimer] Target app did not launch on button tap. Direct launching '{0}'...", offerPkg));
-                            RunAdb(string.Format("shell monkey -p {0} -c android.intent.category.LAUNCHER 1", offerPkg));
-                            Thread.Sleep(3500);
-                            targetPkg = ExtractPackageName(GetCurrentFocus());
-                        }
-
-                        if (targetPkg == "com.quiz.earn.money.game")
-                        {
-                            Log("[Claimer] Warning: Target app could not be opened. Returning to offers list...");
-                            break;
-                        }
-
-                        Log(string.Format("[💎 Claimer] Staying active in app '{0}' for {1}s...", targetPkg, staySeconds));
-
-                        int remaining = staySeconds;
-                        int keepAlive = 0;
-                        int crashCount = 0;
-                        while (isAutoOffering && remaining > 0)
-                        {
-                            if (autoRecoverBlueStacks && !IsBlueStacksProcessRunning())
-                            {
-                                EnsureBlueStacksAliveAndReady(string.Format("Offer App Usage ({0})", targetPkg));
-                                break;
-                            }
-                            int rm = remaining / 60;
-                            int rs = remaining % 60;
-                            string pkgShort = string.IsNullOrEmpty(targetPkg) ? "Offer App" : targetPkg;
-                            if (pkgShort.Contains("."))
-                            {
-                                string[] pts = pkgShort.Split('.');
-                                pkgShort = pts[pts.Length - 1];
-                            }
-                            string status = string.Format("💎 {0:D2}:{1:D2} left ({2})", rm, rs, pkgShort);
-
-                            SafeBeginInvoke(new Action(() => {
-                                if (lblBoostStatus != null)
-                                {
-                                    lblBoostStatus.Text = status;
-                                    lblBoostStatus.ForeColor = Color.FromArgb(180, 180, 185);
-                                }
-                            }));
-
-                            // Auto-dismiss blocking notification/permission dialogs or crash popups
-                            if (keepAlive == 3 || keepAlive == 7 || (keepAlive > 0 && keepAlive % 10 == 0))
-                            {
-                                bool dialogDismissed = DismissAppDialogs();
-                                if (dialogDismissed && isLastDismissCrash)
-                                {
-                                    crashCount++;
-                                    Log(string.Format("[💎 Claimer] App keeps stopping! Crash count={0}/2 (app={1})", crashCount, targetPkg));
-                                    if (crashCount >= 2)
-                                    {
-                                        Log("[💎 Claimer] App keeps stopping repeatedly! Returning to Quiz & Earn to tap 'Stuck? Restart Offer' under 2-min progress bar...");
-                                        RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
-                                        Thread.Sleep(3000);
-                                        string stuckXml = DumpAndReadXml("/sdcard/stuck_check.xml");
-                                        int sx, sy;
-                                        if (TryFindNodeBounds(stuckXml, "Stuck? Restart Offer", out sx, out sy) ||
-                                            TryFindNodeBounds(stuckXml, "Restart Offer", out sx, out sy))
-                                        {
-                                            Log(string.Format("[💎 Claimer] Tapping 'Stuck? Restart Offer' button at ({0}, {1})...", sx, sy));
-                                            AdbTap(sx, sy);
-                                        }
-                                        else
-                                        {
-                                            Log("[💎 Claimer] Scrolling down to tap 'Stuck? Restart Offer' under 2-min bar...");
-                                            RunAdb("shell input swipe 450 1300 450 600 350");
-                                            Thread.Sleep(1500);
-                                            AdbTap(450, 1568);
-                                        }
-                                        Thread.Sleep(2000);
-                                        string confirmXml = DumpAndReadXml("/sdcard/confirm_stuck.xml");
-                                        int cfx, cfy;
-                                        if (TryFindNodeBounds(confirmXml, "Restart", out cfx, out cfy) ||
-                                            TryFindNodeBounds(confirmXml, "Yes", out cfx, out cfy))
-                                        {
-                                            AdbTap(cfx, cfy);
-                                            Thread.Sleep(1500);
-                                        }
-                                        if (!string.IsNullOrEmpty(offerPkg))
-                                        {
-                                            RunAdb(string.Format("shell pm uninstall {0}", offerPkg));
-                                        }
-                                        if (!string.IsNullOrEmpty(appTitle))
-                                        {
-                                            cycleCompletedApps.Add(appTitle);
-                                        }
-                                        break;
-                                    }
-                                }
-                            }
-
-                            if (keepAlive % 15 == 0)
-                            {
-                                RunAdb("shell input swipe 450 700 450 720 120");
-                            }
-
-                            Thread.Sleep(1000);
-                            remaining--;
-                            keepAlive++;
-                        }
-
-                        if (!isAutoOffering) return;
-
-                        // User requirement: "cime again clime if the button there or if it veryfy tap it again to veryfy the time"
-                        Log("[💎 Claimer] Required time completed! Returning to Quiz & Earn...");
-                        RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
-                        Thread.Sleep(3000);
-
-                        consecutiveVerifyTaps = 0;
-
-                        // Check what's on screen upon returning:
-                        string retXml = DumpAndReadXml("/sdcard/after_usage.xml");
-                        int rcx, rcy;
-                        if ((TryFindNodeBounds(retXml, "Claim", out rcx, out rcy) || 
-                             TryFindNodeBounds(retXml, "CLAIM", out rcx, out rcy)) && rcy < 1560)
-                        {
-                            Log(string.Format("[💎 Claimer] Claim button already visible at ({0}, {1})! Claiming...", rcx, rcy));
-                            continue; // Section 1 will claim it!
-                        }
-
-                        int rvx, rvy;
-                        if ((TryFindNodeBounds(retXml, "Verify Usage", out rvx, out rvy) || 
-                             TryFindNodeBounds(retXml, "Verify", out rvx, out rvy)) && rvy < 1560)
-                        {
-                            Log(string.Format("[💎 Claimer] Returned from app! Tapping 'Verify Usage' at ({0}, {1}) to verify newly elapsed time...", rvx, rvy));
-                            AdbTap(rvx, rvy);
-                            Thread.Sleep(4000); // Allow Quiz & Earn to query UsageStats & update card
-                        }
-                        continue; // Re-check screen: if Claim -> claims; if more time needed -> goes back to app!
-                    }
-                    else
-                    {
-                        // staySeconds <= 0
-                        // User requirement: "or if it veryfy tap it again to veryfy the time"
-                        if (isVerify)
-                        {
-                            consecutiveVerifyTaps++;
-                            if (consecutiveVerifyTaps <= 2)
-                            {
-                                Log(string.Format("[💎 Claimer] Usage appears fulfilled. Tapping 'Verify Usage' again ({0}/2) to confirm with server...", consecutiveVerifyTaps));
-                                AdbTap(actionX, actionY);
-                                Thread.Sleep(4000);
-                                continue;
-                            }
-                            else
-                            {
-                                Log("[💎 Claimer] 'Verify Usage' tapped multiple times without unlocking Claim. Moving to inspect lower milestones...");
-                            }
-                        }
-                        else if (isOpenApp)
-                        {
-                            Log(string.Format("[💎 Claimer] Tapping 'Open App' button on screen at ({0}, {1})...", actionX, actionY));
-                            AdbTap(actionX, actionY);
-                            Thread.Sleep(4500);
-                            Log("[💎 Claimer] Returning to Quiz & Earn to check Claim button...");
-                            RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
-                            Thread.Sleep(3000);
-                            continue;
-                        }
-                    }
+                    LaunchTargetAppOnDevice(adbPort);
+                    Thread.Sleep(2500);
+                    continue;
                 }
 
-                // 3. Scroll Down to Reveal Lower Milestones & "BONUS REWARDS" section
-                // Many apps have 6+ standard milestones; BONUS REWARDS is at the bottom!
-                if (scrollAttempts < 3)
-                {
-                    scrollAttempts++;
-                    Log(string.Format("[ðŸ’Ž Claimer] Scrolling down to inspect BONUS REWARDS & lower milestones ({0}/3)...", scrollAttempts));
-                    RunAdb("shell input swipe 450 1100 450 400 350");
-                    Thread.Sleep(1500);
-                    continue; // Re-dump XML in the new scrolled position
-                }
-
-                // 4. Check if the app's remaining milestone or bonus is on cooldown
-                string cdStr = "";
-                Match cdMatch = Regex.Match(xml, @"text=""Unlocks\s*in\s*""[^>]*>\s*<node[^>]*text=""([0-9hm\s]+)""", RegexOptions.IgnoreCase);
-                if (cdMatch.Success)
-                {
-                    cdStr = cdMatch.Groups[1].Value.Trim();
-                }
-                else
-                {
-                    Match cdMatch2 = Regex.Match(xml, @"(?:Unlocks\s*in|After)\s*([0-9hm\s]+)", RegexOptions.IgnoreCase);
-                    if (cdMatch2.Success) cdStr = cdMatch2.Groups[1].Value.Trim();
-                }
-
-                string displayTitle = string.IsNullOrEmpty(appTitle) ? targetTitle : appTitle;
-                if (!string.IsNullOrEmpty(cdStr))
-                {
-                    Log(string.Format("[ðŸŽ Bonus Verified] '{0}' Bonus is locked on cooldown: Unlocks in {1}. Verified not missed!", displayTitle, cdStr));
-                    if (cooldownBonusApps != null)
-                    {
-                        if (!string.IsNullOrEmpty(targetTitle)) cooldownBonusApps.Add(targetTitle);
-                        if (!string.IsNullOrEmpty(appTitle)) cooldownBonusApps.Add(appTitle);
-                    }
-                }
-                else
-                {
-                    if (xml.Contains("All milestones completed") || xml.Contains("Bonus claimed") || xml.Contains("Completed"))
-                    {
-                        Log(string.Format("[âœ… Verified] '{0}' Bonus & all milestones have been verified and processed.", displayTitle));
-                    }
-                    else
-                    {
-                        Log(string.Format("[ðŸ’Ž Claimer] Verified '{0}': No active or claimable bonus found right now. Returning to offers list...", displayTitle));
-                    }
-                }
-
-                break;
+                if (loop < 3) { AdbSwipeRef(450, 1100, 450, 420, 350); Thread.Sleep(1200); }
+                else break;
             }
         }
         finally
         {
-            // CRITICAL FIX: ALWAYS record this app as processed in the cycle so the bot NEVER loops on the same app!
-            if (cycleCompletedApps != null)
-            {
-                if (!string.IsNullOrEmpty(targetTitle))
-                {
-                    cycleCompletedApps.Add(targetTitle);
-                    cycleCompletedApps.Add(WebUtility.HtmlDecode(targetTitle).Trim());
-                }
-                if (!string.IsNullOrEmpty(appTitle))
-                {
-                    cycleCompletedApps.Add(appTitle);
-                    cycleCompletedApps.Add(WebUtility.HtmlDecode(appTitle).Trim());
-                }
-            }
-
-            AdbKey(4); // BlueStacks / Android hardware Back button (KEYCODE_BACK)
-            Thread.Sleep(2000);
+            if (cycleCompletedApps != null && !string.IsNullOrEmpty(targetTitle)) cycleCompletedApps.Add(targetTitle);
+            AdbKey(4);
+            Thread.Sleep(1500);
         }
     }
 
@@ -4616,805 +1854,159 @@ public class QuizEarnApp : Form
     {
         try
         {
-            Log("[💎 Claimer] Initializing Auto-Offer Claimer...");
-            int totalAppsProcessed = 0;
-
-            // 1. Gather all online BlueStacks instances
-            List<string> targetDevices = new List<string>();
-            List<BlueStacksInstance> instances = DiscoverBlueStacksInstances();
-            foreach (var inst in instances)
-            {
-                string dev = "127.0.0.1:" + inst.Port;
-                string st = RunAdbDevice(dev, "get-state").Trim();
-                if (st.Equals("device", StringComparison.OrdinalIgnoreCase))
-                {
-                    if (!targetDevices.Contains(dev)) targetDevices.Add(dev);
-                }
-            }
-
-            if (targetDevices.Count == 0)
-            {
-                EnsureConnected();
-                if (!string.IsNullOrEmpty(adbPort)) targetDevices.Add(adbPort);
-            }
-
-            Log(string.Format("[💎 Claimer] Found {0} online instance(s) to process: {1}", targetDevices.Count, string.Join(", ", targetDevices)));
-
-            foreach (string dev in targetDevices)
+            foreach (string dev in GetAllConnectedAdbDevices())
             {
                 if (!isAutoOffering) break;
                 adbPort = dev;
-                UpdatePortLabel("Claimer: " + adbPort);
-                Log(string.Format("[💎 Claimer] === Processing Instance {0} ===", dev));
-
-                HashSet<string> cycleCompletedApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                HashSet<string> cooldownBonusApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                string lastOpenedTitle = "";
-                int consecutiveEmptyDumps = 0;
-                int unrecognizedCount = 0;
+                UpdateScreenResolution();
+                HashSet<string> completed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
                 while (isAutoOffering)
                 {
-                    if (autoRecoverBlueStacks && !IsBlueStacksProcessRunning())
-                    {
-                        EnsureBlueStacksAliveAndReady("Auto-Offer Claimer Loop");
-                        Thread.Sleep(2000);
-                        continue;
-                    }
-
-                    string curFocus = GetCurrentFocus();
-                    if (!curFocus.Contains("com.quiz.earn.money.game") && !curFocus.Contains("tabata") && !curFocus.Contains("vending"))
-                    {
-                        RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
-                        Thread.Sleep(2000);
-                    }
-
+                    if (!IsKnownQuizApp(GetCurrentFocus())) { LaunchTargetAppOnDevice(dev); Thread.Sleep(2000); }
                     string xml = DumpAndReadXml("/sdcard/offer_flow.xml");
-                    if (string.IsNullOrEmpty(xml) || !xml.Contains("<hierarchy"))
+                    if (string.IsNullOrEmpty(xml)) { Thread.Sleep(1000); continue; }
+
+                    if (xml.Contains("REWARDS") || xml.Contains("Remove Wrong App") || xml.Contains("Usage Progress"))
                     {
-                        consecutiveEmptyDumps++;
-                        if (consecutiveEmptyDumps >= 3)
-                        {
-                            Log(string.Format("[💎 Claimer] Instance {0} ADB unresponsive. Verifying...", dev));
-                            EnsureConnected();
-                            consecutiveEmptyDumps = 0;
-                        }
-                        Thread.Sleep(1000);
+                        ProcessOfferAppDetails("", completed);
                         continue;
                     }
-                    consecutiveEmptyDumps = 0;
-
-                    // SCREEN A: Are we inside an app detail page? (Look for REWARDS or Remove Wrong App)
-                    if (xml.Contains("REWARDS") || xml.Contains("Remove Wrong App") || xml.Contains("Usage Progress") || xml.Contains("Initial Install Reward"))
+                    int ax, ay;
+                    if (TryFindNodeBounds(xml, "Open App", out ax, out ay) || TryFindNodeBounds(xml, "Claim", out ax, out ay) || TryFindNodeBounds(xml, "My Offers", out ax, out ay))
                     {
-                        unrecognizedCount = 0;
-                        Log("[💎 Claimer] Inside offer app details page. Processing milestones & bonus...");
-                        ProcessOfferAppDetails(lastOpenedTitle, cycleCompletedApps, cooldownBonusApps);
-                        totalAppsProcessed++;
-                        Thread.Sleep(1500);
-
-                        // Safeguard: Verify if still on detail page
-                        string verifyXml = DumpAndReadXml("/sdcard/verify_back.xml");
-                        if (verifyXml.Contains("REWARDS") || verifyXml.Contains("Remove Wrong App") || verifyXml.Contains("Initial Install Reward"))
-                        {
-                            Log("[💎 Claimer] Still on detail page. Sending hardware Back button again...");
-                            AdbKey(4);
-                            Thread.Sleep(1500);
-                        }
+                        AdbTap(ax, ay);
+                        Thread.Sleep(2500);
                         continue;
                     }
-
-                    // SCREEN B: Are we on "My Super Offers" list?
-                    if (xml.Contains("My Super Offers") || xml.Contains("Pending Offers") || xml.Contains("How to Complete"))
-                    {
-                        unrecognizedCount = 0;
-                        if (xml.Contains("Failed to load offers"))
-                        {
-                            Log("[💎 Claimer] Detected 'Failed to load offers'. Tapping Refresh button...");
-                            AdbTap(846, 90);
-                            Thread.Sleep(3000);
-                            continue;
-                        }
-
-                        // Check if an offer's cooldown just hit 0m/0s - if so, refresh the list!
-                        if (Regex.IsMatch(xml, @"Unlocks\s*in\s*0[ms]", RegexOptions.IgnoreCase))
-                        {
-                            Log("[💎 Claimer] Detected offer with 0m cooldown! Tapping Refresh offers...");
-                            AdbTap(846, 90);
-                            Thread.Sleep(3000);
-                            cooldownBonusApps.Clear();
-                            cycleCompletedApps.Clear();
-                            continue;
-                        }
-
-                        Log("[💎 Claimer] On 'My Super Offers' list. Scanning for ready apps & bonus rewards...");
-
-                        // Check if "Load More" button is visible and tap it to reveal all pending offers!
-                        if (CheckAndClickLoadMore(xml))
-                        {
-                            xml = DumpAndReadXml("/sdcard/offer_flow.xml");
-                        }
-
-                        string clickedTitle;
-                        bool foundApp = FindAndClickReadyOfferCard(xml, cycleCompletedApps, out clickedTitle);
-                        if (foundApp)
-                        {
-                            lastOpenedTitle = clickedTitle;
-                            Thread.Sleep(2500);
-                            continue;
-                        }
-                        else
-                        {
-                            // Check lower cards by scrolling down up to 4 times
-                            bool foundOnScroll = false;
-                            for (int scrollPass = 1; scrollPass <= 4; scrollPass++)
-                            {
-                                Log(string.Format("[💎 Claimer] Scrolling down to find more ready offers (page {0}/4)...", scrollPass));
-                                RunAdb("shell input swipe 450 1200 450 400 350");
-                                Thread.Sleep(2000);
-                                string scrolledXml = DumpAndReadXml("/sdcard/offer_flow.xml");
-
-                                if (CheckAndClickLoadMore(scrolledXml))
-                                {
-                                    scrolledXml = DumpAndReadXml("/sdcard/offer_flow.xml");
-                                }
-
-                                if (Regex.IsMatch(scrolledXml, @"Unlocks\s*in\s*0[ms]", RegexOptions.IgnoreCase))
-                                {
-                                    Log("[💎 Claimer] Detected offer with 0m cooldown! Tapping Refresh offers...");
-                                    AdbTap(846, 90);
-                                    Thread.Sleep(3000);
-                                    cooldownBonusApps.Clear();
-                                    cycleCompletedApps.Clear();
-                                    scrolledXml = DumpAndReadXml("/sdcard/offer_flow.xml");
-                                }
-                                if (FindAndClickReadyOfferCard(scrolledXml, cycleCompletedApps, out clickedTitle))
-                                {
-                                    lastOpenedTitle = clickedTitle;
-                                    foundOnScroll = true;
-                                    break;
-                                }
-                            }
-
-                            if (!foundOnScroll)
-                            {
-                                MatchCollection cdMatches = Regex.Matches(xml, @"Unlocks\s*in\s*([0-9hm\s]+)", RegexOptions.IgnoreCase);
-                                string nextUnlock = "a few hours";
-                                if (cdMatches.Count > 0)
-                                {
-                                    nextUnlock = cdMatches[0].Groups[1].Value.Trim();
-                                }
-                                Log(string.Format("[💎 Claimer] [{0}] All pending offers are on cooldown or completed! Next offer unlocks in ~{1}.", dev, nextUnlock));
-                                
-                                SafeBeginInvoke(new Action(() => {
-                                    if (lblBoostStatus != null)
-                                    {
-                                        lblBoostStatus.Text = string.Format("Cooldown (Next: {0})", nextUnlock);
-                                        lblBoostStatus.ForeColor = Color.FromArgb(150, 150, 155);
-                                    }
-                                }));
-
-                                AdbKey(4);
-                                Thread.Sleep(1500);
-                                break; // Done with this instance, move to next
-                            }
-                            continue;
-                        }
-                    }
-
-                    // SCREEN C0: 25 Gems Milestone / Start Offer Screen
-                    if (xml.Contains("Gems Collected") || (xml.Contains("25") && xml.Contains("1000") && (xml.Contains("Start Offer") || xml.Contains("Start"))))
-                    {
-                        unrecognizedCount = 0;
-                        Log("[💎 Claimer] 25 Gems Milestone reached! Tapping 'Start Offer' button...");
-                        int sox, soy;
-                        if (TryFindNodeBounds(xml, "Start Offer", out sox, out soy) || TryFindNodeBounds(xml, "Start", out sox, out soy))
-                        {
-                            AdbTap(sox, soy);
-                        }
-                        else
-                        {
-                            AdbTap(450, 1226);
-                        }
-                        Thread.Sleep(3500);
-                        continue;
-                    }
-
-                    // SCREEN C: Are we on Quiz screen?
-                    if (xml.Contains("captchas for Guaranteed") || xml.Contains("My Offers") || (xml.Contains("Quiz") && xml.Contains("Super Offer")))
-                    {
-                        unrecognizedCount = 0;
-                        Log("[💎 Claimer] Found Quiz screen. Opening 'My Offers'...");
-                        int tx, ty;
-                        if (TryFindNodeBounds(xml, "My Offers", out tx, out ty))
-                        {
-                            AdbTap(tx, ty);
-                        }
-                        else
-                        {
-                            AdbTap(450, 832);
-                        }
-                        Thread.Sleep(3000);
-                        continue;
-                    }
-
-                    // SCREEN D: Are we on Home screen?
-                    if (xml.Contains("SUPER OFFER") || (xml.Contains("Guaranteed") && xml.Contains("1,000")) || (xml.Contains("Go to Wallet") && xml.Contains("Tasks")))
-                    {
-                        unrecognizedCount = 0;
-                        Log("[💎 Claimer] On Home screen. Tapping Super Offer card...");
-                        int scx, scy;
-                        if (TryFindNodeBounds(xml, "SUPER OFFER", out scx, out scy) || 
-                            TryFindNodeBounds(xml, "1,000", out scx, out scy) ||
-                            TryFindNodeBounds(xml, "Claim", out scx, out scy))
-                        {
-                            AdbTap(scx, Math.Min(scy + 40, 640));
-                        }
-                        else
-                        {
-                            AdbTap(265, 570);
-                        }
-                        Thread.Sleep(3000);
-                        continue;
-                    }
-
-                    // SCREEN E: Ad playing
-                    if (xml.Contains("Ad") || xml.Contains("Reward in") || xml.Contains("video will end in") || xml.Contains("Sponsored"))
-                    {
-                        unrecognizedCount = 0;
-                        Log("[💎 Claimer] Ad detected during claim flow. Dismissing...");
-                        DismissAppDialogs();
-                        AdbTap(846, 60);
-                        AdbTap(54, 60);
-                        Thread.Sleep(2000);
-                        continue;
-                    }
-
-                    unrecognizedCount++;
-                    if (unrecognizedCount <= 3)
-                    {
-                        Log(string.Format("[💎 Claimer] Screen unrecognized ({0}/3), waiting for screen to settle...", unrecognizedCount));
-                        Thread.Sleep(2000);
-                        continue;
-                    }
-
-                    unrecognizedCount = 0;
-                    Log("[💎 Claimer] Navigating to Quiz & Earn Home screen...");
-                    RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
-                    Thread.Sleep(2500);
+                    break;
                 }
             }
-
-            Log(string.Format("[💎 Claimer] Auto-Offer session complete across all instances! Processed {0} apps.", totalAppsProcessed));
-            try { System.Media.SystemSounds.Asterisk.Play(); } catch {}
-        }
-        catch (Exception ex)
-        {
-            Log("[💎 Claimer] Error: " + ex.Message);
         }
         finally
         {
-            isAutoOffering = false;
-            isBoosting = false;
-            SafeBeginInvoke(new Action(() => {
-                if (lblBoostStatus != null)
-                {
-                    lblBoostStatus.Text = "Claimer: Idle";
-                    lblBoostStatus.ForeColor = Color.FromArgb(110, 110, 115);
-                }
-            }));
+            isAutoOffering = false; isBoosting = false;
+            SafeBeginInvoke(() => lblBoostStatus.Text = "Claimer: Idle");
         }
-    }
-
-    private void BtnAutoOffer_Click(object sender, EventArgs e)
-    {
-        StartAutoOfferClaimer();
-    }
-
-    private void BtnAutoOfferStop_Click(object sender, EventArgs e)
-    {
-        StopAutoOfferClaimer();
-    }
-
-    private void StartAutoOfferClaimer()
-    {
-        if (isAutoOffering)
-        {
-            Log("[💎 Claimer] Auto-Offer Claimer is already running!");
-            return;
-        }
-
-        if (!EnsureConnected())
-        {
-            if (autoRecoverBlueStacks && !IsBlueStacksProcessRunning())
-            {
-                Log("[🛡️ Watchdog] BlueStacks not running. Auto-launching BlueStacks before starting claimer...");
-                EnsureBlueStacksAliveAndReady("Auto-Offer Claimer Startup");
-            }
-            Log("[💎 Claimer] ADB not connected yet! Turn on ADB in emulator/phone first.");
-            return;
-        }
-        isAdbConnected = true;
-
-        isAutoOffering = true;
-        isBoosting = true;
-        Log("[💎 Claimer] Starting 1-Click Auto-Offer Claimer...");
-
-        autoOfferThread = new Thread(new ThreadStart(AutoOfferWorkerLoop));
-        autoOfferThread.IsBackground = true;
-        autoOfferThread.Start();
-    }
-    private void StopAutoOfferClaimer()
-    {
-        if (isAutoOffering || isBoosting)
-        {
-            isAutoOffering = false;
-            isBoosting = false;
-            Log("[💎 Claimer] Auto-Offer Claimer stopped by user.");
-            SafeBeginInvoke(new Action(() => {
-                if (lblBoostStatus != null)
-                {
-                    lblBoostStatus.Text = "Claimer: Stopped";
-                    lblBoostStatus.ForeColor = Color.FromArgb(135, 135, 140);
-                }
-            }));
-        }
-    }
-
-    private void EnsurePortraitOrientation()
-    {
-        try
-        {
-            string disp = RunAdb("shell dumpsys display");
-            if (disp.Contains("real 1600 x 900") || disp.Contains("rotation 1") || disp.Contains("rotation 3"))
-            {
-                Log("[🛡️ Orientation Guard] Landscape orientation detected! Locking BlueStacks back to Portrait (900x1600)...");
-                RunAdb("shell settings put system accelerometer_rotation 0");
-                RunAdb("shell settings put system user_rotation 0");
-                RunAdb("shell cmd window user-rotation lock 0");
-            }
-        }
-        catch {}
     }
 
     private bool CheckAndEscapeForeignApp()
     {
-        EnsurePortraitOrientation();
         if (isBoosting || isAutoOffering) return false;
         string focus = GetCurrentFocus();
         if (string.IsNullOrEmpty(focus)) return false;
 
-        // 1. Chrome browser redirect
         if (focus.Contains("com.android.chrome"))
         {
-            Log("[Guard] Browser overlay detected! Closing and returning to Quiz & Earn...");
-            AdbKey(4);
-            Thread.Sleep(400);
+            AdbKey(4); Thread.Sleep(400);
             RunAdb("shell am force-stop com.android.chrome");
-            Thread.Sleep(400);
-            RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
-            Thread.Sleep(3000); // 3-second cooldown to let the ad UI settle without clicking overlays
+            LaunchTargetAppOnDevice(adbPort);
+            Thread.Sleep(2500);
             return true;
         }
-
-        // 1b. Google Play Store redirect - Allow during Super Offer or APK assistant
-        if (focus.Contains("com.android.vending") || focus.Contains("google.android.finsky"))
-        {
-            if (isAutoOffering || isBoosting) return false;
-            string accCheck = RunAdb("shell dumpsys accessibility | grep quizearn.assistant");
-            if (accCheck.Contains("quizearn.assistant"))
-            {
-                return false; // Let APK Assistant handle Play Store offer installation
-            }
-
-            Log("[Guard] Play Store overlay detected! Closing and returning to Quiz & Earn...");
-            AdbKey(4);
-            Thread.Sleep(400);
-            RunAdb("shell am force-stop com.android.vending");
-            Thread.Sleep(400);
-            RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
-            Thread.Sleep(3000);
-            return true;
-        }
-
-        // 2. Filter known activities that are legitimate
-        bool isOurApp = focus.Contains("com.quiz.earn.money.game") || focus.Contains("com.rayole.cashmafia2");
-        bool isAd = focus.Contains("AdActivity") || focus.Contains("UnityPlayerActivity") || 
-                    focus.Contains("IronSource") || focus.Contains("Vungle") || 
-                    focus.Contains("AppLovin") || focus.Contains("mbridge") || 
-                    focus.Contains("com.google.android.gms") || focus.Contains("com.tapjoy") ||
-                    focus.Contains("FullScreenAd") || focus.Contains("RewardedAd");
-        bool isSystem = focus.ToLower().Contains("launcher") || focus.Contains("SystemUI") || focus.Contains("NexusLauncher");
-
-        if (isOurApp || isAd) return false;
-
-        // 3. Android Home / Launcher screen
-        if (isSystem)
-        {
-            Log("[Watchdog] Launcher active. Relaunching Quiz & Earn...");
-            RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
-            Thread.Sleep(2000);
-            AdbTapRef(683, 1439);
-            return true;
-        }
-
-        // 4. Foreign Third-Party App opened by ad (e.g. installed shopping/ad apps)
-        Match mPkg = Regex.Match(focus, @"([a-zA-Z0-9_\.]+\.[a-zA-Z0-9_]+)");
-        string foreignPkg = mPkg.Success ? mPkg.Groups[1].Value : "";
-        if (!string.IsNullOrEmpty(foreignPkg) && !foreignPkg.Contains("com.quiz.earn") && !foreignPkg.Contains("com.rayole") && !foreignPkg.Contains("android.") && !foreignPkg.Contains("quizearn.assistant"))
-        {
-            Log(string.Format("[Guard] Foreign ad app opened ({0})! Force-closing and restoring Quiz & Earn...", foreignPkg));
-            RunAdb("shell am force-stop " + foreignPkg);
-            Thread.Sleep(300);
-            AdbKey(4);
-            Thread.Sleep(400);
-            RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
-            Thread.Sleep(1200);
-            return true;
-        }
-
         return false;
     }
 
     private bool TryFindAndClickAdButton(string xml, int elapsedSeconds)
     {
         if (string.IsNullOrEmpty(xml)) return false;
+        if (xml.Contains("Select the correct number") || xml.Contains("Collect Gem") || xml.Contains("Congratulations")) return false;
 
-        // CRITICAL GUARD: Never treat Quiz screen navigation or Offer screens as ad close/skip buttons!
-        if (xml.Contains("Select the correct number") || 
-            xml.Contains("My Super Offers") || xml.Contains("active pending") || 
-            xml.Contains("Pending Offers") || xml.Contains("How to Complete") ||
-            xml.Contains("Installed about") || xml.Contains("Unlocks in") ||
-            xml.Contains("milestone") || xml.Contains("Milestone") ||
-            xml.Contains("tasks") || xml.Contains("Task") ||
-            (xml.Contains("Super Offer") && (xml.Contains("gems") || xml.Contains("/25") || xml.Contains("attempts left"))) ||
-            (xml.Contains("Quiz") && (xml.Contains("attempts left") || xml.Contains("gems"))))
+        if (Regex.IsMatch(xml, @"(lose your reward|resume video|keep watching)", RegexOptions.IgnoreCase))
         {
-            return false;
-        }
-
-        // Specific detection for Playable / Interactive Ads (e.g. Zivame, Reward granted)
-        if (xml.Contains("Reward granted") || xml.Contains("Reward Granted") || xml.Contains("reveal matching pairs") || xml.Contains("matching pairs") || xml.Contains("Complete for an instant reward") || xml.Contains("Zivame"))
-        {
-            Log("[Ad] Interactive / Playable ad detected! Tapping top-right Close (X)...");
-            // Direct hit on the exact X button (image coordinates scale to center 824, 71)
-            AdbTapRef(824, 71);
-            Thread.Sleep(300);
-            AdbTapRef(850, 70);
-            Thread.Sleep(300);
-            AdbTapRef(824, 71);
-            Thread.Sleep(500);
-
-            string reFocus = GetCurrentFocus();
-            if (reFocus.Contains("AdActivity") || reFocus.Contains("com.android.vending"))
-            {
-                AdbKey(4);
-            }
+            int rx, ry;
+            if (TryFindNodeBounds(xml, "RESUME", out rx, out ry) || TryFindNodeBounds(xml, "Continue", out rx, out ry))
+                AdbTap(rx, ry);
+            else AdbTapRef(650, 610);
             return true;
         }
 
-        // Specific detection for IronSource storePromoContainer modal
-        if (xml.Contains("storePromoContainer"))
-        {
-            Match mImg = Regex.Match(xml, @"<node [^>]*class=""android\.widget\.Image""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
-            if (mImg.Success)
-            {
-                int ix1 = int.Parse(mImg.Groups[1].Value);
-                int iy1 = int.Parse(mImg.Groups[2].Value);
-                int ix2 = int.Parse(mImg.Groups[3].Value);
-                int iy2 = int.Parse(mImg.Groups[4].Value);
-                int icx = (ix1 + ix2) / 2;
-                int icy = (iy1 + iy2) / 2;
-                if (icx >= (int)(devWidth * 0.85) && icy <= (int)(devHeight * 0.12))
-                {
-                    Log(string.Format("[Ad] Detected promo card Close (X) at ({0}, {1})! Tapping...", icx, icy));
-                    AdbTap(icx, icy);
-                    return true;
-                }
-            }
-            Log("[Ad] Tapping promo card Close (X) fallback...");
-            AdbTapRef(870, 95);
-            return true;
-        }
-
-        // Specific detection for "Close Video?" / "Resume" / "Leave ad" confirmation dialogs
-        // STRICT SAFETY: If "Skip This Milestone?" confirmation dialog appears, TAP CANCEL! NEVER skip milestones!
-        if (Regex.IsMatch(xml, @"(Skip This Milestone|Skip milestone)", RegexOptions.IgnoreCase))
-        {
-            Match mCancel = Regex.Match(xml, @"<node [^>]*text=""Cancel""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""", RegexOptions.IgnoreCase);
-            if (mCancel.Success)
-            {
-                int cx = (int.Parse(mCancel.Groups[1].Value) + int.Parse(mCancel.Groups[3].Value)) / 2;
-                int cy = (int.Parse(mCancel.Groups[2].Value) + int.Parse(mCancel.Groups[4].Value)) / 2;
-                Log(string.Format("[🛡️ Safety] Dismissing 'Skip This Milestone?' dialog by tapping Cancel at ({0}, {1})...", cx, cy));
-                AdbTap(cx, cy);
-                return true;
-            }
-            AdbTap(450, 953);
-            return true;
-        }
-
-        // STRICT SAFETY: If "Close Ad? You will lose your reward" dialog appears, TAP RESUME! NEVER forfeit rewards!
-        if (Regex.IsMatch(xml, @"(lose your reward|lose reward|won't get your reward|without reward|close ad\?|leave ad\?|close video\?|reward will be lost|resume video|keep watching)", RegexOptions.IgnoreCase))
-        {
-            Match mResume = Regex.Match(xml, @"<node [^>]*(?:text|content-desc)=""(RESUME|Resume|Resume Video|Keep Watching|Continue|Stay)""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""", RegexOptions.IgnoreCase);
-            if (mResume.Success)
-            {
-                int cx = (int.Parse(mResume.Groups[2].Value) + int.Parse(mResume.Groups[4].Value)) / 2;
-                int cy = (int.Parse(mResume.Groups[3].Value) + int.Parse(mResume.Groups[5].Value)) / 2;
-                Log(string.Format("[🛡️ Safety] Ad confirmation detected! Tapping RESUME at ({0}, {1}) to keep reward...", cx, cy));
-                AdbTap(cx, cy);
-                return true;
-            }
-            int defX = (int)(devWidth * 0.72);
-            int defY = (int)(devHeight * 0.38);
-            Log(string.Format("[🛡️ Safety] Ad confirmation detected! Tapping estimated RESUME at ({0}, {1}) to keep reward...", defX, defY));
-            AdbTap(defX, defY);
-            return true;
-        }
-
-        if (Regex.IsMatch(xml, @"(close video|leave ad|exit ad)", RegexOptions.IgnoreCase) && !Regex.IsMatch(xml, @"(lose|reward|coins)", RegexOptions.IgnoreCase))
-        {
-            Match mCloseBtn = Regex.Match(xml, @"<node [^>]*text=""(Close Video|Close|Yes|Leave|Exit)""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""", RegexOptions.IgnoreCase);
-            if (mCloseBtn.Success)
-            {
-                int bx1 = int.Parse(mCloseBtn.Groups[2].Value);
-                int by1 = int.Parse(mCloseBtn.Groups[3].Value);
-                int bx2 = int.Parse(mCloseBtn.Groups[4].Value);
-                int by2 = int.Parse(mCloseBtn.Groups[5].Value);
-                int bcx = (bx1 + bx2) / 2;
-                int bcy = (by1 + by2) / 2;
-                Log(string.Format("[Ad] Detected confirmation dialog button '{0}' at ({1}, {2})! Tapping...", mCloseBtn.Groups[1].Value, bcx, bcy));
-                AdbTap(bcx, bcy);
-                return true;
-            }
-        }
-
-        MatchCollection matches = Regex.Matches(xml, @"<node [^>]+>");
-        foreach (Match m in matches)
+        foreach (Match m in Regex.Matches(xml, @"<node [^>]+>"))
         {
             string txt = m.Value;
+            if (Regex.IsMatch(txt, @"(Sponsored|Install|Download|Learn More|Google Play)", RegexOptions.IgnoreCase)) continue;
+            bool isClose = Regex.IsMatch(txt, @"(close|dismiss|mbridge_iv_close|close_button|btn_close|tt_video_ad_close|iv_close|al_close_button|no thanks|close ad)", RegexOptions.IgnoreCase);
+            Match bm = Regex.Match(txt, @"bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
+            if (!bm.Success) continue;
 
-            if (Regex.IsMatch(txt, @"(Ad \d of|Sponsored|\bOpen\b|\bOPEN\b|\bPlay\b|\bInstall\b|\bDownload\b|\bGet\b|\bUpdate\b|\bShop\b|\bVisit\b|Learn More|Google Play|fullscreen|overlay|interceptor|touch_layer)", RegexOptions.IgnoreCase))
+            int x1 = int.Parse(bm.Groups[1].Value), y1 = int.Parse(bm.Groups[2].Value);
+            int x2 = int.Parse(bm.Groups[3].Value), y2 = int.Parse(bm.Groups[4].Value);
+            int w = x2 - x1, h = y2 - y1;
+            int cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
+
+            if (isClose && w >= 10 && w <= (int)(devWidth * 0.42) && h >= 10 && h <= (int)(devHeight * 0.16))
             {
-                continue;
+                AdbTap(cx, cy);
+                return true;
             }
-
-            // STRICT FORBIDDEN CHECK: Never touch bare skip links or offer milestone buttons!
-            if (Regex.IsMatch(txt, @"(text=""Skip""|content-desc=""Skip""|text=""Skipping|milestone|proceed|task|submit proof|upload proof|proof|after \d+h)", RegexOptions.IgnoreCase))
+            if (elapsedSeconds >= 20 && w >= 12 && w <= 200 && h >= 12 && h <= 200 &&
+                ((x1 >= (int)(devWidth * 0.72) || x1 <= (int)(devWidth * 0.15)) && y1 <= (int)(devHeight * 0.14)))
             {
-                continue;
-            }
-
-            bool isMatch = Regex.IsMatch(txt, @"(close|dismiss|next-button|close-or-skip-button|mbridge_iv_close|close_button|btn_close|tt_video_ad_close|iv_close|ia_clickable_close_button|al_close_button|unity_close_button|vungle_close|btn_back|iv_back|button_back|no thanks|not now|close video|close ad|skip video|skip ad|leave|exit|✕|✖|⨯|×|\bX\b|>>|››|»|>\|)", RegexOptions.IgnoreCase);
-
-            Match bMatch = Regex.Match(txt, @"bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
-            if (bMatch.Success)
-            {
-                int x1 = int.Parse(bMatch.Groups[1].Value);
-                int y1 = int.Parse(bMatch.Groups[2].Value);
-                int x2 = int.Parse(bMatch.Groups[3].Value);
-                int y2 = int.Parse(bMatch.Groups[4].Value);
-                int w = x2 - x1;
-                int h = y2 - y1;
-
-                // Explicit match (enforce size & position to prevent tapping ad-traps)
-                if (isMatch && w >= 10 && w <= 380 && h >= 10 && h <= 250)
-                {
-                    bool isTextDialog = Regex.IsMatch(txt, @"(close video|skip video|no thanks|not now|leave|exit|yes)", RegexOptions.IgnoreCase);
-                    int cx = (x1 + x2) / 2;
-                    int cy = (y1 + y2) / 2;
-                    if (isTextDialog || cy <= (int)(devHeight * 0.28) || cx >= (int)(devWidth * 0.70) || cx <= (int)(devWidth * 0.30))
-                    {
-                        Log(string.Format("[Ad] Detected ad close/skip button at ({0}, {1})! Tapping...", cx, cy));
-                        AdbTap(cx, cy);
-                        return true;
-                    }
-                }
-
-                // Top-right corner after 20s (Guard against tapping 'OPEN' or 'INSTALL' headers)
-                if (!isMatch && elapsedSeconds >= 20 && w >= 15 && w <= 200 && h >= 15 && h <= 200 && (x1 >= (int)(devWidth * 0.72) && y1 <= (int)(devHeight * 0.14)))
-                {
-                    if (!Regex.IsMatch(txt, @"text=""\d+""") && !Regex.IsMatch(txt, @"\b(Open|Play|Install|Get|Update|Shop|Visit)\b", RegexOptions.IgnoreCase))
-                    {
-                        int cx = (x1 + x2) / 2;
-                        int cy = (y1 + y2) / 2;
-                        Log(string.Format("[Ad] Detected top-right ad close icon at ({0}, {1})! Tapping...", cx, cy));
-                        AdbTap(cx, cy);
-                        return true;
-                    }
-                }
-
-                // Top-left arrow after 20s
-                if (!isMatch && elapsedSeconds >= 20 && w >= 15 && w <= 160 && h >= 15 && h <= 160 && (x1 <= (int)(devWidth * 0.15) && y1 <= (int)(devHeight * 0.14)))
-                {
-                    if (!Regex.IsMatch(txt, @"\b(Open|Play|Install|Get|Update|Shop|Visit)\b", RegexOptions.IgnoreCase))
-                    {
-                        int cx = (x1 + x2) / 2;
-                        int cy = (y1 + y2) / 2;
-                        Log(string.Format("[Ad] Detected top-left ad skip arrow at ({0}, {1})! Tapping...", cx, cy));
-                        AdbTap(cx, cy);
-                        return true;
-                    }
-                }
+                AdbTap(cx, cy);
+                return true;
             }
         }
         return false;
     }
 
-    private void CloseAdActively()
+    private bool CloseAdActively()
     {
-        Log("[Ad] Watching ad... (hands-off to ensure reward callback)");
+        Log("[Ad] Waiting for ad playback & reward callback...");
         DateTime start = DateTime.Now;
+        bool sawAdLeftMainScreen = false;
 
-        // Phase 1: Wait 6 seconds initial buffer, then begin checking for skip/close
-        while ((DateTime.Now - start).TotalSeconds < 15)
+        while ((DateTime.Now - start).TotalSeconds < 45 && isRunning)
         {
             Thread.Sleep(1000);
-            string focus = GetCurrentFocus();
-
-            if ((DateTime.Now - start).TotalSeconds >= 6)
-            {
-                RunAdb("shell uiautomator dump --compressed /sdcard/ad_check.xml");
-                string chkXml = RunAdb("shell cat /sdcard/ad_check.xml");
-                if (chkXml.Contains("Quiz") || chkXml.Contains("Congratulations") || chkXml.Contains("Collect Gem") || chkXml.Contains("Super Offer") || chkXml.Contains("Select the correct number"))
-                {
-                    Log("[Ad] Successfully back in Quiz, proceeding!");
-                    adsClosed++;
-                    SaveStatsToFile();
-                    UpdateDashboard(lastCaptcha);
-                    return;
-                }
-
-                if (chkXml.Contains("Reward granted") || chkXml.Contains("Reward Granted") || chkXml.Contains("reveal matching pairs") || chkXml.Contains("Complete for an instant reward"))
-                {
-                    Log("[Ad] 'Reward granted' detected during playback! Closing ad immediately...");
-                    AdbTapRef(824, 71);
-                    Thread.Sleep(300);
-                    AdbTapRef(850, 70);
-                    Thread.Sleep(300);
-                    AdbKey(4);
-                    Thread.Sleep(1000);
-                    string reFocus = GetCurrentFocus();
-                    if (reFocus.Contains("MainActivity"))
-                    {
-                        adsClosed++;
-                        SaveStatsToFile();
-                        UpdateDashboard(lastCaptcha);
-                        return;
-                    }
-                }
-
-                // Check for early skip or close buttons available after 6 seconds
-                double earlyElapsed = (DateTime.Now - start).TotalSeconds;
-                if (TryFindAndClickAdButton(chkXml, (int)earlyElapsed))
-                {
-                    Thread.Sleep(1200);
-                    string reFocus = GetCurrentFocus();
-                    if (reFocus.Contains("MainActivity"))
-                    {
-                        Log("[Ad Closed] Successfully back in Quiz!");
-                        adsClosed++;
-                        SaveStatsToFile();
-                        UpdateDashboard(lastCaptcha);
-                        return;
-                    }
-                }
-            }
-
-            if (CheckAndEscapeForeignApp())
-            {
-                adsClosed++;
-                SaveStatsToFile();
-                UpdateDashboard(lastCaptcha);
-                return;
-            }
-        }
-
-        Log("[Ad] Searching for Skip / Close button...");
-
-        // Phase 2: Active close hunt
-        while ((DateTime.Now - start).TotalSeconds < 45)
-        {
-            string focus = GetCurrentFocus();
-            if (focus.Contains("MainActivity"))
-            {
-                Log("[Ad] Successfully back in Quiz!");
-                adsClosed++;
-                SaveStatsToFile();
-                UpdateDashboard(lastCaptcha);
-                return;
-            }
-
-            if (CheckAndEscapeForeignApp())
-            {
-                adsClosed++;
-                SaveStatsToFile();
-                UpdateDashboard(lastCaptcha);
-                return;
-            }
-
-            RunAdb("shell rm -f /sdcard/ad.xml");
-            RunAdb("shell uiautomator dump --compressed /sdcard/ad.xml");
-            string xml = RunAdb("shell cat /sdcard/ad.xml");
             double elapsed = (DateTime.Now - start).TotalSeconds;
+            string focus = GetCurrentFocus();
+            bool inAd = !IsKnownQuizApp(focus) && (focus.Contains("Ad") || focus.Contains("Unity") || focus.Contains("IronSource") || focus.Contains("AppLovin") || focus.Contains("Vungle"));
+            if (inAd) sawAdLeftMainScreen = true;
 
-            bool tapped = TryFindAndClickAdButton(xml, (int)elapsed);
-            if (tapped)
+            if (elapsed >= 6)
             {
-                Thread.Sleep(1500);
-                string reFocus = GetCurrentFocus();
-                if (reFocus.Contains("MainActivity"))
+                string chkXml = DumpAndReadXml("/sdcard/ad_check.xml");
+                bool onCollectGem = chkXml.Contains("Collect Gem") || chkXml.Contains("Watch an ad to collect") || chkXml.Contains("Congratulations");
+
+                if (onCollectGem && !sawAdLeftMainScreen)
                 {
-                    Log("[Ad Closed] Successfully back in Quiz!");
-                    adsClosed++;
-                    SaveStatsToFile();
-                    UpdateDashboard(lastCaptcha);
-                    return;
+                    Log("[Ad Warning] Rewarded ad failed to load (still on Collect Gem screen).");
+                    return false;
                 }
-            }
-            else
-            {
-                if (elapsed >= 22 && elapsed < 28)
+
+                if (IsKnownQuizApp(focus) && (chkXml.Contains("Select the correct number") || sawAdLeftMainScreen))
                 {
-                    AdbTapRef(835, 65);
-                    AdbTapRef(860, 50);
-                    AdbTapRef(54, 54);
-                    AdbTapRef(60, 65);
+                    Log("[Ad] Returned cleanly from ad.");
+                    adsClosed++; SaveStatsToFile(); UpdateDashboard(lastCaptcha);
+                    return true;
                 }
-                else if (elapsed >= 28)
+
+                if (TryFindAndClickAdButton(chkXml, (int)elapsed))
                 {
-                    Log("[Ad] Sending Back key to return to Quiz...");
-                    AdbKey(4);
-                    Thread.Sleep(1000);
-                    AdbTapRef(835, 65);
-                    AdbTapRef(860, 50);
-                    Thread.Sleep(800);
-                    string reFocus = GetCurrentFocus();
-                    if (reFocus.Contains("MainActivity"))
-                    {
-                        Log("[Ad Finished] Successfully back in Quiz!");
-                        adsClosed++;
-                        SaveStatsToFile();
-                        UpdateDashboard(lastCaptcha);
-                        return;
-                    }
+                    sawAdLeftMainScreen = true;
+                    Thread.Sleep(1200);
                 }
             }
 
-            Thread.Sleep(1000);
+            if (elapsed >= 28 && !IsKnownQuizApp(GetCurrentFocus()))
+            {
+                AdbKey(4);
+                Thread.Sleep(1000);
+            }
         }
-
-        // Phase 3: Final fallback
-        Log("[Ad Timeout] Pressing Back to return to Quiz screen...");
         AdbKey(4);
-        Thread.Sleep(1500);
+        return sawAdLeftMainScreen;
     }
 
-    private void RecoverFromFreeze()
+    private void RestartQuizAppCleanly(string reason)
     {
-        if (autoRecoverBlueStacks && (!IsBlueStacksProcessRunning() || !EnsureConnected()))
-        {
-            EnsureBlueStacksAliveAndReady("Quiz Solver Freeze Recovery");
-            return;
-        }
-
-        Log("[Watchdog] Checking app status for recovery...");
-        if (CheckAndEscapeForeignApp()) return;
-
-        Log("[Watchdog] Relaunching Quiz & Earn to clear freeze...");
-        AdbKey(4);
+        string pkg = GetTargetPackage();
+        Log(string.Format("[Recovery] {0} -> Cleanly restarting {1}...", reason, GetTargetAppLabel()));
+        ForceStopTargetApp(adbPort, pkg);
         Thread.Sleep(800);
-        RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
-        Thread.Sleep(2500);
-        AdbTapRef(683, 1439);
-        Thread.Sleep(1000);
-    }
-
-    private class DigitItem
-    {
-        public string Digit;
-        public int X;
+        LaunchTargetAppOnDevice(adbPort);
+        adReloadCooldownUntil = DateTime.Now.AddSeconds(8);
+        Thread.Sleep(3000);
     }
 
     private void BotWorkerLoop()
@@ -5423,580 +2015,266 @@ public class QuizEarnApp : Form
         {
             if (!EnsureConnected())
             {
-                if (autoRecoverBlueStacks && !IsBlueStacksProcessRunning())
-                {
-                    Log("[ðŸ›¡ï¸ Watchdog] BlueStacks not running on bot start. Launching automatically...");
-                    EnsureBlueStacksAliveAndReady("Quiz Solver Startup");
-                }
-
-                if (!EnsureConnected())
-                {
-                    Log("[ADB] No active device detected yet. Waiting for ADB to come online (turn on ADB in emulator/phone)...");
-                int waitSec = 0;
-                while (isRunning && !EnsureConnected() && waitSec < 45)
-                {
-                    Thread.Sleep(2000);
-                    waitSec += 2;
-                }
-
-                if (!EnsureConnected())
-                {
-                    Log("[Error] Timed out waiting for ADB. Please turn on ADB on your emulator or phone, then click Start.");
-                    StopBot();
-                    return;
-                }
+                if (autoRecoverBlueStacks && !IsBlueStacksProcessRunning()) EnsureBlueStacksAliveAndReady("Bot Startup");
+                if (!EnsureConnected()) { Log("[Error] No ADB device online."); StopBot(); return; }
             }
-        }
 
-            Log(string.Format("[ADB] Connected to device on {0}!", adbPort));
             UpdateScreenResolution();
-
-            // Optimize animators for emulators only
-            if (IsEmulatorDevice(adbPort))
-            {
-                RunAdb("shell settings put global window_animation_scale 0");
-                RunAdb("shell settings put global transition_animation_scale 0");
-                RunAdb("shell settings put global animator_duration_scale 0");
-            }
-
-            if (chkAutoMute.Checked)
-            {
-                SilenceAudio(true);
-            }
-
             while (isRunning)
             {
-                if (isBoosting)
-                {
-                    Thread.Sleep(1000);
-                    continue;
-                }
-
+                if (isBoosting) { Thread.Sleep(1000); continue; }
                 string focus = GetCurrentFocus();
-                bool isAdPlaying = !string.IsNullOrEmpty(focus) && (
-                    focus.Contains("AdActivity") || focus.Contains("UnityPlayerActivity") || 
-                    focus.Contains("IronSource") || focus.Contains("Vungle") || 
-                    focus.Contains("AppLovin") || focus.Contains("mbridge") || 
-                    focus.Contains("com.google.android.gms") || focus.Contains("com.tapjoy") ||
-                    focus.Contains("FullScreenAd") || focus.Contains("RewardedAd") ||
-                    focus.Contains("com.android.vending") || focus.Contains("google.android.finsky")
-                );
+                if (CheckAndEscapeForeignApp()) { lastProgressTime = DateTime.Now; continue; }
 
-                if (isAdPlaying || isAutoOffering || isBoosting)
+                if (focus.Contains("AdActivity") || focus.Contains("UnityPlayerActivity") || focus.Contains("IronSource"))
                 {
-                    lastProgressTime = DateTime.Now; // Postpone watchdog while ads or offers are actively running
-                }
-
-                double idleSec = (DateTime.Now - lastProgressTime).TotalSeconds;
-                if (idleSec > 120 && !isAdPlaying)
-                {
-                    RecoverFromFreeze();
-                    lastProgressTime = DateTime.Now;
-                    continue;
-                }
-
-                if (string.IsNullOrEmpty(focus) && autoRecoverBlueStacks && !IsBlueStacksProcessRunning())
-                {
-                    EnsureBlueStacksAliveAndReady("Quiz Solver Loop");
-                    lastProgressTime = DateTime.Now;
-                    continue;
-                }
-                if (CheckAndEscapeForeignApp())
-                {
-                    lastProgressTime = DateTime.Now;
-                    Thread.Sleep(800);
-                    continue;
-                }
-
-                if (focus.Contains("AdActivity") || focus.Contains("UnityPlayerActivity") || focus.Contains("IronSource") || focus.Contains("VungleActivity"))
-                {
-                    Log("[Ad] Ad activity detected in foreground!");
                     CloseAdActively();
                     lastProgressTime = DateTime.Now;
                     continue;
                 }
 
-                string xml = RunAdb("shell \"uiautomator dump --compressed /sdcard/cur.xml >/dev/null 2>&1 && cat /sdcard/cur.xml\"");
+                string xml = DumpAndReadXml("/sdcard/cur.xml");
+                if (string.IsNullOrEmpty(xml)) { Thread.Sleep(turboSpeedEnabled ? 220 : 600); continue; }
 
-                if (string.IsNullOrEmpty(xml) || xml.Contains("ERROR"))
-                {
-                    Thread.Sleep(chkTurboSpeed.Checked ? 200 : 600);
-                    continue;
-                }
-
-                // Live Gem Count reading from Quiz screen
                 Match mGemSingle = Regex.Match(xml, @"(?:text|content-desc)=""(\d{1,2})\s*/\s*25");
-                if (mGemSingle.Success)
-                {
-                    currentOfferGems = int.Parse(mGemSingle.Groups[1].Value);
-                    UpdateDashboard(lastCaptcha);
-                }
-                else
-                {
-                    Match mGemSplit = Regex.Match(xml, @"text=""(\d{1,2})""[^>]*bounds=""\[\d+,\d+\]\[\d+,\d+\]""\s*/>\s*<node[^>]*text=""/""[^>]*bounds=""\[\d+,\d+\]\[\d+,\d+\]""\s*/>\s*<node[^>]*text=""25""");
-                    if (mGemSplit.Success)
-                    {
-                        currentOfferGems = int.Parse(mGemSplit.Groups[1].Value);
-                        UpdateDashboard(lastCaptcha);
-                    }
-                }
+                if (mGemSingle.Success) { currentOfferGems = int.Parse(mGemSingle.Groups[1].Value); UpdateDashboard(lastCaptcha); }
 
-                // CASE 1: 25 GEMS STOPPING AND ALERT (Super Offer Unlocked)
-                bool is25GemsScreen = currentOfferGems >= 25 || 
-                                      Regex.IsMatch(xml, @"(?:text|content-desc)=""25\s*/\s*25") ||
-                                      Regex.IsMatch(xml, @"text=""25""[^>]*bounds=""\[\d+,\d+\]\[\d+,\d+\]""\s*/>\s*<node[^>]*text=""/""[^>]*bounds=""\[\d+,\d+\]\[\d+,\d+\]""\s*/>\s*<node[^>]*text=""25""") ||
-                                      xml.Contains("Super Offer Unlocked") || 
-                                      xml.Contains("Super Task Unlocked");
-
-                if (is25GemsScreen)
+                // CASE 1: True 25/25 Gems Milestone
+                if (currentOfferGems >= 25 || xml.Contains("Super Offer Unlocked") || xml.Contains("Super Task Unlocked"))
                 {
                     if (!hasCountedThis25GemCycle)
                     {
                         hasCountedThis25GemCycle = true;
-                        today25GemsCount++;
-                        total25GemsCount++;
-                        AddClaimHistory(string.Format("25 Gems Milestone Hit (Cycle #{0})", total25GemsCount));
-                        SaveStatsToFile();
-                        UpdateDataDashboard();
+                        lock (statsLock) { today25GemsCount++; total25GemsCount++; }
+                        AddClaimHistory("25 Gems Milestone Hit");
                     }
-
-                    Log("[ALERT] 25 GEMS TARGET REACHED! 1,000 Coins Super Offer unlocked. Bot STOPPED automatically.");
-                    Play25GemsMilestoneAlert();
-
-                    if (this.InvokeRequired)
-                    {
-                        SafeBeginInvoke(new Action(delegate {
-                            lblStatus.Text = "STOPPED - 25 Gems Reached! (Claim Ready)";
-                            lblStatus.ForeColor = Color.FromArgb(76, 175, 80);
-                        }));
-                    }
-
-                    currentOfferGems = 0;
-                    hasCountedThis25GemCycle = false;
-                    isPending25thGemStop = false;
+                    Log("[ALERT] 25 GEMS TARGET REACHED! Stopping cleanly.");
                     StopBot();
                     return;
                 }
 
-                // CASE 2: Daily Streak modals
-                if (xml.Contains("Daily Streak"))
-                {
-                    Log("[Streak] Dismissing Daily Streak screen...");
-                    AdbKey(4);
-                    Thread.Sleep(1000);
-                    continue;
-                }
-
-                if (xml.Contains("Start Your Streak Journey") || xml.Contains("Let's go") || xml.Contains("Your Streak is broken!"))
-                {
-                    Log("[Streak] Dismissing Streak Journey modal...");
-                    AdbTapRef(450, 1537);
-                    Thread.Sleep(1000);
-                    continue;
-                }
-
-                // CASE 3: Home Screen (Tap on 1,000 Super Offer 'Claim')
-                if ((xml.Contains("SUPER OFFER") || xml.Contains("1,000") || xml.Contains("Guaranteed") || xml.Contains("Hi, ")) && (xml.Contains("Claim") || xml.Contains("Go to Wallet") || xml.Contains("Daily Win")))
+                // CASE 4: Congratulations / Collect Gem (CHECKED BEFORE Quiz Math/Captcha!)
+                if (xml.Contains("Congratulations") || xml.Contains("Collect Gem") || xml.Contains("+1 Gem") || xml.Contains("Watch an ad to collect"))
                 {
                     lastProgressTime = DateTime.Now;
-                    Log("[HOME] Home screen detected. Tapping on 1,000 Super Offer...");
+                    if (DateTime.Now < adReloadCooldownUntil) { Thread.Sleep(800); continue; }
 
-                    Match mClaimBtn = Regex.Match(xml, @"<node [^>]*text=""Claim""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
-                    if (mClaimBtn.Success)
-                    {
-                        int cx = (int.Parse(mClaimBtn.Groups[1].Value) + int.Parse(mClaimBtn.Groups[3].Value)) / 2;
-                        int cy = (int.Parse(mClaimBtn.Groups[2].Value) + int.Parse(mClaimBtn.Groups[4].Value)) / 2;
+                    int cx, cy;
+                    if (TryFindNodeBounds(xml, "Collect Gem", out cx, out cy) || TryFindNodeBounds(xml, "Collect Reward", out cx, out cy))
                         AdbTap(cx, cy);
-                    }
-                    else
-                    {
-                        AdbTapRef(200, 650);
-                    }
-                    Thread.Sleep(2000);
-                    continue;
-                }
+                    else AdbTapRef(450, 560);
 
-                if (xml.Contains("Welcome Back") || (xml.Contains("Play Quiz") && xml.Contains("Super Offers")) || xml.Contains("Basket Dunk"))
-                {
-                    lastProgressTime = DateTime.Now;
-                    Log("[HOME SCREEN] Entering 'Play Quiz'...");
-
-                    Match mQuizNode = Regex.Match(xml, @"<node [^>]*content-desc=""Play Quiz[^""]*""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
-                    if (mQuizNode.Success)
+                    Thread.Sleep(2200);
+                    bool adPlayed = CloseAdActively();
+                    if (!adPlayed)
                     {
-                        int qx = (int.Parse(mQuizNode.Groups[1].Value) + int.Parse(mQuizNode.Groups[3].Value)) / 2;
-                        int qy = (int.Parse(mQuizNode.Groups[2].Value) + Math.Min(int.Parse(mQuizNode.Groups[4].Value), devHeight - 40)) / 2;
-                        AdbTap(qx, qy);
-                    }
-                    else
-                    {
-                        AdbTapRef(683, 1439);
-                    }
-                    Thread.Sleep(2000);
-                    continue;
-                }
-
-                // CASE 4: Congratulations / Collect Gem modal
-                if (xml.Contains("Congratulations") || xml.Contains("Collect Gem") || xml.Contains("+1 Gem") || xml.Contains("Watch an ad to collect") || xml.Contains("Redeem") || xml.Contains("Claim Reward") || (xml.Contains("Play Again") && !xml.Contains("Welcome Back")))
-                {
-                    lastProgressTime = DateTime.Now;
-                    Log("[CLAIM] Congratulations! Tapping 'Collect Gem' to watch ad...");
-
-                    Match mCollect = Regex.Match(xml, @"<node [^>]*text=""[^""]*(Collect Gem|Redeem|Claim|Play Again)[^""]*""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
-                    if (mCollect.Success)
-                    {
-                        int cx = (int.Parse(mCollect.Groups[2].Value) + int.Parse(mCollect.Groups[4].Value)) / 2;
-                        int cy = (int.Parse(mCollect.Groups[3].Value) + int.Parse(mCollect.Groups[5].Value)) / 2;
-                        AdbTap(cx, cy);
-                    }
-                    else
-                    {
-                        AdbTapRef(450, 560);
-                    }
-
-                    Match mGemsProg = Regex.Match(xml, @"(?:text|content-desc)=""(\d+)/25");
-                    if (!mGemsProg.Success)
-                    {
-                        mGemsProg = Regex.Match(xml, @"text=""(\d{1,2})""[^>]*>\s*<node[^>]*text=""/""[^>]*>\s*<node[^>]*text=""25""", RegexOptions.Singleline);
-                    }
-                    if (mGemsProg.Success)
-                    {
-                        currentOfferGems = int.Parse(mGemsProg.Groups[1].Value) + 1;
-                    }
-                    else
-                    {
-                        currentOfferGems++;
-                    }
-                    gemsEarned++;
-                    SaveStatsToFile();
-                    UpdateDashboard(lastCaptcha);
-
-                    if (currentOfferGems >= 25)
-                    {
-                        isPending25thGemStop = true;
-                        Log("[MILESTONE] 25th Gem collection started! Watching final ad before stopping bot...");
-                    }
-
-                    Thread.Sleep(2000);
-                    CloseAdActively();
-                    lastProgressTime = DateTime.Now;
-                    Thread.Sleep(1000);
-
-                    if (isPending25thGemStop || currentOfferGems >= 25)
-                    {
-                        isPending25thGemStop = false;
-                        if (!hasCountedThis25GemCycle)
+                        collectGemNoAdCount++;
+                        Log(string.Format("[Collect Gem] Ad did not load (attempt {0}/2).", collectGemNoAdCount));
+                        if (collectGemNoAdCount >= 2)
                         {
-                            hasCountedThis25GemCycle = true;
-                            today25GemsCount++;
-                            total25GemsCount++;
-                            AddClaimHistory(string.Format("25 Gems Milestone Hit (Cycle #{0})", total25GemsCount));
-                            SaveStatsToFile();
-                            UpdateDataDashboard();
+                            collectGemNoAdCount = 0;
+                            RestartQuizAppCleanly("Rewarded ad unavailable on Collect Gem");
                         }
-
-                        Log("[ALERT] 25 GEMS TARGET REACHED! 1,000 Coins Super Offer unlocked. Bot STOPPED automatically.");
-                        Play25GemsMilestoneAlert();
-
-                        if (this.InvokeRequired)
-                        {
-                            SafeBeginInvoke(new Action(delegate {
-                                lblStatus.Text = "STOPPED - 25 Gems Reached! (Claim Ready)";
-                                lblStatus.ForeColor = Color.FromArgb(76, 175, 80);
-                            }));
-                        }
-
-                        currentOfferGems = 0;
-                        hasCountedThis25GemCycle = false;
-                        StopBot();
-                        return;
+                        else { AdbKey(4); Thread.Sleep(1500); }
                     }
-
-                    continue;
-                }
-
-                // CASE 5: Quiz Screen Solving (Math Quiz & Captcha Quiz)
-                // Real-time gem detection directly from the active quiz screen
-                Match mLiveGems = Regex.Match(xml, @"(?:text|content-desc)=""(\d{1,2})\s*/\s*25");
-                if (!mLiveGems.Success)
-                {
-                    mLiveGems = Regex.Match(xml, @"text=""(\d{1,2})""[^>]*>\s*<node[^>]*text=""/""[^>]*>\s*<node[^>]*text=""25""", RegexOptions.Singleline);
-                }
-                if (mLiveGems.Success)
-                {
-                    int pg = int.Parse(mLiveGems.Groups[1].Value);
-                    if (pg >= 0 && pg <= 25)
+                    else
                     {
-                        currentOfferGems = pg;
+                        collectGemNoAdCount = 0;
+                        gemsEarned++;
+                        SaveStatsToFile();
                         UpdateDashboard(lastCaptcha);
                     }
+                    continue;
                 }
 
-                // Auto-stop if 25 gems reached
-                if (currentOfferGems >= 25)
-                {
-                    Log("[ALERT] 25 GEMS TARGET REACHED! Milestone achieved. Bot STOPPED automatically.");
-                    Play25GemsMilestoneAlert();
-                    if (this.InvokeRequired)
-                    {
-                        SafeBeginInvoke(new Action(delegate {
-                            lblStatus.Text = "STOPPED - 25 Gems Reached! (Claim Ready)";
-                            lblStatus.ForeColor = Color.FromArgb(76, 175, 80);
-                        }));
-                    }
-                    StopBot();
-                    return;
-                }
-
-                // Adaptable spatial zones for all aspect ratios & screen heights (720p, 1080p, 2K, 16:9 to 21:9)
-                int qMinY = (int)(devHeight * 0.10);
-                int qMaxY = (int)(devHeight * 0.38);
-                int optMinY = (int)(devHeight * 0.26);
-                int optMaxY = (int)(devHeight * 0.65);
-
+                // CASE 5: Quiz Solver (Excludes /25 progress banners!)
+                int qMinY = (int)(devHeight * 0.10), qMaxY = (int)(devHeight * 0.40);
+                int optMinY = (int)(devHeight * 0.25), optMaxY = (int)(devHeight * 0.68);
                 int btnX = 0, btnY = 0;
 
-                // --- 5A. MATH QUIZ ---
-                Match mMath = Regex.Match(xml, @"(?:text|content-desc)=""(\d+)\s*([\+\-\–\—\*\×xX]|÷|\/)\s*(\d+)(?:\s*=\s*\?)?""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
-                if (mMath.Success)
+                // 5A. Math Quiz (single-pass + exact division check)
+                Match mMath = Regex.Match(xml, @"(?:text|content-desc)=""(\d+)\s*([\+\-\*xX]|÷|/)\s*(\d+)(?:\s*=\s*\?)?""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
+                if (mMath.Success && !mMath.Value.Contains("/25"))
                 {
-                    int my1 = int.Parse(mMath.Groups[5].Value);
-                    int my2 = int.Parse(mMath.Groups[7].Value);
-                    int mcy = (my1 + my2) / 2;
+                    int mcy = (int.Parse(mMath.Groups[5].Value) + int.Parse(mMath.Groups[7].Value)) / 2;
                     if (mcy >= qMinY && mcy <= qMaxY)
                     {
-                        int n1 = int.Parse(mMath.Groups[1].Value);
+                        int n1 = int.Parse(mMath.Groups[1].Value), n2 = int.Parse(mMath.Groups[3].Value);
                         string op = mMath.Groups[2].Value;
-                        int n2 = int.Parse(mMath.Groups[3].Value);
                         int ans = -1;
                         if (op == "+") ans = n1 + n2;
-                        else if (op == "-" || op == "–" || op == "—") ans = n1 - n2;
-                        else if (op == "*" || op == "×" || op.Equals("x", StringComparison.OrdinalIgnoreCase)) ans = n1 * n2;
-                        else if ((op == "/" || op == "÷") && n2 != 0) ans = n1 / n2;
+                        else if (op == "-") ans = n1 - n2;
+                        else if (op == "*" || op.Equals("x", StringComparison.OrdinalIgnoreCase)) ans = n1 * n2;
+                        else if ((op == "/" || op == "÷") && n2 != 0 && n1 % n2 == 0) ans = n1 / n2;
 
-                        if (ans >= 0)
+                        if (ans >= 0 && TryFindOptionInZone(xml, ans.ToString(), optMinY, optMaxY, mcy, out btnX, out btnY))
                         {
-                            string mathTarget = string.Format("MATH:{0}{1}{2}={3}", n1, op, n2, ans);
-                            if (mathTarget == lastSolvedTarget && (DateTime.Now - lastSolveTime).TotalMilliseconds < 2500)
+                            string key = "MATH:" + n1 + op + n2;
+                            if (key != lastSolvedTarget || (DateTime.Now - lastSolveTime).TotalMilliseconds >= 2500)
                             {
-                                Thread.Sleep(200);
-                                continue;
-                            }
-
-                            string ansStr = ans.ToString();
-                            Log(string.Format("[Solver] Math in Question Zone: {0} {1} {2} = {3}", n1, op, n2, ans));
-
-                            // Find answer button strictly in Options Zone below question
-                            MatchCollection mAllAns = Regex.Matches(xml, string.Format(@"<node [^>]*text=""{0}""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""", ansStr));
-                            foreach (Match ma in mAllAns)
-                            {
-                                int ay1 = int.Parse(ma.Groups[2].Value);
-                                int ay2 = int.Parse(ma.Groups[4].Value);
-                                int acy = (ay1 + ay2) / 2;
-                                if (acy >= (optMinY - 40) && acy <= (optMaxY + 60) && acy > mcy)
-                                {
-                                    btnX = (int.Parse(ma.Groups[1].Value) + int.Parse(ma.Groups[3].Value)) / 2;
-                                    btnY = acy;
-                                    break;
-                                }
-                            }
-
-                            if (btnX > 0 && btnY > 0)
-                            {
-                                Log(string.Format("[ANSWER] Tapping Math '{0}' at ({1}, {2})...", ansStr, btnX, btnY));
                                 AdbTap(btnX, btnY);
-                                lastSolvedTarget = mathTarget;
-                                lastSolveTime = DateTime.Now;
-                                questionsSolved++;
-                                todaySolved++;
-                                lastProgressTime = DateTime.Now;
-                                SaveStatsToFile();
-                                UpdateDashboard(ansStr);
-                                Thread.Sleep(chkTurboSpeed.Checked ? 200 : 600);
+                                RecordSolved(key, ans.ToString());
+                                Thread.Sleep(turboSpeedEnabled ? 200 : 550);
                                 continue;
                             }
                         }
                     }
                 }
 
-                // --- 5B. CAPTCHA QUIZ (Number Matching) ---
-                string targetNumber = "";
-                int questionCenterY = -1;
-                MatchCollection mNumNodes = Regex.Matches(xml, @"<node [^>]*text=""(\d{3,6})""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
-
-                // 1. Find question target number strictly in Question Zone
-                foreach (Match m in mNumNodes)
+                // 5B. Number Captcha Solver
+                foreach (Match m in Regex.Matches(xml, @"<node [^>]*text=""(\d{3,6})""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]"""))
                 {
-                    int y1 = int.Parse(m.Groups[3].Value);
-                    int y2 = int.Parse(m.Groups[5].Value);
-                    int cy = (y1 + y2) / 2;
-                    if (cy >= qMinY && cy <= qMaxY)
+                    int qcy = (int.Parse(m.Groups[3].Value) + int.Parse(m.Groups[5].Value)) / 2;
+                    if (qcy >= qMinY && qcy <= qMaxY)
                     {
-                        targetNumber = m.Groups[1].Value;
-                        questionCenterY = cy;
+                        string num = m.Groups[1].Value;
+                        if (TryFindOptionInZone(xml, num, optMinY, optMaxY, qcy, out btnX, out btnY))
+                        {
+                            string key = "CAP:" + num;
+                            if (key != lastSolvedTarget || (DateTime.Now - lastSolveTime).TotalMilliseconds >= 2500)
+                            {
+                                AdbTap(btnX, btnY);
+                                RecordSolved(key, num);
+                                Thread.Sleep(turboSpeedEnabled ? 200 : 550);
+                                break;
+                            }
+                        }
                         break;
                     }
                 }
 
-                // Fallback: Content-desc digit items in Question Zone
-                if (string.IsNullOrEmpty(targetNumber))
+                if ((DateTime.Now - lastProgressTime).TotalSeconds > 90)
                 {
-                    List<DigitItem> digits = new List<DigitItem>();
-                    MatchCollection dMatches = Regex.Matches(xml, @"<node [^>]*content-desc=""(\d)""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
-                    foreach (Match dm in dMatches)
-                    {
-                        string d = dm.Groups[1].Value;
-                        int x1 = int.Parse(dm.Groups[2].Value);
-                        int y1 = int.Parse(dm.Groups[3].Value);
-                        int y2 = int.Parse(dm.Groups[5].Value);
-                        int cy = (y1 + y2) / 2;
-                        if (cy >= qMinY && cy <= qMaxY)
-                        {
-                            digits.Add(new DigitItem { Digit = d, X = x1 });
-                            if (questionCenterY < 0) questionCenterY = cy;
-                        }
-                    }
-
-                    if (digits.Count >= 3)
-                    {
-                        digits = digits.OrderBy(o => o.X).ToList();
-                        targetNumber = string.Join("", digits.Select(o => o.Digit).ToArray());
-                    }
-                }
-
-                if (!string.IsNullOrEmpty(targetNumber))
-                {
-                    string captchaTarget = "CAPTCHA:" + targetNumber;
-                    if (captchaTarget == lastSolvedTarget && (DateTime.Now - lastSolveTime).TotalMilliseconds < 2500)
-                    {
-                        Thread.Sleep(200);
-                        continue;
-                    }
-
-                    lastCaptcha = targetNumber;
-                    Log(string.Format("[QUIZ] Target: '{0}' | Progress: {1}/25", targetNumber, currentOfferGems));
-
-                    // 2. Find option button strictly in Options Zone below question
-                    foreach (Match m in mNumNodes)
-                    {
-                        if (m.Groups[1].Value == targetNumber)
-                        {
-                            int y1 = int.Parse(m.Groups[3].Value);
-                            int y2 = int.Parse(m.Groups[5].Value);
-                            int cy = (y1 + y2) / 2;
-                            if (cy >= (optMinY - 40) && cy <= (optMaxY + 60) && (questionCenterY < 0 || cy > questionCenterY))
-                            {
-                                int x1 = int.Parse(m.Groups[2].Value);
-                                int x2 = int.Parse(m.Groups[4].Value);
-                                btnX = (x1 + x2) / 2;
-                                btnY = cy;
-                                break;
-                            }
-                        }
-                    }
-
-                    // Fallback: search with content-desc in Options Zone below question
-                    if (btnX == 0)
-                    {
-                        string optPattern = string.Format(@"<node [^>]*content-desc=""{0}""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""", targetNumber);
-                        MatchCollection optMatches = Regex.Matches(xml, optPattern);
-                        foreach (Match optMatch in optMatches)
-                        {
-                            int oy1 = int.Parse(optMatch.Groups[2].Value);
-                            int oy2 = int.Parse(optMatch.Groups[4].Value);
-                            int ocy = (oy1 + oy2) / 2;
-                            if (ocy >= (optMinY - 40) && ocy <= (optMaxY + 60) && (questionCenterY < 0 || ocy > questionCenterY))
-                            {
-                                int ox1 = int.Parse(optMatch.Groups[1].Value);
-                                int ox2 = int.Parse(optMatch.Groups[3].Value);
-                                btnX = (ox1 + ox2) / 2;
-                                btnY = ocy;
-                                break;
-                            }
-                        }
-                    }
-
-                    if (btnX > 0 && btnY > 0)
-                    {
-                        Log(string.Format("[ANSWER] Tapping '{0}' at ({1}, {2})...", targetNumber, btnX, btnY));
-                        AdbTap(btnX, btnY);
-
-                        lastSolvedTarget = captchaTarget;
-                        lastSolveTime = DateTime.Now;
-                        questionsSolved++;
-                        todaySolved++;
-                        lastProgressTime = DateTime.Now;
-                        SaveStatsToFile();
-                        UpdateDashboard(lastCaptcha);
-                        Thread.Sleep(chkTurboSpeed.Checked ? 200 : 600);
-                        continue;
-                    }
-                }
-
-                // Fallback check for any lingering ad close buttons (ONLY if not on Quiz screen)
-                if (!xml.Contains("Select the correct number") && !xml.Contains("Super Offer") && TryFindAndClickAdButton(xml, 0))
-                {
-                    adsClosed++;
-                    SaveStatsToFile();
-                    UpdateDashboard(lastCaptcha);
+                    RestartQuizAppCleanly("Inactivity watchdog (90s)");
                     lastProgressTime = DateTime.Now;
-                    Thread.Sleep(800);
-                    continue;
                 }
-
-                Thread.Sleep(chkTurboSpeed.Checked ? 120 : 500);
+                Thread.Sleep(turboSpeedEnabled ? 150 : 500);
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) { Log("[Error] " + ex.Message); StopBot(); }
+    }
+
+    private bool TryFindOptionInZone(string xml, string answerText, int optMinY, int optMaxY, int questionY, out int outX, out int outY)
+    {
+        outX = 0; outY = 0;
+        string pattern = string.Format(@"<node [^>]*(?:text|content-desc)=""{0}""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""", Regex.Escape(answerText));
+        foreach (Match ma in Regex.Matches(xml, pattern))
         {
-            Log("[Error] Loop exception: " + ex.Message);
-            StopBot();
+            int cy = (int.Parse(ma.Groups[2].Value) + int.Parse(ma.Groups[4].Value)) / 2;
+            if (cy >= optMinY && cy <= optMaxY && cy > questionY)
+            {
+                outX = (int.Parse(ma.Groups[1].Value) + int.Parse(ma.Groups[3].Value)) / 2;
+                outY = cy;
+                return true;
+            }
         }
+        return false;
+    }
+
+    private void RecordSolved(string key, string displayAns)
+    {
+        lastSolvedTarget = key;
+        lastSolveTime = DateTime.Now;
+        lastCaptcha = displayAns;
+        lastProgressTime = DateTime.Now;
+        collectGemNoAdCount = 0;
+        lock (statsLock) { questionsSolved++; todaySolved++; }
+        SaveStatsToFile();
+        UpdateDashboard(displayAns);
     }
 
     private Panel CreateToggleRow(Panel parent, string text, DarkToggleSwitch toggle, int y, Action onToggle)
     {
-        Panel row = new Panel();
-        row.BackColor = Color.Transparent;
-        row.Location = new Point(12, y);
-        row.Size = new Size(480, 28);
-        row.Cursor = Cursors.Hand;
-
-        Label lbl = new Label();
-        lbl.Text = text;
-        lbl.Font = new Font("Segoe UI", 9f);
-        lbl.ForeColor = toggle.Checked ? Color.FromArgb(220, 220, 225) : Color.FromArgb(140, 140, 145);
-        lbl.Location = new Point(4, 4);
-        lbl.Size = new Size(410, 20);
-        lbl.Cursor = Cursors.Hand;
-
-        toggle.Location = new Point(430, 4);
-        toggle.Size = new Size(38, 20);
-
-        Action updateColor = () => {
-            lbl.ForeColor = toggle.Checked ? Color.FromArgb(225, 225, 230) : Color.FromArgb(140, 140, 145);
-        };
-
-        toggle.CheckedChanged += delegate {
-            updateColor();
-            if (onToggle != null) onToggle();
-        };
-
-        lbl.Click += delegate {
-            toggle.Checked = !toggle.Checked;
-        };
-        row.Click += delegate {
-            toggle.Checked = !toggle.Checked;
-        };
-
-        lbl.MouseEnter += delegate { if (!toggle.Checked) lbl.ForeColor = Color.FromArgb(185, 185, 190); };
-        lbl.MouseLeave += delegate { updateColor(); };
-
+        Panel row = new Panel { Location = new Point(12, y), Size = new Size(484, 30), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right, Cursor = Cursors.Hand };
+        Label lbl = new Label { Text = text, Location = new Point(4, 5), Size = new Size(420, 20), ForeColor = Color.FromArgb(205, 205, 215), Cursor = Cursors.Hand };
+        toggle.Location = new Point(436, 5);
+        toggle.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        toggle.CheckedChanged += delegate { if (onToggle != null) onToggle(); };
+        lbl.Click += delegate { toggle.Checked = !toggle.Checked; };
         row.Controls.Add(lbl);
         row.Controls.Add(toggle);
         parent.Controls.Add(row);
-
         return row;
+    }
+
+    private void ShowDarkAlert(string title, string message)
+    {
+        SafeBeginInvoke(() => MessageBox.Show(this, message, title, MessageBoxButtons.OK, MessageBoxIcon.Information));
+    }
+
+    private bool ShowDarkConfirm(string title, string message)
+    {
+        return MessageBox.Show(this, message, title, MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
+    }
+
+    private void CheckForUpdatesAsync(bool manual)
+    {
+        new Thread(() =>
+        {
+            try
+            {
+                ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
+                using (WebClient wc = new WebClient())
+                {
+                    wc.Headers["User-Agent"] = "QuizEarnBot/" + APP_VERSION;
+                    string json = wc.DownloadString(updateFeedUrl);
+                    Match mv = Regex.Match(json, @"""version"":\s*""([^""]+)""");
+                    Match mvc = Regex.Match(json, @"""version_code"":\s*(\d+)");
+                    Match murl = Regex.Match(json, @"""download_url"":\s*""([^""]+)""");
+                    Match mlog = Regex.Match(json, @"""changelog"":\s*""([^""]+)""");
+
+                    remoteVersion = mv.Success ? mv.Groups[1].Value : "";
+                    remoteVersionCode = mvc.Success ? int.Parse(mvc.Groups[1].Value) : 0;
+                    remoteDownloadUrl = murl.Success ? murl.Groups[1].Value : "";
+                    remoteChangelog = mlog.Success ? mlog.Groups[1].Value : "";
+
+                    bool hasNew = remoteVersionCode > APP_VERSION_CODE && !string.IsNullOrEmpty(remoteDownloadUrl);
+                    SafeBeginInvoke(() =>
+                    {
+                        if (hasNew)
+                        {
+                            lblUpdateStatus.Text = "New Version v" + remoteVersion + " available!";
+                            if (ShowDarkConfirm("Update v" + remoteVersion, remoteChangelog + "\n\nDownload and restart now?"))
+                            {
+                                ApplyUpdateAndRestart(remoteDownloadUrl);
+                            }
+                        }
+                        else
+                        {
+                            lblUpdateStatus.Text = "Up to date (v" + APP_VERSION + ").";
+                            if (manual) ShowDarkAlert("Up to Date", "You are running the latest version (v" + APP_VERSION + ").");
+                        }
+                    });
+                }
+            }
+            catch { if (manual) ShowDarkAlert("Update Check", "Could not reach update server."); }
+        }) { IsBackground = true }.Start();
+    }
+
+    private void ApplyUpdateAndRestart(string downloadUrl)
+    {
+        new Thread(() =>
+        {
+            try
+            {
+                string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                string tempExe = Path.Combine(baseDir, "QuizEarnBot_update.exe");
+                string finalExe = Path.Combine(baseDir, "QuizEarnBot.exe");
+                string bat = Path.Combine(baseDir, "apply_update.bat");
+
+                using (WebClient wc = new WebClient()) wc.DownloadFile(downloadUrl, tempExe);
+                if (!File.Exists(tempExe) || new FileInfo(tempExe).Length < 10240) throw new Exception("Invalid update package.");
+
+                string pid = Process.GetCurrentProcess().Id.ToString();
+                string script = string.Format(
+                    "@echo off\r\n:waitloop\r\ntasklist /FI \"PID eq {0}\" | find \"{0}\" >nul\r\nif not errorlevel 1 (timeout /t 1 /nobreak >nul & goto waitloop)\r\nmove /y \"{1}\" \"{2}\" >nul\r\nstart \"\" \"{2}\"\r\ndel \"%~f0\" >nul\r\n",
+                    pid, tempExe, finalExe);
+                File.WriteAllText(bat, script, Encoding.ASCII);
+                Process.Start(new ProcessStartInfo { FileName = bat, CreateNoWindow = true, UseShellExecute = false });
+                SafeBeginInvoke(() => Application.Exit());
+            }
+            catch (Exception ex) { Log("[Update Error] " + ex.Message); }
+        }) { IsBackground = true }.Start();
     }
 
     private static Mutex appMutex = null;
@@ -6006,176 +2284,39 @@ public class QuizEarnApp : Form
     {
         bool createdNew;
         appMutex = new Mutex(true, "QuizEarnBot_SingleInstance_Mutex_9921", out createdNew);
-        if (!createdNew)
-        {
-            try {
-                Process current = Process.GetCurrentProcess();
-                foreach (Process p in Process.GetProcessesByName(current.ProcessName)) {
-                    if (p.Id != current.Id && p.MainWindowHandle != IntPtr.Zero) {
-                        ShowWindow(p.MainWindowHandle, 9);
-                        SetForegroundWindow(p.MainWindowHandle);
-                        return;
-                    }
-                }
-            } catch {}
-        }
-
-        AppDomain.CurrentDomain.UnhandledException += delegate(object s, UnhandledExceptionEventArgs e) {
-            try { File.AppendAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "crash.log"), "[FATAL] " + e.ExceptionObject.ToString() + "\n"); } catch {}
-        };
-        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
-        Application.ThreadException += delegate(object s, ThreadExceptionEventArgs e) {
-            try { File.AppendAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "crash.log"), "[UI THREAD ERROR] " + e.Exception.ToString() + "\n"); } catch {}
-        };
+        if (!createdNew) return;
 
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         QuizEarnApp app = new QuizEarnApp();
-        if (args != null && args.Length > 0)
+        if (args != null && args.Length > 0 && args[0].ToLower().Contains("auto"))
         {
-            string a0 = args[0].ToLower();
-            if (a0.Contains("auto") || a0.Contains("start"))
-            {
-                app.Shown += delegate {
-                    Thread.Sleep(500);
-                    app.StartBot();
-                };
-            }
-            else if (a0.Contains("offer") || a0.Contains("claim"))
-            {
-                app.Shown += delegate {
-                    Thread.Sleep(500);
-                    app.StartAutoOfferClaimer();
-                };
-            }
+            app.Shown += delegate { app.StartBot(); };
         }
-        try
-        {
-            Application.Run(app);
-        }
-        catch (Exception ex)
-        {
-            File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "run_error.log"), "[APP RUN CRASH] " + ex.ToString());
-        }
+        Application.Run(app);
     }
 }
 
 public class DarkToggleSwitch : Control
 {
     private bool _checked = false;
-    private bool _isHovered = false;
     public event EventHandler CheckedChanged;
-
-    public bool Checked
-    {
-        get { return _checked; }
-        set
-        {
-            if (_checked != value)
-            {
-                _checked = value;
-                this.Invalidate();
-                if (CheckedChanged != null) CheckedChanged(this, EventArgs.Empty);
-            }
-        }
-    }
-
-    public DarkToggleSwitch()
-    {
-        this.SetStyle(ControlStyles.UserPaint |
-                      ControlStyles.AllPaintingInWmPaint |
-                      ControlStyles.OptimizedDoubleBuffer |
-                      ControlStyles.ResizeRedraw |
-                      ControlStyles.SupportsTransparentBackColor, true);
-        this.Size = new Size(38, 20);
-        this.BackColor = Color.Transparent;
-        this.Cursor = Cursors.Hand;
-        this.TabStop = false;
-    }
-
-    protected override void OnMouseEnter(EventArgs e)
-    {
-        base.OnMouseEnter(e);
-        _isHovered = true;
-        this.Invalidate();
-    }
-
-    protected override void OnMouseLeave(EventArgs e)
-    {
-        base.OnMouseLeave(e);
-        _isHovered = false;
-        this.Invalidate();
-    }
-
-    protected override void OnClick(EventArgs e)
-    {
-        base.OnClick(e);
-        this.Checked = !this.Checked;
-    }
-
+    public bool Checked { get { return _checked; } set { if (_checked != value) { _checked = value; Invalidate(); if (CheckedChanged != null) CheckedChanged(this, EventArgs.Empty); } } }
+    public DarkToggleSwitch() { SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor, true); Size = new Size(38, 20); Cursor = Cursors.Hand; }
+    protected override void OnClick(EventArgs e) { base.OnClick(e); Checked = !Checked; }
     protected override void OnPaint(PaintEventArgs pe)
     {
         Graphics g = pe.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
-        g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-
-        int w = this.Width;
-        int h = this.Height;
-        int d = h - 1;
-
+        int d = Height - 1;
         using (GraphicsPath path = new GraphicsPath())
         {
             path.AddArc(0, 0, d, d, 90, 180);
-            path.AddArc(w - d - 1, 0, d, d, 270, 180);
+            path.AddArc(Width - d - 1, 0, d, d, 270, 180);
             path.CloseFigure();
-
-            if (_checked)
-            {
-                Color bgColor = _isHovered ? Color.FromArgb(20, 200, 140) : Color.FromArgb(16, 185, 129);
-                Color borderColor = _isHovered ? Color.FromArgb(25, 225, 160) : Color.FromArgb(5, 150, 105);
-
-                using (SolidBrush bgBrush = new SolidBrush(bgColor))
-                {
-                    g.FillPath(bgBrush, path);
-                }
-                using (Pen borderPen = new Pen(borderColor, 1f))
-                {
-                    g.DrawPath(borderPen, path);
-                }
-
-                int knobSize = h - 6;
-                int knobX = w - knobSize - 3;
-                int knobY = 3;
-
-                using (SolidBrush knobBrush = new SolidBrush(Color.White))
-                {
-                    g.FillEllipse(knobBrush, knobX, knobY, knobSize, knobSize);
-                }
-            }
-            else
-            {
-                Color bgColor = _isHovered ? Color.FromArgb(28, 28, 34) : Color.FromArgb(18, 18, 22);
-                Color borderColor = _isHovered ? Color.FromArgb(58, 58, 68) : Color.FromArgb(38, 38, 46);
-                Color knobColor = _isHovered ? Color.FromArgb(150, 150, 160) : Color.FromArgb(100, 100, 110);
-
-                using (SolidBrush bgBrush = new SolidBrush(bgColor))
-                {
-                    g.FillPath(bgBrush, path);
-                }
-                using (Pen borderPen = new Pen(borderColor, 1f))
-                {
-                    g.DrawPath(borderPen, path);
-                }
-
-                int knobSize = h - 8;
-                int knobX = 4;
-                int knobY = 4;
-
-                using (SolidBrush knobBrush = new SolidBrush(knobColor))
-                {
-                    g.FillEllipse(knobBrush, knobX, knobY, knobSize, knobSize);
-                }
-            }
+            using (SolidBrush bg = new SolidBrush(_checked ? Color.FromArgb(16, 185, 129) : Color.FromArgb(24, 24, 30))) g.FillPath(bg, path);
+            int k = Height - 6;
+            using (SolidBrush knob = new SolidBrush(_checked ? Color.White : Color.Gray)) g.FillEllipse(knob, _checked ? Width - k - 3 : 3, 3, k, k);
         }
     }
 }

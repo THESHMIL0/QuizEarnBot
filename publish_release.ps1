@@ -1,54 +1,71 @@
 # =====================================================================
-# Quiz & Earn Bot - One-Click Cloud Release Publisher
+# Quiz & Earn Bot v2.9 - One-Click Cloud Release Publisher
 # =====================================================================
 param(
-    [string]$NewVersion = "2.8",
-    [int]$VersionCode = 280,
-    [string]$Changelog = "Dual Engine v2.8 (Quiz & Earn + CashMafia): Super Offer auto-installer v2.0, Play Store verification, ad reward safety lock (26s-35s), blue Resume dialog protection, auto-relaunch watchdog, and Doze battery whitelist.",
+    [string]$NewVersion = "2.9",
+    [int]$VersionCode = 290,
+    [string]$Changelog = "v2.9: Collect Gem no-ad stall & restart fix, removed all pm uninstall logic, API-aware Android 7-15 service recovery, non-destructive Accessibility setup, thread-safe stats/ADB cleanup, Quiz & Earn + CashMafia switcher, proportional screen scaling, and High-DPI WinForms UI.",
     [string]$DownloadUrl = "https://raw.githubusercontent.com/THESHMIL0/QuizEarnBot/main/QuizEarnBot.exe",
     [string]$ApkUrl = "https://raw.githubusercontent.com/THESHMIL0/QuizEarnBot/main/QuizEarnBot.apk"
 )
 
-$ErrorActionPreference = "Continue"
-$WorkingDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ErrorActionPreference = "Stop"
+$WorkingDir = $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($WorkingDir)) { $WorkingDir = (Get-Location).Path }
 Set-Location $WorkingDir
 
 Write-Host "=====================================================" -ForegroundColor Cyan
-Write-Host "  QUIZ & EARN BOT - ONE-CLICK RELEASE PUBLISHER      " -ForegroundColor Green
+Write-Host "  QUIZ & EARN BOT - RELEASE PUBLISHER (v$NewVersion)" -ForegroundColor Green
 Write-Host "=====================================================" -ForegroundColor Cyan
-Write-Host "Building Release: v$NewVersion (Code: $VersionCode)"
 
-# 1. Compile Latest Source
-$CscPath = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
-$SourcePath = Join-Path $WorkingDir "QuizEarnApp.cs"
-$ExePath = Join-Path $WorkingDir "QuizEarnBot.exe"
-
-if (Test-Path $SourcePath) {
-    Write-Host "[1/5] Compiling QuizEarnApp.cs with app logo & manifest..." -ForegroundColor Yellow
+# 1. Compile QuizEarnApp.cs via compile_exe.ps1 (strict exit check)
+$compileScript = Join-Path $WorkingDir "compile_exe.ps1"
+if (Test-Path $compileScript) {
+    Write-Host "[1/5] Running compile_exe.ps1..." -ForegroundColor Yellow
+    & powershell -ExecutionPolicy Bypass -File $compileScript
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "EXE compilation failed. Release aborted."
+        exit $LASTEXITCODE
+    }
+} else {
+    $CscPath = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+    $SourcePath = Join-Path $WorkingDir "QuizEarnApp.cs"
+    $ExePath = Join-Path $WorkingDir "QuizEarnBot.exe"
+    if (-not (Test-Path $SourcePath)) {
+        Write-Error "QuizEarnApp.cs missing."
+        exit 1
+    }
     Stop-Process -Name QuizEarnBot -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Milliseconds 500
+    Start-Sleep -Milliseconds 600
     $ico = Join-Path $WorkingDir "app.ico"
     $manifest = Join-Path $WorkingDir "app.manifest"
-    $compileArgs = @("/target:winexe", "/out:$ExePath", "/platform:anycpu", "/optimize+")
+    $compileArgs = @("/target:winexe", "/out:$ExePath", "/platform:anycpu", "/optimize+", "/codepage:65001", "/nologo")
     if (Test-Path $ico) { $compileArgs += "/win32icon:$ico" }
     if (Test-Path $manifest) { $compileArgs += "/win32manifest:$manifest" }
-    $compileArgs += "$SourcePath"
-    & $CscPath $compileArgs
+    $compileArgs += $SourcePath
+    & $CscPath @compileArgs
     if ($LASTEXITCODE -ne 0) {
-        Write-Error "Compilation failed."
+        Write-Error "csc.exe compilation failed. Release aborted."
+        exit $LASTEXITCODE
     }
-    Write-Host "  -> Compilation successful: $ExePath" -ForegroundColor Green
-} else {
-    Write-Host "[1/5] QuizEarnApp.cs not found, using existing QuizEarnBot.exe." -ForegroundColor Yellow
 }
 
-# 2. Build Latest Android APK
+$ExePath = Join-Path $WorkingDir "QuizEarnBot.exe"
+
+# 2. Build Android APK if android\build_apk.ps1 exists
 $buildApkScript = Join-Path $WorkingDir "android\build_apk.ps1"
 if (Test-Path $buildApkScript) {
-    Write-Host "[2/5] Building latest QuizEarnBot.apk v2.0..." -ForegroundColor Yellow
+    Write-Host "[2/5] Building Android QuizEarnBot.apk..." -ForegroundColor Yellow
     Push-Location (Join-Path $WorkingDir "android")
-    & powershell -ExecutionPolicy Bypass -File $buildApkScript
-    Pop-Location
+    try {
+        & powershell -ExecutionPolicy Bypass -File $buildApkScript
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "APK build failed. Release aborted."
+            exit $LASTEXITCODE
+        }
+    } finally {
+        Pop-Location
+    }
 }
 
 # 3. Generate version.json
@@ -63,16 +80,15 @@ $VersionObj = [ordered]@{
     mandatory = $false
 }
 $JsonText = $VersionObj | ConvertTo-Json -Depth 3
-[System.IO.File]::WriteAllText($VersionJsonPath, $JsonText, [System.Text.Encoding]::UTF8)
-Write-Host "[3/5] Generated version.json successfully." -ForegroundColor Green
+[System.IO.File]::WriteAllText($VersionJsonPath, $JsonText, [System.Text.UTF8Encoding]::new($false))
+Write-Host "[3/5] Generated version.json (v$NewVersion / $VersionCode)." -ForegroundColor Green
 
-# 4. Create Distribution Zip
+# 4. Create Portable Distribution Zip
 $ZipPath = Join-Path $WorkingDir "QuizEarnBot_v$($NewVersion)_Portable.zip"
 if (Test-Path $ZipPath) { Remove-Item $ZipPath -Force }
 
-Write-Host "[4/5] Creating portable distribution zip: $ZipPath..." -ForegroundColor Yellow
-$StageDir = Join-Path $env:TEMP "QuizEarnBot_Stage"
-if (Test-Path $StageDir) { Remove-Item $StageDir -Recurse -Force }
+Write-Host "[4/5] Creating portable zip: $ZipPath..." -ForegroundColor Yellow
+$StageDir = Join-Path $env:TEMP ("QuizEarnBot_Stage_" + [Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $StageDir | Out-Null
 
 $FilesToCopy = @(
@@ -98,28 +114,16 @@ foreach ($f in $FilesToCopy) {
 
 Compress-Archive -Path "$StageDir\*" -DestinationPath $ZipPath -Force
 Remove-Item $StageDir -Recurse -Force
-Write-Host "  -> Portable ZIP created: $((Get-Item $ZipPath).Length) bytes" -ForegroundColor Green
+Write-Host "  -> Portable ZIP created ($((Get-Item $ZipPath).Length) bytes)" -ForegroundColor Green
 
-# 5. Push to GitHub
-Write-Host "[5/5] Pushing update live to GitHub..." -ForegroundColor Yellow
-$git = "C:\Users\THESHMIL\AppData\Local\Programs\Git\cmd\git.exe"
-if (Test-Path $git) {
-    & $git add version.json QuizEarnBot.exe QuizEarnBot.apk "QuizEarnBot_v$($NewVersion)_Portable.zip" QuizEarnApp.cs README.md index.html HOW_TO_RUN.txt deploy_all.ps1 start_services.ps1 check_status.ps1 QUIZEARN_BOT_COMPLETE_HANDOVER_AND_CODEBASE.txt android/ 2>$null
-    $commitMsg = "Release v$($NewVersion) - $($Changelog)"
-    & $git commit -m "$commitMsg"
-    & $git push origin main
-    Write-Host "  -> Successfully published live to GitHub repository!" -ForegroundColor Green
+# 5. Push via git if available on PATH
+Write-Host "[5/5] Checking git repository for publishing..." -ForegroundColor Yellow
+$gitCmd = Get-Command git -ErrorAction SilentlyContinue
+if ($gitCmd) {
+    & git add version.json QuizEarnBot.exe QuizEarnBot.apk "QuizEarnBot_v$($NewVersion)_Portable.zip" QuizEarnApp.cs compile_exe.ps1 publish_release.ps1 app.manifest android/ README.md index.html HOW_TO_RUN.txt deploy_all.ps1 start_services.ps1 check_status.ps1 QUIZEARN_BOT_COMPLETE_HANDOVER_AND_CODEBASE.txt QUIZEARN_EXE_BOT_FULL_HANDOVER_AND_CODE.txt
+    & git commit -m "Release v$NewVersion - $Changelog"
+    & git push origin main
+    Write-Host "  -> Published v$NewVersion to GitHub." -ForegroundColor Green
+} else {
+    Write-Host "  -> git not found on PATH; skipping push step." -ForegroundColor Gray
 }
-
-# Summary
-Write-Host ""
-Write-Host "=====================================================" -ForegroundColor Cyan
-Write-Host "  RELEASE v$NewVersion PUBLISHED TO GITHUB!          " -ForegroundColor Green
-Write-Host "=====================================================" -ForegroundColor Cyan
-Write-Host "Repository: https://github.com/THESHMIL0/QuizEarnBot"
-Write-Host "Feed URL:   https://raw.githubusercontent.com/THESHMIL0/QuizEarnBot/main/version.json"
-Write-Host "Direct EXE: $DownloadUrl"
-Write-Host "Direct APK: $ApkUrl"
-Write-Host ""
-Write-Host "Your friends' apps will now automatically detect this update!" -ForegroundColor Green
-Write-Host "=====================================================" -ForegroundColor Cyan
