@@ -10,14 +10,17 @@ public class PortraitFixActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+        try {
+            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+        } catch (Exception ignored) {}
         new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
             @Override
             public void run() {
-                finish();
-                overridePendingTransition(0, 0);
+                if (!isFinishing()) {
+                    finish();
+                    overridePendingTransition(0, 0);
+                }
             }
-        }, 120);
+        }, 140);
     }
 }
-

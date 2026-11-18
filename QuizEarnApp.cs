@@ -23,8 +23,8 @@ using Microsoft.Win32;
 [assembly: AssemblyCopyright("Copyright © 2026 Quiz & Earn Tools")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
-[assembly: AssemblyVersion("2.6.0.0")]
-[assembly: AssemblyFileVersion("2.6.0.0")]
+[assembly: AssemblyVersion("2.8.0.0")]
+[assembly: AssemblyFileVersion("2.8.0.0")]
 
 public class QuizEarnApp : Form
 {
@@ -199,8 +199,8 @@ public class QuizEarnApp : Form
     private List<string> claimsHistory = new List<string>();
 
     // App Version & Cloud Auto-Updater State
-    private const string APP_VERSION = "2.7";
-    private const int APP_VERSION_CODE = 270;
+    private const string APP_VERSION = "2.8";
+    private const int APP_VERSION_CODE = 280;
     private bool autoRecoverBlueStacks = true;
     private string updateFeedUrl = "https://raw.githubusercontent.com/THESHMIL0/QuizEarnBot/main/version.json";
     private string remoteVersion = "";
@@ -3770,10 +3770,13 @@ public class QuizEarnApp : Form
         catch { return ""; }
     }
 
+    private bool isLastDismissCrash = false;
+
     private bool DismissAppDialogs()
     {
         try
         {
+            isLastDismissCrash = false;
             string cur = GetCurrentFocus();
             if (string.IsNullOrEmpty(cur) || cur.Contains("com.quiz.earn.money.game"))
             {
@@ -3784,6 +3787,34 @@ public class QuizEarnApp : Form
             if (string.IsNullOrEmpty(xml)) return false;
 
             MatchCollection nodes = Regex.Matches(xml, @"<node\s+[^>]*>", RegexOptions.Singleline);
+
+            // Priority 0: Crash / Keeps stopping dialog!
+            bool isCrash = Regex.IsMatch(xml, @"(keeps stopping|has stopped|isn't responding|repeatedly closed)", RegexOptions.IgnoreCase);
+            if (isCrash)
+            {
+                foreach (Match n in nodes)
+                {
+                    string tag = n.Value;
+                    if (Regex.IsMatch(tag, @"text=""[^""]*(Close app|Close|OK)\b[^""]*""", RegexOptions.IgnoreCase))
+                    {
+                        Match bm = Regex.Match(tag, @"bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
+                        if (bm.Success)
+                        {
+                            int x1 = int.Parse(bm.Groups[1].Value);
+                            int y1 = int.Parse(bm.Groups[2].Value);
+                            int x2 = int.Parse(bm.Groups[3].Value);
+                            int y2 = int.Parse(bm.Groups[4].Value);
+                            int cx = (x1 + x2) / 2;
+                            int cy = (y1 + y2) / 2;
+                            Log(string.Format("[🛡️ Safety] App crashed / keeps stopping! Dismissing dialog at ({0}, {1})...", cx, cy));
+                            AdbTap(cx, cy);
+                            isLastDismissCrash = true;
+                            Thread.Sleep(1200);
+                            return true;
+                        }
+                    }
+                }
+            }
             
             // Priority 1: Check for "Don't allow" variants or "Deny"
             foreach (Match n in nodes)
@@ -4101,6 +4132,46 @@ public class QuizEarnApp : Form
 
         return false;
     }
+    private bool CheckAndClickLoadMore(string xml)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(xml)) return false;
+
+            // Robust check: match any node tag with "Load More" in text or content-desc
+            Match nodeMatch = Regex.Match(xml, @"<node\b[^>]*(?:text|content-desc)=""[^""]*Load More[^""]*""[^>]*>", RegexOptions.IgnoreCase);
+            if (nodeMatch.Success)
+            {
+                string tag = nodeMatch.Value;
+                int tapX = 450;
+                int tapY = 1450; // standard bottom-center position on 900x1600 screen
+
+                Match bMatch = Regex.Match(tag, @"bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
+                if (bMatch.Success)
+                {
+                    int x1 = int.Parse(bMatch.Groups[1].Value);
+                    int y1 = int.Parse(bMatch.Groups[2].Value);
+                    int x2 = int.Parse(bMatch.Groups[3].Value);
+                    int y2 = int.Parse(bMatch.Groups[4].Value);
+                    if (x2 > x1 && y2 > y1 && (x2 - x1) > 50 && (y2 - y1) > 15)
+                    {
+                        tapX = (x1 + x2) / 2;
+                        tapY = (y1 + y2) / 2;
+                    }
+                }
+
+                Log(string.Format("[💎 Claimer] Found 'Load More' button at ({0}, {1}). Tapping to reveal additional active offers...", tapX, tapY));
+                AdbTap(tapX, tapY);
+                Thread.Sleep(3000);
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log("[Claimer] Error in CheckAndClickLoadMore: " + ex.Message);
+        }
+        return false;
+    }
     private void ProcessOfferAppDetails(string targetTitle, HashSet<string> cycleCompletedApps, HashSet<string> cooldownBonusApps = null)
     {
         int consecutiveLoops = 0;
@@ -4323,6 +4394,7 @@ public class QuizEarnApp : Form
 
                         int remaining = staySeconds;
                         int keepAlive = 0;
+                        int crashCount = 0;
                         while (isAutoOffering && remaining > 0)
                         {
                             if (autoRecoverBlueStacks && !IsBlueStacksProcessRunning())
@@ -4348,10 +4420,54 @@ public class QuizEarnApp : Form
                                 }
                             }));
 
-                            // Auto-dismiss blocking notification/permission dialogs if they appear after splash screen
-                            if (keepAlive == 3 || keepAlive == 7 || (keepAlive > 0 && keepAlive % 20 == 0))
+                            // Auto-dismiss blocking notification/permission dialogs or crash popups
+                            if (keepAlive == 3 || keepAlive == 7 || (keepAlive > 0 && keepAlive % 10 == 0))
                             {
-                                DismissAppDialogs();
+                                bool dialogDismissed = DismissAppDialogs();
+                                if (dialogDismissed && isLastDismissCrash)
+                                {
+                                    crashCount++;
+                                    Log(string.Format("[💎 Claimer] App keeps stopping! Crash count={0}/2 (app={1})", crashCount, targetPkg));
+                                    if (crashCount >= 2)
+                                    {
+                                        Log("[💎 Claimer] App keeps stopping repeatedly! Returning to Quiz & Earn to tap 'Stuck? Restart Offer' under 2-min progress bar...");
+                                        RunAdb("shell monkey -p com.quiz.earn.money.game -c android.intent.category.LAUNCHER 1");
+                                        Thread.Sleep(3000);
+                                        string stuckXml = DumpAndReadXml("/sdcard/stuck_check.xml");
+                                        int sx, sy;
+                                        if (TryFindNodeBounds(stuckXml, "Stuck? Restart Offer", out sx, out sy) ||
+                                            TryFindNodeBounds(stuckXml, "Restart Offer", out sx, out sy))
+                                        {
+                                            Log(string.Format("[💎 Claimer] Tapping 'Stuck? Restart Offer' button at ({0}, {1})...", sx, sy));
+                                            AdbTap(sx, sy);
+                                        }
+                                        else
+                                        {
+                                            Log("[💎 Claimer] Scrolling down to tap 'Stuck? Restart Offer' under 2-min bar...");
+                                            RunAdb("shell input swipe 450 1300 450 600 350");
+                                            Thread.Sleep(1500);
+                                            AdbTap(450, 1568);
+                                        }
+                                        Thread.Sleep(2000);
+                                        string confirmXml = DumpAndReadXml("/sdcard/confirm_stuck.xml");
+                                        int cfx, cfy;
+                                        if (TryFindNodeBounds(confirmXml, "Restart", out cfx, out cfy) ||
+                                            TryFindNodeBounds(confirmXml, "Yes", out cfx, out cfy))
+                                        {
+                                            AdbTap(cfx, cfy);
+                                            Thread.Sleep(1500);
+                                        }
+                                        if (!string.IsNullOrEmpty(offerPkg))
+                                        {
+                                            RunAdb(string.Format("shell pm uninstall {0}", offerPkg));
+                                        }
+                                        if (!string.IsNullOrEmpty(appTitle))
+                                        {
+                                            cycleCompletedApps.Add(appTitle);
+                                        }
+                                        break;
+                                    }
+                                }
                             }
 
                             if (keepAlive % 15 == 0)
@@ -4612,6 +4728,13 @@ public class QuizEarnApp : Form
                         }
 
                         Log("[💎 Claimer] On 'My Super Offers' list. Scanning for ready apps & bonus rewards...");
+
+                        // Check if "Load More" button is visible and tap it to reveal all pending offers!
+                        if (CheckAndClickLoadMore(xml))
+                        {
+                            xml = DumpAndReadXml("/sdcard/offer_flow.xml");
+                        }
+
                         string clickedTitle;
                         bool foundApp = FindAndClickReadyOfferCard(xml, cycleCompletedApps, out clickedTitle);
                         if (foundApp)
@@ -4630,6 +4753,11 @@ public class QuizEarnApp : Form
                                 RunAdb("shell input swipe 450 1200 450 400 350");
                                 Thread.Sleep(2000);
                                 string scrolledXml = DumpAndReadXml("/sdcard/offer_flow.xml");
+
+                                if (CheckAndClickLoadMore(scrolledXml))
+                                {
+                                    scrolledXml = DumpAndReadXml("/sdcard/offer_flow.xml");
+                                }
 
                                 if (Regex.IsMatch(scrolledXml, @"Unlocks\s*in\s*0[ms]", RegexOptions.IgnoreCase))
                                 {
@@ -4816,23 +4944,6 @@ public class QuizEarnApp : Form
         autoOfferThread.IsBackground = true;
         autoOfferThread.Start();
     }
-            {
-                Log("[🛡️ Watchdog] BlueStacks not running. Auto-launching BlueStacks before starting claimer...");
-                EnsureBlueStacksAliveAndReady("Auto-Offer Claimer Startup");
-            }
-            Log("[💎 Claimer] ADB not connected yet! Turn on ADB in emulator/phone first.");
-            return;
-        }
-        isAdbConnected = true;
-
-        isAutoOffering = true;
-        isBoosting = true;
-        Log("[💎 Claimer] Starting 1-Click Auto-Offer Claimer...");
-
-        autoOfferThread = new Thread(new ThreadStart(AutoOfferWorkerLoop));
-        autoOfferThread.IsBackground = true;
-        autoOfferThread.Start();
-    }
     private void StopAutoOfferClaimer()
     {
         if (isAutoOffering || isBoosting)
@@ -4949,8 +5060,13 @@ public class QuizEarnApp : Form
     {
         if (string.IsNullOrEmpty(xml)) return false;
 
-        // CRITICAL GUARD: Never treat Quiz screen navigation (like top-left back arrow) as ad close/skip buttons!
+        // CRITICAL GUARD: Never treat Quiz screen navigation or Offer screens as ad close/skip buttons!
         if (xml.Contains("Select the correct number") || 
+            xml.Contains("My Super Offers") || xml.Contains("active pending") || 
+            xml.Contains("Pending Offers") || xml.Contains("How to Complete") ||
+            xml.Contains("Installed about") || xml.Contains("Unlocks in") ||
+            xml.Contains("milestone") || xml.Contains("Milestone") ||
+            xml.Contains("tasks") || xml.Contains("Task") ||
             (xml.Contains("Super Offer") && (xml.Contains("gems") || xml.Contains("/25") || xml.Contains("attempts left"))) ||
             (xml.Contains("Quiz") && (xml.Contains("attempts left") || xml.Contains("gems"))))
         {
@@ -5002,9 +5118,44 @@ public class QuizEarnApp : Form
         }
 
         // Specific detection for "Close Video?" / "Resume" / "Leave ad" confirmation dialogs
-        if (Regex.IsMatch(xml, @"(close video|resume video|keep watching|reward will be lost|leave ad|exit ad)", RegexOptions.IgnoreCase))
+        // STRICT SAFETY: If "Skip This Milestone?" confirmation dialog appears, TAP CANCEL! NEVER skip milestones!
+        if (Regex.IsMatch(xml, @"(Skip This Milestone|Skip milestone)", RegexOptions.IgnoreCase))
         {
-            Match mCloseBtn = Regex.Match(xml, @"<node [^>]*text=""(Close Video|Close|Skip|Yes|Leave|Exit)""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""", RegexOptions.IgnoreCase);
+            Match mCancel = Regex.Match(xml, @"<node [^>]*text=""Cancel""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""", RegexOptions.IgnoreCase);
+            if (mCancel.Success)
+            {
+                int cx = (int.Parse(mCancel.Groups[1].Value) + int.Parse(mCancel.Groups[3].Value)) / 2;
+                int cy = (int.Parse(mCancel.Groups[2].Value) + int.Parse(mCancel.Groups[4].Value)) / 2;
+                Log(string.Format("[🛡️ Safety] Dismissing 'Skip This Milestone?' dialog by tapping Cancel at ({0}, {1})...", cx, cy));
+                AdbTap(cx, cy);
+                return true;
+            }
+            AdbTap(450, 953);
+            return true;
+        }
+
+        // STRICT SAFETY: If "Close Ad? You will lose your reward" dialog appears, TAP RESUME! NEVER forfeit rewards!
+        if (Regex.IsMatch(xml, @"(lose your reward|lose reward|won't get your reward|without reward|close ad\?|leave ad\?|close video\?|reward will be lost|resume video|keep watching)", RegexOptions.IgnoreCase))
+        {
+            Match mResume = Regex.Match(xml, @"<node [^>]*(?:text|content-desc)=""(RESUME|Resume|Resume Video|Keep Watching|Continue|Stay)""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""", RegexOptions.IgnoreCase);
+            if (mResume.Success)
+            {
+                int cx = (int.Parse(mResume.Groups[2].Value) + int.Parse(mResume.Groups[4].Value)) / 2;
+                int cy = (int.Parse(mResume.Groups[3].Value) + int.Parse(mResume.Groups[5].Value)) / 2;
+                Log(string.Format("[🛡️ Safety] Ad confirmation detected! Tapping RESUME at ({0}, {1}) to keep reward...", cx, cy));
+                AdbTap(cx, cy);
+                return true;
+            }
+            int defX = (int)(devWidth * 0.72);
+            int defY = (int)(devHeight * 0.38);
+            Log(string.Format("[🛡️ Safety] Ad confirmation detected! Tapping estimated RESUME at ({0}, {1}) to keep reward...", defX, defY));
+            AdbTap(defX, defY);
+            return true;
+        }
+
+        if (Regex.IsMatch(xml, @"(close video|leave ad|exit ad)", RegexOptions.IgnoreCase) && !Regex.IsMatch(xml, @"(lose|reward|coins)", RegexOptions.IgnoreCase))
+        {
+            Match mCloseBtn = Regex.Match(xml, @"<node [^>]*text=""(Close Video|Close|Yes|Leave|Exit)""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""", RegexOptions.IgnoreCase);
             if (mCloseBtn.Success)
             {
                 int bx1 = int.Parse(mCloseBtn.Groups[2].Value);
@@ -5029,7 +5180,13 @@ public class QuizEarnApp : Form
                 continue;
             }
 
-            bool isMatch = Regex.IsMatch(txt, @"(close|skip|dismiss|next-button|close-or-skip-button|mbridge_iv_close|close_button|btn_close|tt_video_ad_close|iv_close|ia_clickable_close_button|al_close_button|unity_close_button|vungle_close|btn_back|iv_back|button_back|no thanks|not now|close video|close ad|skip video|skip ad|leave|exit|✕|✖|⨯|×|\bX\b|>>|››|»|>\|)", RegexOptions.IgnoreCase);
+            // STRICT FORBIDDEN CHECK: Never touch bare skip links or offer milestone buttons!
+            if (Regex.IsMatch(txt, @"(text=""Skip""|content-desc=""Skip""|text=""Skipping|milestone|proceed|task|submit proof|upload proof|proof|after \d+h)", RegexOptions.IgnoreCase))
+            {
+                continue;
+            }
+
+            bool isMatch = Regex.IsMatch(txt, @"(close|dismiss|next-button|close-or-skip-button|mbridge_iv_close|close_button|btn_close|tt_video_ad_close|iv_close|ia_clickable_close_button|al_close_button|unity_close_button|vungle_close|btn_back|iv_back|button_back|no thanks|not now|close video|close ad|skip video|skip ad|leave|exit|✕|✖|⨯|×|\bX\b|>>|››|»|>\|)", RegexOptions.IgnoreCase);
 
             Match bMatch = Regex.Match(txt, @"bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
             if (bMatch.Success)

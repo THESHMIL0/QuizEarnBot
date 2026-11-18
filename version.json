@@ -1,9 +1,9 @@
-{
-    "changelog":  "Autonomous APK Bot Watchdog: Continuous multi-instance BlueStacks monitor, auto-relaunch on crash, auto-enable Accessibility Service, auto-start Quiz & Earn app and APK bot foreground service across all players.",
-    "version":  "2.7",
-    "mandatory":  false,
+﻿{
+    "version":  "2.8",
+    "version_code":  280,
+    "release_date":  "2026-11-18",
+    "changelog":  "Dual Engine v2.8 (Quiz \u0026 Earn + CashMafia): Super Offer auto-installer v2.0, Play Store verification, ad reward safety lock (26s-35s), blue Resume dialog protection, auto-relaunch watchdog, and Doze battery whitelist.",
     "download_url":  "https://raw.githubusercontent.com/THESHMIL0/QuizEarnBot/main/QuizEarnBot.exe",
-    "apk_url":  "QuizEarnBot.apk",
-    "version_code":  270,
-    "release_date":  "2026-11-14"
+    "apk_url":  "https://raw.githubusercontent.com/THESHMIL0/QuizEarnBot/main/QuizEarnBot.apk",
+    "mandatory":  false
 }

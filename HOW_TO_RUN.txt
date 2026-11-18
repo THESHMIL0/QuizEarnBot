@@ -1,26 +1,27 @@
 =====================================================
- QUIZ & EARN AUTO-BOT (v2.1 Portable Release)
+ QUIZ & EARN AUTO-BOT (v2.8 Portable Release)
 =====================================================
 
 QUICK SETUP (Takes 30 seconds):
 
 1. BLUESTACKS SETUP:
    - Open BlueStacks 5.
-   - Click Settings (Gear Icon) -> Advanced.
-   - Turn ON "Android Debug Bridge (ADB)".
-   - Make sure your BlueStacks display is set to Phone (Portrait) mode (e.g., 900x1600 or 720x1280).
+   - Click Settings (Gear Icon) -> Advanced -> Turn ON "Android Debug Bridge (ADB)".
+   - Make sure your BlueStacks display is set to Phone (Portrait) mode: 900x1600.
 
-2. RUN THE BOT:
-   - Open Quiz & Earn inside BlueStacks.
+2. RUN THE BOT (Choose either method):
+
+   METHOD A: Windows Desktop Bot
+   - Open Quiz & Earn (or CashMafia) inside BlueStacks.
    - Double-click "QuizEarnBot.exe" (or run "Start_Bot.bat").
-   - If Windows shows a blue "Windows protected your PC" screen:
+   - If Windows shows "Windows protected your PC":
      Click "More info" -> Click "Run anyway".
-     (Windows shows this for any new app downloaded from the web).
 
-3. HOW TO USE:
-   - Auto-Claim All 10 Offers: Click [ AUTO-CLAIM ALL OFFERS (1-Click) ]
-   - Auto-Solve 25 Captchas: Click [ START QUIZ EARN BOT ]
+   METHOD B: Native Android APK Bot (Recommended for Multi-Instance)
+   - Right-click "deploy_all.ps1" -> "Run with PowerShell".
+   - The bot APK will automatically install, grant permissions, and start farming across all connected players!
+   - Player 1 (5555) automatically handles Super Offers (downloads & 1,000 coin claims).
+   - Secondary players (5585, 5596, etc.) farm gems continuously.
 
-All tools (ADB + DLLs) are pre-included. No installation needed!
+All tools (ADB + DLLs + APK + Scripts) are pre-included. No manual setup needed!
 =====================================================
-
