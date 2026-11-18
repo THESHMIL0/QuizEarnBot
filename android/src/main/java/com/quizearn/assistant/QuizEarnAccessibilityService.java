@@ -123,6 +123,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
     private long collectGemScreenStartTime = 0;
     private int collectGemTapCount = 0;
+    private int collectGemRestartCount = 0;
     private long lastSeenCollectionScreenTime = 0;
     private long questionWaitingStartTime = 0;
     private String lastWaitingQuestion = "";
@@ -193,6 +194,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             svc.adStartTime = 0;
             svc.collectGemScreenStartTime = 0;
             svc.collectGemTapCount = 0;
+            svc.collectGemRestartCount = 0;
             svc.lastSeenCollectionScreenTime = 0;
             svc.questionWaitingStartTime = 0;
             svc.lastWaitingQuestion = "";
@@ -235,7 +237,14 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         restartQuizApp(null);
     }
 
+    private static volatile long lastRestartCallTime = 0;
+
     public static void restartQuizApp(Context callerCtx) {
+        long nowMs = SystemClock.uptimeMillis();
+        if (nowMs - lastRestartCallTime < 2500) {
+            return;
+        }
+        lastRestartCallTime = nowMs;
         Log.i(TAG, "restartQuizApp called.");
         offerState = OFFER_STATE_IDLE;
         isAppNotDetectedToast = false;
@@ -251,44 +260,15 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         final Context ctx = (callerCtx != null) ? callerCtx : instance;
         if (ctx != null) {
             try {
-                final String targetPkg = getQuizAppPackage(ctx);
-                try {
-                    ActivityManager am = (ActivityManager) ctx.getSystemService(Context.ACTIVITY_SERVICE);
-                    if (am != null) {
-                        am.killBackgroundProcesses(targetPkg);
-                    }
-                } catch (Throwable ignored) {}
+                final Context appCtx = ctx.getApplicationContext();
+                final String targetPkg = getQuizAppPackage(appCtx);
 
-                bgExecutor.execute(new Runnable() {
-                    @Override
-                    public void run() {
-                        try {
-                            Runtime.getRuntime().exec(new String[]{"am", "force-stop", targetPkg});
-                        } catch (Throwable ignored) {}
-                    }
-                });
-
+                // Move target app out of foreground BEFORE killing so killBackgroundProcesses can terminate it
                 if (instance != null) {
                     try {
                         instance.performGlobalAction(GLOBAL_ACTION_HOME);
                     } catch (Throwable ignored) {}
                 }
-
-                new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
-                    @Override
-                    public void run() {
-                        try {
-                            Intent intent = ctx.getPackageManager().getLaunchIntentForPackage(targetPkg);
-                            if (intent != null) {
-                                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-                                ctx.startActivity(intent);
-                                Log.i(TAG, "Target app (" + targetPkg + ") relaunched cleanly.");
-                            }
-                        } catch (Throwable ex) {
-                            Log.e(TAG, "Failed to relaunch target app", ex);
-                        }
-                    }
-                }, 550);
 
                 if (instance != null) {
                     instance.lastSolvedTarget = "";
@@ -301,7 +281,60 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     instance.questionWaitingStartTime = 0;
                     instance.lastWaitingQuestion = "";
                 }
-                currentStatus = "App Restarted";
+                currentStatus = "Restarting App...";
+
+                bgExecutor.execute(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            Thread.sleep(300);
+                        } catch (InterruptedException ignored) {}
+
+                        boolean forceStopped = false;
+                        // Try su -c force-stop first (works on BlueStacks 5 / rooted devices)
+                        try {
+                            Process suProc = Runtime.getRuntime().exec(new String[]{"su", "-c", "am force-stop " + targetPkg});
+                            forceStopped = (suProc.waitFor() == 0);
+                        } catch (Throwable ignored) {}
+
+                        if (!forceStopped) {
+                            try {
+                                Process amProc = Runtime.getRuntime().exec(new String[]{"am", "force-stop", targetPkg});
+                                forceStopped = (amProc.waitFor() == 0);
+                            } catch (Throwable ignored) {}
+                        }
+
+                        // Non-root fallback: requires KILL_BACKGROUND_PROCESSES + app already in background
+                        try {
+                            ActivityManager am = (ActivityManager) appCtx.getSystemService(Context.ACTIVITY_SERVICE);
+                            if (am != null) {
+                                am.killBackgroundProcesses(targetPkg);
+                            }
+                        } catch (Throwable ignored) {}
+
+                        try {
+                            Thread.sleep(350);
+                        } catch (InterruptedException ignored) {}
+
+                        final boolean wasKilled = forceStopped;
+                        new Handler(Looper.getMainLooper()).post(new Runnable() {
+                            @Override
+                            public void run() {
+                                try {
+                                    Intent intent = appCtx.getPackageManager().getLaunchIntentForPackage(targetPkg);
+                                    if (intent != null) {
+                                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                                        appCtx.startActivity(intent);
+                                        currentStatus = "App Restarted";
+                                        Log.i(TAG, "Target app (" + targetPkg + ") relaunched (forceStopped=" + wasKilled + ").");
+                                    }
+                                } catch (Throwable ex) {
+                                    Log.e(TAG, "Failed to relaunch target app", ex);
+                                }
+                            }
+                        });
+                    }
+                });
             } catch (Exception e) {
                 Log.e(TAG, "Failed to restart target app", e);
             }
@@ -340,6 +373,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             instance.lastSolveTime = 0;
             instance.collectGemScreenStartTime = 0;
             instance.collectGemTapCount = 0;
+            instance.collectGemRestartCount = 0;
             instance.lastSeenCollectionScreenTime = 0;
             instance.questionWaitingStartTime = 0;
             instance.lastWaitingQuestion = "";
@@ -735,7 +769,13 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 int cy = item.rect.centerY();
                 if (cy >= (int)(screenH * 0.10f) && cy <= (int)(screenH * 0.42f)) {
                     String raw = item.text.trim();
-                    if (mathPattern.matcher(raw).find() || numPattern.matcher(cleanNumText(raw)).matches()) {
+                    String rawLower = raw.toLowerCase();
+                    boolean isGemOrProgressText = raw.contains("/25") || raw.contains("/ 25") ||
+                        raw.contains("/50") || rawLower.contains("gem") ||
+                        rawLower.contains("unlock") || rawLower.contains("super offer") ||
+                        rawLower.contains("attempt") || rawLower.contains("left");
+                    if (!isGemOrProgressText &&
+                        (mathPattern.matcher(raw).find() || numPattern.matcher(cleanNumText(raw)).matches())) {
                         hasActiveQuiz = true;
                         break;
                     }
@@ -749,18 +789,20 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
-            // 2. Pre-scan Gem Collection Screen
+            // 2. Pre-scan Gem Collection Screen (takes precedence over accidental numeric/ratio matches)
             boolean hasCollectGem = false;
-            if (!hasActiveQuiz) {
-                for (NodeItem item : allNodes) {
-                    String combined = (item.text.trim().toLowerCase() + " " + item.contentDesc.trim().toLowerCase()).trim();
-                    if (combined.contains("collect gem") || combined.contains("collect reward") ||
-                        combined.contains("watch an ad") || combined.contains("congratulations") ||
-                        combined.contains("+1 gem") || combined.contains("gems to unlock")) {
-                        hasCollectGem = true;
-                        break;
-                    }
+            for (NodeItem item : allNodes) {
+                String combined = (item.text.trim().toLowerCase() + " " + item.contentDesc.trim().toLowerCase()).trim();
+                if (combined.contains("collect gem") || combined.contains("collect reward") ||
+                    combined.contains("claim gem") || combined.contains("watch an ad") ||
+                    combined.contains("congratulations") || combined.contains("+1 gem") ||
+                    combined.contains("gems to unlock")) {
+                    hasCollectGem = true;
+                    break;
                 }
+            }
+            if (hasCollectGem) {
+                hasActiveQuiz = false;
             }
 
             // 3. Super Offer Milestone Screen Detection
@@ -956,6 +998,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 lastProgressTime = now;
                 collectGemScreenStartTime = 0;
                 collectGemTapCount = 0;
+                collectGemRestartCount = 0;
                 questionWaitingStartTime = 0;
                 lastWaitingQuestion = "";
                 if (adStartTime == 0) adStartTime = now;
@@ -1248,26 +1291,50 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
             // Collect Gem Screen
             if (hasCollectGem || (!is25GemsOnScreen && offerState == OFFER_STATE_IDLE)) {
+                if (hasCollectGem && liveGems < 25 && offerState != OFFER_STATE_IDLE &&
+                    offerState != OFFER_STATE_VERIFYING && offerState != OFFER_STATE_REWARD_CLAIM) {
+                    offerState = OFFER_STATE_IDLE;
+                }
                 boolean isGemCollectionScreen = false;
                 boolean hasCollectGemButton = false;
                 boolean isButtonLoading = false;
                 NodeItem collectGemNode = null;
+                NodeItem collectGemBackBtn = null;
 
                 for (NodeItem item : allNodes) {
-                    if (isForbiddenElement(item, screenW, screenH)) continue;
                     String t = item.text.trim().toLowerCase();
                     String d = item.contentDesc.trim().toLowerCase();
                     String combined = (t + " " + d).trim();
+
+                    if ((d.contains("back") || d.contains("navigate up")) &&
+                        item.rect.top < (int)(screenH * 0.14f) && item.rect.left < (int)(screenW * 0.25f)) {
+                        collectGemBackBtn = item;
+                    }
 
                     if (combined.contains("congratulations") || combined.contains("+1 gem") ||
                         combined.contains("watch an ad to collect") || combined.contains("gems to unlock super offer")) {
                         isGemCollectionScreen = true;
                     }
-                    if (combined.contains("collect gem") || combined.contains("collect reward")) {
-                        hasCollectGemButton = true;
-                        isGemCollectionScreen = true;
-                        collectGemNode = item;
-                    } else if (t.equals("loading...") || t.equals("loading")) {
+
+                    boolean isExplicitCollectBtn = !t.contains("watch an ad") && !d.contains("watch an ad") &&
+                        (t.contains("collect gem") || t.contains("collect gems") || t.contains("collect reward") ||
+                         t.contains("claim gem") || d.contains("collect gem") || d.contains("collect reward"));
+                    if (isExplicitCollectBtn && item.rect.width() > dp(24) && item.rect.height() > dp(18)) {
+                        if (!item.isEnabled) {
+                            isButtonLoading = true;
+                            isGemCollectionScreen = true;
+                        } else {
+                            hasCollectGemButton = true;
+                            isGemCollectionScreen = true;
+                            // Prefer the outer clickable button container or wider hit target over small inner text/icon
+                            if (collectGemNode == null ||
+                                (item.clickable && !collectGemNode.clickable) ||
+                                (item.clickable == collectGemNode.clickable && item.rect.width() > collectGemNode.rect.width())) {
+                                collectGemNode = item;
+                            }
+                        }
+                    } else if (!isForbiddenElement(item, screenW, screenH) &&
+                               (t.equals("loading...") || t.equals("loading") || d.equals("loading..."))) {
                         isButtonLoading = true;
                     }
                 }
@@ -1277,17 +1344,31 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     if (collectGemScreenStartTime == 0) collectGemScreenStartTime = now;
                     long elapsedOnCollect = now - collectGemScreenStartTime;
 
-                    if (collectGemTapCount >= 3 || elapsedOnCollect > 12000) {
-                        currentStatus = "Ad stalled -> Restarting App";
+                    long stallTimeoutMs = isButtonLoading ? 20000L : 15000L;
+                    if (collectGemTapCount >= 3 || elapsedOnCollect > stallTimeoutMs) {
                         collectGemScreenStartTime = 0;
                         collectGemTapCount = 0;
-                        restartQuizApp();
-                        lastTapTime = now + 3500;
+                        adStartTime = 0;
+                        lastProgressTime = now;
+                        adReloadCooldownUntil = SystemClock.uptimeMillis() + 8000;
+                        if (collectGemRestartCount >= 1) {
+                            currentStatus = "Ad stalled -> Backing to Home";
+                            collectGemRestartCount = 0;
+                            if (collectGemBackBtn != null) tapNode(collectGemBackBtn);
+                            else performGlobalAction(GLOBAL_ACTION_BACK);
+                            lastTapTime = now + 2000;
+                        } else {
+                            currentStatus = "Ad not loaded -> Restarting App";
+                            collectGemRestartCount++;
+                            restartQuizApp();
+                            lastTapTime = now + 3500;
+                        }
                         return;
                     }
                     if (hasCollectGemButton && collectGemNode != null) {
-                        if (collectGemTapCount > 0 && (now - lastTapTime < 1500)) return;
+                        if (collectGemTapCount > 0 && (now - lastTapTime < 1800)) return;
                         collectGemTapCount++;
+                        lastProgressTime = now;
                         if (liveGems >= 24) {
                             isCollecting25thGem = true;
                             finalAdStarted = false;
@@ -1296,7 +1377,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                         lastTapTime = now + 1500;
                         lastSolvedTarget = "";
                         lastSolveTime = 0;
-                        currentStatus = "Collecting Gem...";
+                        currentStatus = "Collecting Gem (" + collectGemTapCount + "/3)...";
                         adStartTime = 0;
                         return;
                     } else if (isButtonLoading) {
@@ -1306,6 +1387,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 } else if (now - lastSeenCollectionScreenTime > 2500) {
                     collectGemScreenStartTime = 0;
                     collectGemTapCount = 0;
+                    collectGemRestartCount = 0;
                 }
 
                 for (NodeItem item : allNodes) {
@@ -1666,16 +1748,17 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         }
     }
 
-    private void tapCoordinates(final int cx, final int cy) {
-        if (cx <= 0 || cy <= 0) return;
+    private boolean tapCoordinates(final int cx, final int cy) {
+        if (cx <= 0 || cy <= 0) return false;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             Path path = new Path();
             path.moveTo(cx, cy);
             GestureDescription stroke = new GestureDescription.Builder()
                 .addStroke(new GestureDescription.StrokeDescription(path, 0L, 85L))
                 .build();
-            dispatchGesture(stroke, null, null);
+            return dispatchGesture(stroke, null, null);
         }
+        return false;
     }
 
     private void tapNode(final NodeItem item) {
@@ -1689,31 +1772,33 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         if (item.rect.width() > 6) cx = Math.max(item.rect.left + 3, Math.min(item.rect.right - 3, cx));
         if (item.rect.height() > 6) cy = Math.max(item.rect.top + 3, Math.min(item.rect.bottom - 3, cy));
 
-        tapCoordinates(cx, cy);
+        boolean gestureDispatched = tapCoordinates(cx, cy);
 
-        // Native Accessibility click fallback (essential on older Android 7.0/7.1 & Compose Play Store trees)
-        try {
-            if (item.node != null) {
-                if (item.clickable) {
-                    item.node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-                } else {
-                    AccessibilityNodeInfo p = item.node.getParent();
-                    int hops = 0;
-                    while (p != null && hops < 3) {
-                        boolean pClick = p.isClickable();
-                        if (pClick) {
-                            p.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+        // Native Accessibility click fallback ONLY if gesture dispatch was unavailable/rejected
+        if (!gestureDispatched) {
+            try {
+                if (item.node != null) {
+                    if (item.clickable) {
+                        item.node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                    } else {
+                        AccessibilityNodeInfo p = item.node.getParent();
+                        int hops = 0;
+                        while (p != null && hops < 3) {
+                            boolean pClick = p.isClickable();
+                            if (pClick) {
+                                p.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                                p.recycle();
+                                break;
+                            }
+                            AccessibilityNodeInfo nextP = p.getParent();
                             p.recycle();
-                            break;
+                            p = nextP;
+                            hops++;
                         }
-                        AccessibilityNodeInfo nextP = p.getParent();
-                        p.recycle();
-                        p = nextP;
-                        hops++;
                     }
                 }
-            }
-        } catch (Throwable ignored) {}
+            } catch (Throwable ignored) {}
+        }
     }
 
     private boolean isCloseOrSkipText(String text) {

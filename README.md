@@ -1,4 +1,4 @@
-﻿# Quiz & Earn Auto-Bot (v2.8)
+# Quiz & Earn Auto-Bot (v2.8)
 
 Automated background solver, multi-instance gem farmer, and Super Offer milestone auto-installer for **Quiz & Earn** (`com.quiz.earn.money.game`) and **CashMafia** (`com.rayole.cashmafia2`).
 
