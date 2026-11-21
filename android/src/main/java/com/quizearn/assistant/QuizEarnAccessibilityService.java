@@ -2762,7 +2762,31 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         }
 
         if (verifyBtn != null) {
-            // If we are not currently in the middle of verifying, ALWAYS tap "Verify Installation"!
+            // If no app was installed, don't keep tapping verify into an endless failure loop!
+            boolean hasInstalledApp = (newlyInstalledPkg != null && !newlyInstalledPkg.isEmpty()) || !offerTargetPackage.isEmpty();
+            if (!hasInstalledApp) {
+                if (restartOfferBtn != null && restartOfferBtn.rect.centerY() < safeBottomCutoffY) {
+                    currentStatus = "No App Installed -> Restarting Offer...";
+                    tapNode(restartOfferBtn);
+                    offerTargetPackage = "";
+                    offerState = OFFER_STATE_DETAIL_PAGE;
+                    lastTapTime = now + 2500;
+                    lastProgressTime = now;
+                    return true;
+                }
+                if (consecutiveVerifyFailures >= 1) {
+                    currentStatus = "No App Installed -> Backing out...";
+                    if (goBackBtn != null) tapNode(goBackBtn);
+                    else performGlobalAction(GLOBAL_ACTION_BACK);
+                    offerTargetPackage = "";
+                    offerState = OFFER_STATE_IDLE;
+                    lastTapTime = now + 2500;
+                    lastProgressTime = now;
+                    return true;
+                }
+            }
+
+            // If we are not currently in the middle of verifying, tap "Verify Installation"
             if (offerState != OFFER_STATE_VERIFYING && (now - lastTapTime > 1200)) {
                 if (newlyInstalledPkg != null && !newlyInstalledPkg.isEmpty()) {
                     offerTargetPackage = newlyInstalledPkg;

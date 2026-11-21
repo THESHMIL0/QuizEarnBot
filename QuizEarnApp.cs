@@ -1158,6 +1158,18 @@ public class QuizEarnApp : Form
             ? string.Format("shell am start-foreground-service -a {0}.{1} {2}", PKG_BOT_ASSISTANT, action, OVERLAY_COMPONENT)
             : string.Format("shell am startservice -a {0}.{1} {2}", PKG_BOT_ASSISTANT, action, OVERLAY_COMPONENT);
         RunAdbDevice(deviceId, cmd);
+
+        if (action == "START")
+        {
+            // CRITICAL: Player 3 (5585) & Player 4 (5595) are Pure Gem Farmers (AUTO_OFFER_OFF).
+            // Player 1 (5555 / 5556 / 5557) is Master Auto-Installer (AUTO_OFFER_ON).
+            bool isGemFarmer = deviceId.Contains("5585") || deviceId.Contains("5595");
+            string offerAction = isGemFarmer ? "AUTO_OFFER_OFF" : "AUTO_OFFER_ON";
+            string offerCmd = (sdk >= 26)
+                ? string.Format("shell am start-foreground-service -a {0}.{1} {2}", PKG_BOT_ASSISTANT, offerAction, OVERLAY_COMPONENT)
+                : string.Format("shell am startservice -a {0}.{1} {2}", PKG_BOT_ASSISTANT, offerAction, OVERLAY_COMPONENT);
+            RunAdbDevice(deviceId, offerCmd);
+        }
     }
 
     private void EnsureAccessibilityEnabled(string deviceId, string currentServices)
@@ -1744,63 +1756,66 @@ public class QuizEarnApp : Form
         new Thread(() =>
         {
             EnsureConnected();
-            string destName = string.Format("Screenshot_{0:yyyyMMdd_HHmmss}.png", DateTime.Now);
-            string remotePath = "/sdcard/Pictures/Screenshots/" + destName;
-            string dcimPath = "/sdcard/DCIM/Screenshots/" + destName;
             int capturedCount = 0;
+            string latestCapturedFile = "";
             foreach (string dev in GetAllConnectedAdbDevices())
             {
                 try
                 {
+                    // 1. If file picker or photo picker is in foreground, dismiss it first
+                    // so we capture the ACTUAL app screen, not the picker overlay
+                    string topDump = RunAdbDevice(dev, "shell dumpsys window").ToLower();
+                    if (topDump.Contains("documentsui") || topDump.Contains("photopicker") ||
+                        topDump.Contains("pickactivity") || topDump.Contains("filepickerdialog") ||
+                        topDump.Contains("resolveractivity"))
+                    {
+                        Log("[Screenshot] File/Photo picker detected on " + dev + " - dismissing to capture real screen...");
+                        RunAdbDevice(dev, "shell input keyevent KEYCODE_BACK");
+                        Thread.Sleep(700);
+                    }
+
+                    // 2. Ensure destination directories exist
                     RunAdbDevice(dev, "shell mkdir -p /sdcard/Pictures/Screenshots /sdcard/DCIM/Screenshots");
 
-                    // If file picker (DocumentsUI) is in foreground, dismiss it first
-                    // so we capture the ACTUAL app screen, not the picker overlay
-                    string topActivity = RunAdbDevice(dev, "shell dumpsys window windows").ToLower();
-                    if (topActivity.Contains("com.android.documentsui") || topActivity.Contains("pickactivity") || topActivity.Contains("filepickerdialog"))
-                    {
-                        Log("[Screenshot] File picker detected on " + dev + " - dismissing to capture real screen...");
-                        RunAdbDevice(dev, "shell input keyevent KEYCODE_BACK");
-                        Thread.Sleep(800); // wait for picker to close and app to come to foreground
-                    }
+                    // 3. Trigger Android's native system screenshot via KEYCODE_SYSRQ (120)
+                    RunAdbDevice(dev, "shell input keyevent 120");
+                    Thread.Sleep(1400);
 
-                    string tempPath = "/data/local/tmp/_ss_tmp.png";
-                    RunAdbDevice(dev, "shell rm -f " + tempPath);
-
-                    // Use dedicated 15-second timeout screencap into temp path first
-                    bool ok = RunAdbScreencap(dev, tempPath);
-                    if (!ok)
-                    {
-                        Log(string.Format("[Screenshot] screencap timed out on {0}, retrying...", dev));
-                        Thread.Sleep(500);
-                        ok = RunAdbScreencap(dev, tempPath);
-                    }
-
+                    // 4. Check if valid screenshot was created
+                    string newest = RunAdbDevice(dev, "shell \"ls -1t /sdcard/Pictures/Screenshots/*.png 2>/dev/null | grep -v '\\.pending' | head -n 1\"").Trim();
                     long sz = 0;
-                    if (ok)
+                    if (!string.IsNullOrEmpty(newest) && !newest.Contains("No such"))
                     {
-                        string sizeOut = RunAdbDevice(dev, "shell stat -c %s " + tempPath).Trim();
+                        string sizeOut = RunAdbDevice(dev, "shell stat -c %s " + newest).Trim();
                         long.TryParse(sizeOut, out sz);
+                    }
+
+                    // 5. Fallback to direct screencap if keyevent 120 didn't produce file
+                    if (sz < 10000)
+                    {
+                        string destName = string.Format("Screenshot_{0:yyyyMMdd_HHmmss}.png", DateTime.Now);
+                        string remotePath = "/sdcard/Pictures/Screenshots/" + destName;
+                        string dcimPath = "/sdcard/DCIM/Screenshots/" + destName;
+                        RunAdbDevice(dev, "shell screencap -p " + remotePath);
+                        RunAdbDevice(dev, "shell cp " + remotePath + " " + dcimPath + " 2>/dev/null; true");
+                        RunAdbDevice(dev, "shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d \"file://" + remotePath + "\"");
+                        RunAdbDevice(dev, "shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d \"file://" + dcimPath + "\"");
+                        string sizeOut = RunAdbDevice(dev, "shell stat -c %s " + remotePath).Trim();
+                        long.TryParse(sizeOut, out sz);
+                        newest = remotePath;
                     }
 
                     if (sz > 10000)
                     {
-                        // Safely copy verified valid screenshot into destination directories
-                        RunAdbDevice(dev, string.Format("shell \"cp {0} {1} && cp {0} {2} && rm -f {0}\"", tempPath, remotePath, dcimPath));
-
-                        // Broadcast media scanner so Gallery, Recent Images, and Photo Picker index the real image immediately
-                        RunAdbDevice(dev, "shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d \"file://" + remotePath + "\"");
-                        RunAdbDevice(dev, "shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d \"file://" + dcimPath + "\"");
-                        RunAdbDevice(dev, "shell cmd media.scanner scan " + remotePath + " 2>/dev/null; true");
-                        RunAdbDevice(dev, "shell cmd media.scanner scan " + dcimPath + " 2>/dev/null; true");
-
+                        // Clean up any 0-byte or corrupted temp files in Screenshots folder
+                        RunAdbDevice(dev, "shell \"find /sdcard/Pictures/Screenshots/ -size 0 -delete 2>/dev/null; true\"");
                         capturedCount++;
-                        Log(string.Format("[Screenshot] Captured {0} bytes on {1} -> {2}", sz, dev, destName));
+                        latestCapturedFile = System.IO.Path.GetFileName(newest);
+                        Log(string.Format("[Screenshot] Captured {0} bytes on {1} -> {2}", sz, dev, latestCapturedFile));
                     }
                     else
                     {
                         Log(string.Format("[Screenshot] ERROR: Captured image invalid ({0} bytes) on {1}.", sz, dev));
-                        RunAdbDevice(dev, "shell rm -f " + tempPath + " " + remotePath + " " + dcimPath);
                     }
                 }
                 catch (Exception ex)
@@ -1809,7 +1824,7 @@ public class QuizEarnApp : Form
                 }
             }
             if (capturedCount > 0)
-                Log(string.Format("[Screenshot] Done! Saved to Gallery on {0} device(s): {1}", capturedCount, destName));
+                Log(string.Format("[Screenshot] Done! Real screen saved to Gallery on {0} device(s): {1}", capturedCount, latestCapturedFile));
             else
                 Log("[Screenshot] WARNING: Screenshot failed on all devices. Check ADB connection.");
         }) { IsBackground = true }.Start();
