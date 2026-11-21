@@ -4,9 +4,10 @@
 param(
     [string]$NewVersion = "2.9",
     [int]$VersionCode = 290,
-    [string]$Changelog = "v2.9: Collect Gem no-ad stall & restart fix, removed all pm uninstall logic, API-aware Android 7-15 service recovery, non-destructive Accessibility setup, thread-safe stats/ADB cleanup, Quiz & Earn + CashMafia switcher, proportional screen scaling, and High-DPI WinForms UI.",
+    [string]$Changelog = "v2.9: Added Quiz & Earn Lite APK (Auto-Stops & Alerts at 25 Gems, pure math + ads solver). Exe watchdog strictly filters BlueStacks instances only.",
     [string]$DownloadUrl = "https://raw.githubusercontent.com/THESHMIL0/QuizEarnBot/main/QuizEarnBot.exe",
-    [string]$ApkUrl = "https://raw.githubusercontent.com/THESHMIL0/QuizEarnBot/main/QuizEarnBot.apk"
+    [string]$ApkUrl = "https://raw.githubusercontent.com/THESHMIL0/QuizEarnBot/main/QuizEarnBot.apk",
+    [string]$ApkLiteUrl = "https://raw.githubusercontent.com/THESHMIL0/QuizEarnBot/main/QuizEarnBotLite.apk"
 )
 
 $ErrorActionPreference = "Stop"
@@ -52,7 +53,7 @@ if (Test-Path $compileScript) {
 
 $ExePath = Join-Path $WorkingDir "QuizEarnBot.exe"
 
-# 2. Build Android APK if android\build_apk.ps1 exists
+# 2. Build Android APKs
 $buildApkScript = Join-Path $WorkingDir "android\build_apk.ps1"
 if (Test-Path $buildApkScript) {
     Write-Host "[2/5] Building Android QuizEarnBot.apk..." -ForegroundColor Yellow
@@ -60,7 +61,21 @@ if (Test-Path $buildApkScript) {
     try {
         & powershell -ExecutionPolicy Bypass -File $buildApkScript
         if ($LASTEXITCODE -ne 0) {
-            Write-Error "APK build failed. Release aborted."
+            Write-Error "Full APK build failed. Release aborted."
+            exit $LASTEXITCODE
+        }
+    } finally {
+        Pop-Location
+    }
+}
+$buildLiteScript = Join-Path $WorkingDir "android-lite\build_apk.ps1"
+if (Test-Path $buildLiteScript) {
+    Write-Host "[2B/5] Building Android QuizEarnBotLite.apk..." -ForegroundColor Yellow
+    Push-Location (Join-Path $WorkingDir "android-lite")
+    try {
+        & powershell -ExecutionPolicy Bypass -File $buildLiteScript
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Lite APK build failed. Release aborted."
             exit $LASTEXITCODE
         }
     } finally {
@@ -77,6 +92,8 @@ $VersionObj = [ordered]@{
     changelog = $Changelog
     download_url = $DownloadUrl
     apk_url = $ApkUrl
+    apk_lite_version = "1.0-Lite"
+    apk_lite_url = $ApkLiteUrl
     mandatory = $false
 }
 $JsonText = $VersionObj | ConvertTo-Json -Depth 3
@@ -94,6 +111,7 @@ New-Item -ItemType Directory -Path $StageDir | Out-Null
 $FilesToCopy = @(
     $ExePath,
     (Join-Path $WorkingDir "QuizEarnBot.apk"),
+    (Join-Path $WorkingDir "QuizEarnBotLite.apk"),
     (Join-Path $WorkingDir "adb.exe"),
     (Join-Path $WorkingDir "AdbWinApi.dll"),
     (Join-Path $WorkingDir "AdbWinUsbApi.dll"),
@@ -120,7 +138,7 @@ Write-Host "  -> Portable ZIP created ($((Get-Item $ZipPath).Length) bytes)" -Fo
 Write-Host "[5/5] Checking git repository for publishing..." -ForegroundColor Yellow
 $gitCmd = Get-Command git -ErrorAction SilentlyContinue
 if ($gitCmd) {
-    & git add version.json QuizEarnBot.exe QuizEarnBot.apk "QuizEarnBot_v$($NewVersion)_Portable.zip" QuizEarnApp.cs compile_exe.ps1 publish_release.ps1 app.manifest android/ README.md index.html HOW_TO_RUN.txt deploy_all.ps1 start_services.ps1 check_status.ps1 QUIZEARN_BOT_COMPLETE_HANDOVER_AND_CODEBASE.txt QUIZEARN_EXE_BOT_FULL_HANDOVER_AND_CODE.txt
+    & git add version.json QuizEarnBot.exe QuizEarnBot.apk QuizEarnBotLite.apk "QuizEarnBot_v$($NewVersion)_Portable.zip" QuizEarnApp.cs compile_exe.ps1 publish_release.ps1 app.manifest android/ android-lite/ README.md index.html HOW_TO_RUN.txt deploy_all.ps1 start_services.ps1 check_status.ps1 QUIZEARN_BOT_COMPLETE_HANDOVER_AND_CODEBASE.txt QUIZEARN_EXE_BOT_FULL_HANDOVER_AND_CODE.txt
     & git commit -m "Release v$NewVersion - $Changelog"
     & git push origin main
     Write-Host "  -> Published v$NewVersion to GitHub." -ForegroundColor Green

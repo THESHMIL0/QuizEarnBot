@@ -1198,9 +1198,22 @@ public class QuizEarnApp : Form
             string tr = line.Trim();
             if (string.IsNullOrEmpty(tr) || tr.StartsWith("List of") || tr.StartsWith("*")) continue;
             string[] parts = tr.Split(new char[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length >= 2 && parts[1].Equals("device", StringComparison.OrdinalIgnoreCase) && !result.Contains(parts[0]))
+            if (parts.Length >= 2 && parts[1].Equals("device", StringComparison.OrdinalIgnoreCase))
             {
-                result.Add(parts[0]);
+                string devId = parts[0];
+                // CRITICAL: User requirement - EXE bot must ONLY target BlueStacks/emulators, NEVER touch physical phones!
+                if (!IsEmulatorDevice(devId)) continue;
+
+                if (devId.StartsWith("emulator-"))
+                {
+                    int emuPort;
+                    if (int.TryParse(devId.Substring(9), out emuPort))
+                    {
+                        string ipPort = "127.0.0.1:" + (emuPort + 1);
+                        if (raw.Contains(ipPort)) continue;
+                    }
+                }
+                if (!result.Contains(devId)) result.Add(devId);
             }
         }
         return result;
@@ -1208,12 +1221,13 @@ public class QuizEarnApp : Form
 
     private bool EnsureConnected()
     {
+        CleanOfflineAdbDevices();
         List<string> connected = GetAllConnectedAdbDevices();
-        string chosen = connected.FirstOrDefault(id => IsEmulatorDevice(id)) ?? connected.FirstOrDefault();
+        string chosen = connected.FirstOrDefault(id => IsEmulatorDevice(id));
         if (!string.IsNullOrEmpty(chosen))
         {
             adbPort = chosen;
-            UpdatePortLabel((IsEmulatorDevice(chosen) ? "Emulator: " : "Phone: ") + chosen);
+            UpdatePortLabel("Emulator: " + chosen);
             UpdateScreenResolution();
             return true;
         }
@@ -1236,7 +1250,7 @@ public class QuizEarnApp : Form
             }
         }
 
-        UpdatePortLabel("No Device Connected");
+        UpdatePortLabel("No BlueStacks Connected");
         return false;
     }
 
@@ -1261,13 +1275,35 @@ public class QuizEarnApp : Form
         return false;
     }
 
+    private void CleanOfflineAdbDevices()
+    {
+        try
+        {
+            string raw = RunAdb("devices");
+            foreach (string line in raw.Split('\n'))
+            {
+                string tr = line.Trim();
+                if (string.IsNullOrEmpty(tr) || tr.StartsWith("List of") || tr.StartsWith("*")) continue;
+                string[] parts = tr.Split(new char[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length >= 2 && parts[1].Equals("offline", StringComparison.OrdinalIgnoreCase))
+                {
+                    RunAdb("disconnect " + parts[0]);
+                }
+            }
+        }
+        catch { }
+    }
+
     private List<string> DiscoverUniversalAdbPorts()
     {
         List<string> ports = new List<string>();
         foreach (var inst in DiscoverBlueStacksInstances())
         {
-            string ep = "127.0.0.1:" + inst.Port;
-            if (!ports.Contains(ep)) ports.Add(ep);
+            foreach (string p in inst.CandidatePorts)
+            {
+                string ep = "127.0.0.1:" + p;
+                if (!ports.Contains(ep)) ports.Add(ep);
+            }
         }
         foreach (int p in new int[] { 5555, 5556, 5565, 5575, 5585, 5595, 5605, 5615, 62001, 21503, 7555, 16384, 58526 })
         {
@@ -1277,11 +1313,17 @@ public class QuizEarnApp : Form
         return ports;
     }
 
-    private class BlueStacksInstance { public string InstanceName, DisplayName, Port; }
+    private class BlueStacksInstance
+    {
+        public string InstanceName;
+        public string DisplayName;
+        public string Port;
+        public List<string> CandidatePorts = new List<string>();
+    }
 
     private List<BlueStacksInstance> DiscoverBlueStacksInstances()
     {
-        List<BlueStacksInstance> list = new List<BlueStacksInstance>();
+        Dictionary<string, BlueStacksInstance> dict = new Dictionary<string, BlueStacksInstance>(StringComparer.OrdinalIgnoreCase);
         foreach (string confPath in new string[] {
             @"C:\ProgramData\BlueStacks_nxt\bluestacks.conf",
             @"D:\ProgramData\BlueStacks_nxt\bluestacks.conf",
@@ -1292,31 +1334,115 @@ public class QuizEarnApp : Form
             try
             {
                 string conf = File.ReadAllText(confPath);
+
+                // Collect display names
+                foreach (Match m in Regex.Matches(conf, @"bst\.instance\.([^.]+)\.display_name=""([^""]+)"""))
+                {
+                    string inst = m.Groups[1].Value.Trim();
+                    string disp = m.Groups[2].Value.Trim();
+                    if (!dict.ContainsKey(inst))
+                    {
+                        dict[inst] = new BlueStacksInstance { InstanceName = inst, DisplayName = disp };
+                    }
+                    else
+                    {
+                        dict[inst].DisplayName = disp;
+                    }
+                }
+
+                // Collect candidate ports (status.adb_port and adb_port)
                 foreach (Match m in Regex.Matches(conf, @"bst\.instance\.([^.]+)\.(?:status\.)?adb_port=""(\d+)"""))
                 {
                     string inst = m.Groups[1].Value.Trim();
                     string port = m.Groups[2].Value.Trim();
-                    if (!list.Any(x => x.Port == port || x.InstanceName.Equals(inst, StringComparison.OrdinalIgnoreCase)))
+                    if (!dict.ContainsKey(inst))
                     {
-                        Match mName = Regex.Match(conf, @"bst\.instance\." + Regex.Escape(inst) + @"\.display_name=""([^""]+)""");
-                        list.Add(new BlueStacksInstance
-                        {
-                            InstanceName = inst,
-                            DisplayName = mName.Success ? mName.Groups[1].Value.Trim() : inst,
-                            Port = port
-                        });
+                        dict[inst] = new BlueStacksInstance { InstanceName = inst, DisplayName = inst };
+                    }
+                    if (!dict[inst].CandidatePorts.Contains(port))
+                    {
+                        dict[inst].CandidatePorts.Add(port);
+                    }
+                    if (m.Value.Contains("status.adb_port"))
+                    {
+                        dict[inst].Port = port;
+                    }
+                    else if (string.IsNullOrEmpty(dict[inst].Port))
+                    {
+                        dict[inst].Port = port;
                     }
                 }
-                if (list.Count > 0) break;
+                if (dict.Count > 0) break;
             }
             catch { }
         }
-        return list;
+
+        // Add standard candidate port mappings for known instances if missing
+        foreach (var kvp in dict)
+        {
+            var inst = kvp.Value;
+            if (inst.InstanceName.Equals("Tiramisu64", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!inst.CandidatePorts.Contains("5556")) inst.CandidatePorts.Add("5556");
+                if (!inst.CandidatePorts.Contains("5555")) inst.CandidatePorts.Add("5555");
+            }
+            else if (inst.InstanceName.Equals("Tiramisu64_3", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!inst.CandidatePorts.Contains("5585")) inst.CandidatePorts.Add("5585");
+            }
+            else if (inst.InstanceName.Equals("Tiramisu64_4", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!inst.CandidatePorts.Contains("5595")) inst.CandidatePorts.Add("5595");
+            }
+
+            if (string.IsNullOrEmpty(inst.Port) && inst.CandidatePorts.Count > 0)
+            {
+                inst.Port = inst.CandidatePorts[0];
+            }
+        }
+
+        return dict.Values.ToList();
     }
 
     private bool IsBlueStacksProcessRunning()
     {
         try { return Process.GetProcessesByName("HD-Player").Length > 0; } catch { return false; }
+    }
+
+    private bool IsInstanceOnline(BlueStacksInstance inst, List<string> onlineDevices, out string activeEndpoint)
+    {
+        activeEndpoint = null;
+        if (inst == null) return false;
+
+        foreach (string port in inst.CandidatePorts)
+        {
+            string ep = "127.0.0.1:" + port;
+            if (onlineDevices != null && onlineDevices.Contains(ep))
+            {
+                activeEndpoint = ep;
+                inst.Port = port;
+                return true;
+            }
+        }
+
+        foreach (string port in inst.CandidatePorts)
+        {
+            int p;
+            if (int.TryParse(port, out p) && IsTcpPortOpen(p))
+            {
+                string ep = "127.0.0.1:" + port;
+                RunAdb("connect " + ep);
+                string state = RunAdbDevice(ep, "get-state").Trim();
+                if (state.Equals("device", StringComparison.OrdinalIgnoreCase))
+                {
+                    activeEndpoint = ep;
+                    inst.Port = port;
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private string DetectBlueStacks(out string instanceArg)
@@ -1343,55 +1469,156 @@ public class QuizEarnApp : Form
         return "";
     }
 
-    private bool EnsureBlueStacksAliveAndReady(string callerContext)
+    private bool RecoverBlueStacksInstance(BlueStacksInstance inst)
     {
-        if (!autoRecoverBlueStacks) return false;
-        if (IsBlueStacksProcessRunning() && EnsureConnected()) return true;
+        if (!autoRecoverBlueStacks || inst == null) return false;
+        Log(string.Format("[Watchdog] Recovering BlueStacks instance '{0}' ({1})...", inst.DisplayName, inst.InstanceName));
 
-        Log(string.Format("[Watchdog] Recovery triggered during {0}...", callerContext));
-        if (!IsBlueStacksProcessRunning())
+        // 1. Disconnect stale/offline ADB sockets for candidate ports
+        foreach (string p in inst.CandidatePorts)
         {
-            string args;
-            string bstExe = DetectBlueStacks(out args);
-            if (!string.IsNullOrEmpty(bstExe) && File.Exists(bstExe))
-            {
-                var insts = DiscoverBlueStacksInstances();
-                if (insts.Count > 0) args = "--instance " + insts[0].InstanceName;
-                try { Process.Start(new ProcessStartInfo { FileName = bstExe, WorkingDirectory = Path.GetDirectoryName(bstExe), Arguments = args, UseShellExecute = true }); } catch { }
-            }
+            RunAdb("disconnect 127.0.0.1:" + p);
         }
 
+        // 2. Locate HD-Player.exe
+        string dummy;
+        string bstExe = DetectBlueStacks(out dummy);
+        if (string.IsNullOrEmpty(bstExe) || !File.Exists(bstExe))
+        {
+            Log("[Watchdog] Error: HD-Player.exe not found.");
+            return false;
+        }
+
+        // 3. Launch HD-Player.exe with proper working directory
+        try
+        {
+            ProcessStartInfo psi = new ProcessStartInfo
+            {
+                FileName = bstExe,
+                Arguments = "--instance " + inst.InstanceName,
+                WorkingDirectory = Path.GetDirectoryName(bstExe),
+                UseShellExecute = true
+            };
+            Process.Start(psi);
+            Log(string.Format("[Watchdog] Launched HD-Player.exe --instance {0}", inst.InstanceName));
+        }
+        catch (Exception ex)
+        {
+            Log("[Watchdog] Launch failed: " + ex.Message);
+            return false;
+        }
+
+        // 4. Poll for boot completion (up to 90s, checking every 3s)
+        string readyEndpoint = null;
         for (int wait = 0; wait < 90; wait += 3)
         {
             Thread.Sleep(3000);
-            if (EnsureConnected() && RunAdb("shell getprop sys.boot_completed").Trim() == "1")
+            foreach (string p in inst.CandidatePorts)
             {
-                Thread.Sleep(2500);
-                foreach (string dev in GetAllConnectedAdbDevices())
+                int pNum;
+                if (int.TryParse(p, out pNum) && IsTcpPortOpen(pNum))
                 {
-                    EnsureAccessibilityEnabled(dev, RunAdbDevice(dev, "shell settings get secure enabled_accessibility_services"));
-                    LaunchTargetAppOnDevice(dev);
-                    StartOrStopOverlayService(dev, "START");
+                    string ep = "127.0.0.1:" + p;
+                    RunAdb("connect " + ep);
+                    string state = RunAdbDevice(ep, "get-state").Trim();
+                    if (state.Equals("device", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string boot = RunAdbDevice(ep, "shell getprop sys.boot_completed").Trim();
+                        if (boot == "1")
+                        {
+                            readyEndpoint = ep;
+                            inst.Port = p;
+                            break;
+                        }
+                    }
                 }
-                return true;
             }
+            if (readyEndpoint != null) break;
         }
-        return false;
+
+        if (readyEndpoint == null)
+        {
+            Log(string.Format("[Watchdog] Instance '{0}' boot timeout. Will retry next cycle.", inst.DisplayName));
+            return false;
+        }
+
+        Log(string.Format("[Watchdog] Instance '{0}' booted successfully on {1}!", inst.DisplayName, readyEndpoint));
+        Thread.Sleep(2500);
+
+        // 5. Post-boot service activation (ZERO APK REINSTALL/TOUCH)
+        try
+        {
+            string curServices = RunAdbDevice(readyEndpoint, "shell settings get secure enabled_accessibility_services");
+            EnsureAccessibilityEnabled(readyEndpoint, curServices);
+            LaunchTargetAppOnDevice(readyEndpoint);
+            StartOrStopOverlayService(readyEndpoint, "START");
+        }
+        catch { }
+
+        Log(string.Format("[Watchdog] Instance '{0}' fully recovered and apps started.", inst.DisplayName));
+        return true;
+    }
+
+    private bool EnsureBlueStacksAliveAndReady(string callerContext)
+    {
+        if (!autoRecoverBlueStacks) return false;
+        if (EnsureConnected()) return true;
+
+        Log(string.Format("[Watchdog] Recovery triggered during {0}...", callerContext));
+        var insts = DiscoverBlueStacksInstances();
+        if (insts.Count > 0)
+        {
+            RecoverBlueStacksInstance(insts[0]);
+        }
+        return EnsureConnected();
     }
 
     private void UniversalAdbAutoWatchLoop()
     {
         int checkCycle = 0;
+        HashSet<string> knownActiveInstances = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         while (!this.IsDisposed)
         {
             try
             {
                 checkCycle++;
+                CleanOfflineAdbDevices();
                 List<string> onlineDevices = GetAllConnectedAdbDevices();
-                foreach (var inst in DiscoverBlueStacksInstances())
+                var instances = DiscoverBlueStacksInstances();
+
+                // 1. Check discovered instances
+                foreach (var inst in instances)
                 {
-                    string ep = "127.0.0.1:" + inst.Port;
-                    if (!onlineDevices.Contains(ep))
+                    string activeEp;
+                    bool isOnline = IsInstanceOnline(inst, onlineDevices, out activeEp);
+                    if (isOnline)
+                    {
+                        knownActiveInstances.Add(inst.InstanceName);
+                        if (!onlineDevices.Contains(activeEp)) onlineDevices.Add(activeEp);
+                    }
+                    else
+                    {
+                        // Instance is crashed or offline!
+                        bool shouldRecover = autoRecoverBlueStacks && 
+                            (knownActiveInstances.Contains(inst.InstanceName) || (onlineDevices.Count == 0 && instances.IndexOf(inst) == 0));
+
+                        if (shouldRecover)
+                        {
+                            Log(string.Format("[Watchdog] Instance '{0}' ({1}) is crashed/offline! Recovering...", inst.DisplayName, inst.InstanceName));
+                            if (RecoverBlueStacksInstance(inst))
+                            {
+                                onlineDevices = GetAllConnectedAdbDevices();
+                            }
+                        }
+                    }
+                }
+
+                // 2. Also check universal discovery ports
+                foreach (int p in new int[] { 5555, 5556, 5585, 5595 })
+                {
+                    string ep = "127.0.0.1:" + p;
+                    if (!onlineDevices.Contains(ep) && IsTcpPortOpen(p))
                     {
                         RunAdb("connect " + ep);
                         if (RunAdbDevice(ep, "get-state").Trim().Equals("device", StringComparison.OrdinalIgnoreCase))
@@ -1399,6 +1626,7 @@ public class QuizEarnApp : Form
                     }
                 }
 
+                // 3. For all online devices, maintain apps and services
                 string targetPkg = GetTargetPackage();
                 foreach (string dev in onlineDevices)
                 {
@@ -1424,13 +1652,16 @@ public class QuizEarnApp : Form
                 }
 
                 isAdbConnected = onlineDevices.Count > 0;
-                if (isAdbConnected && string.IsNullOrEmpty(adbPort)) adbPort = onlineDevices[0];
+                if (isAdbConnected && (string.IsNullOrEmpty(adbPort) || !onlineDevices.Contains(adbPort)))
+                {
+                    adbPort = onlineDevices[0];
+                }
 
                 SafeBeginInvoke(delegate
                 {
                     UpdatePortLabel(isAdbConnected
                         ? string.Format("Connected ({0} device{1})", onlineDevices.Count, onlineDevices.Count == 1 ? "" : "s")
-                        : "Waiting for ADB / BlueStacks / USB Phone...");
+                        : "Waiting for ADB / BlueStacks...");
                     if (!isRunning && !isAutoOffering && !isBoosting)
                     {
                         lblStatus.Text = isAdbConnected
@@ -1440,13 +1671,13 @@ public class QuizEarnApp : Form
                     }
                 });
 
-                if (checkCycle % 5 == 0 && onlineDevices.Count > 0)
+                if ((checkCycle == 1 || checkCycle % 5 == 0) && onlineDevices.Count > 0)
                 {
                     Log(string.Format("[Watchdog] Status OK: {0} connected device(s) on {1}.", onlineDevices.Count, GetTargetAppLabel()));
                 }
             }
             catch { }
-            Thread.Sleep(12000);
+            Thread.Sleep(10000);
         }
     }
 
@@ -1515,14 +1746,104 @@ public class QuizEarnApp : Form
             EnsureConnected();
             string destName = string.Format("Screenshot_{0:yyyyMMdd_HHmmss}.png", DateTime.Now);
             string remotePath = "/sdcard/Pictures/Screenshots/" + destName;
+            string dcimPath = "/sdcard/DCIM/Screenshots/" + destName;
+            int capturedCount = 0;
             foreach (string dev in GetAllConnectedAdbDevices())
             {
-                RunAdbDevice(dev, "shell mkdir -p /sdcard/Pictures/Screenshots");
-                RunAdbDevice(dev, "shell screencap -p " + remotePath);
-                RunAdbDevice(dev, string.Format("shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d \"file://{0}\"", remotePath));
+                try
+                {
+                    RunAdbDevice(dev, "shell mkdir -p /sdcard/Pictures/Screenshots /sdcard/DCIM/Screenshots");
+
+                    // If file picker (DocumentsUI) is in foreground, dismiss it first
+                    // so we capture the ACTUAL app screen, not the picker overlay
+                    string topActivity = RunAdbDevice(dev, "shell dumpsys window windows").ToLower();
+                    if (topActivity.Contains("com.android.documentsui") || topActivity.Contains("pickactivity") || topActivity.Contains("filepickerdialog"))
+                    {
+                        Log("[Screenshot] File picker detected on " + dev + " - dismissing to capture real screen...");
+                        RunAdbDevice(dev, "shell input keyevent KEYCODE_BACK");
+                        Thread.Sleep(800); // wait for picker to close and app to come to foreground
+                    }
+
+                    string tempPath = "/data/local/tmp/_ss_tmp.png";
+                    RunAdbDevice(dev, "shell rm -f " + tempPath);
+
+                    // Use dedicated 15-second timeout screencap into temp path first
+                    bool ok = RunAdbScreencap(dev, tempPath);
+                    if (!ok)
+                    {
+                        Log(string.Format("[Screenshot] screencap timed out on {0}, retrying...", dev));
+                        Thread.Sleep(500);
+                        ok = RunAdbScreencap(dev, tempPath);
+                    }
+
+                    long sz = 0;
+                    if (ok)
+                    {
+                        string sizeOut = RunAdbDevice(dev, "shell stat -c %s " + tempPath).Trim();
+                        long.TryParse(sizeOut, out sz);
+                    }
+
+                    if (sz > 10000)
+                    {
+                        // Safely copy verified valid screenshot into destination directories
+                        RunAdbDevice(dev, string.Format("shell \"cp {0} {1} && cp {0} {2} && rm -f {0}\"", tempPath, remotePath, dcimPath));
+
+                        // Broadcast media scanner so Gallery, Recent Images, and Photo Picker index the real image immediately
+                        RunAdbDevice(dev, "shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d \"file://" + remotePath + "\"");
+                        RunAdbDevice(dev, "shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d \"file://" + dcimPath + "\"");
+                        RunAdbDevice(dev, "shell cmd media.scanner scan " + remotePath + " 2>/dev/null; true");
+                        RunAdbDevice(dev, "shell cmd media.scanner scan " + dcimPath + " 2>/dev/null; true");
+
+                        capturedCount++;
+                        Log(string.Format("[Screenshot] Captured {0} bytes on {1} -> {2}", sz, dev, destName));
+                    }
+                    else
+                    {
+                        Log(string.Format("[Screenshot] ERROR: Captured image invalid ({0} bytes) on {1}.", sz, dev));
+                        RunAdbDevice(dev, "shell rm -f " + tempPath + " " + remotePath + " " + dcimPath);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log("[Screenshot] Error on " + dev + ": " + ex.Message);
+                }
             }
-            Log("[Screenshot] Saved fresh capture to Gallery.");
+            if (capturedCount > 0)
+                Log(string.Format("[Screenshot] Done! Saved to Gallery on {0} device(s): {1}", capturedCount, destName));
+            else
+                Log("[Screenshot] WARNING: Screenshot failed on all devices. Check ADB connection.");
         }) { IsBackground = true }.Start();
+    }
+
+    // Dedicated screencap with 15-second timeout.
+    // NOTE: screencap writes to the DEVICE file (not stdout), so we must NOT redirect stdout.
+    // Redirecting stdout from screencap causes a binary pipe deadlock even though -p writes to path.
+    private bool RunAdbScreencap(string deviceId, string remotePath)
+    {
+        try
+        {
+            using (System.Diagnostics.Process p = new System.Diagnostics.Process())
+            {
+                p.StartInfo.FileName = adbExe;
+                // screencap -p <remotePath> writes to file on device, NOT to stdout
+                p.StartInfo.Arguments = string.Format("-s {0} shell screencap -p {1}", deviceId, remotePath);
+                p.StartInfo.UseShellExecute = false;
+                // DO NOT redirect stdout/stderr — avoids binary pipe deadlock with screencap
+                p.StartInfo.RedirectStandardOutput = false;
+                p.StartInfo.RedirectStandardError = false;
+                p.StartInfo.CreateNoWindow = true;
+                p.Start();
+                bool exited = p.WaitForExit(15000); // 15 seconds
+                if (!exited)
+                {
+                    try { p.Kill(); } catch { }
+                    try { p.WaitForExit(500); } catch { }
+                    return false;
+                }
+                return p.ExitCode == 0;
+            }
+        }
+        catch { return false; }
     }
 
     private void BtnToggle_Click(object sender, EventArgs e)
@@ -1720,133 +2041,715 @@ public class QuizEarnApp : Form
     }
 
     private void BtnAutoOffer_Click(object sender, EventArgs e) { StartAutoOfferClaimer(); }
-    private void BtnAutoOfferStop_Click(object sender, EventArgs e)
-    {
-        isAutoOffering = false; isBoosting = false;
-        Log("[Claimer] Stopped by user.");
-        SafeBeginInvoke(() => lblBoostStatus.Text = "Claimer: Stopped");
-    }
+    private void BtnAutoOfferStop_Click(object sender, EventArgs e) { StopAutoOfferClaimer(); }
 
     private void StartAutoOfferClaimer()
     {
-        if (isAutoOffering) return;
-        if (!EnsureConnected()) { Log("[Claimer] ADB not connected."); return; }
+        if (isAutoOffering)
+        {
+            Log("[💎 Claimer] Auto-Offer Claimer is already running!");
+            return;
+        }
+        if (!EnsureConnected())
+        {
+            if (autoRecoverBlueStacks && !IsBlueStacksProcessRunning())
+            {
+                Log("[🛡️ Watchdog] BlueStacks not running. Auto-launching BlueStacks before starting claimer...");
+                EnsureBlueStacksAliveAndReady("Auto-Offer Claimer Startup");
+            }
+            if (!EnsureConnected())
+            {
+                Log("[💎 Claimer] ADB not connected. Check emulator connection.");
+                return;
+            }
+        }
         isAdbConnected = true;
         isAutoOffering = true;
         isBoosting = true;
+        Log("[💎 Claimer] Starting 1-Click Auto-Offer & Coin Claimer...");
+        SafeBeginInvoke(() => {
+            if (lblBoostStatus != null) lblBoostStatus.Text = "Claimer: Initializing...";
+        });
         autoOfferThread = new Thread(AutoOfferWorkerLoop) { IsBackground = true };
         autoOfferThread.Start();
     }
 
-    private void ProcessOfferAppDetails(string targetTitle, HashSet<string> cycleCompletedApps)
+    private void StopAutoOfferClaimer()
     {
-        string appTitle = targetTitle ?? "";
-        int verifyRetries = 0;
+        if (isAutoOffering || isBoosting)
+        {
+            isAutoOffering = false;
+            isBoosting = false;
+            Log("[💎 Claimer] Auto-Offer Claimer stopped by user.");
+            SafeBeginInvoke(() => {
+                if (lblBoostStatus != null)
+                {
+                    lblBoostStatus.Text = "Claimer: Stopped";
+                    lblBoostStatus.ForeColor = Color.FromArgb(135, 135, 140);
+                }
+            });
+        }
+    }
+
+    private bool IsUsageCompleted(string xml, int buttonY = 0)
+    {
+        string cardScope = xml;
+        if (buttonY > 0)
+        {
+            try
+            {
+                MatchCollection matches = Regex.Matches(xml, @"<node [^>]*text=""([^""]*)""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
+                List<string> nearTexts = new List<string>();
+                foreach (Match m in matches)
+                {
+                    string t = m.Groups[1].Value.Trim();
+                    if (string.IsNullOrEmpty(t)) continue;
+                    int y1 = int.Parse(m.Groups[3].Value);
+                    int y2 = int.Parse(m.Groups[5].Value);
+                    int yc = (y1 + y2) / 2;
+                    if (Math.Abs(yc - buttonY) <= 140)
+                    {
+                        nearTexts.Add(t);
+                    }
+                }
+                if (nearTexts.Count > 0) cardScope = string.Join(" | ", nearTexts);
+            }
+            catch { }
+        }
+
+        return cardScope.IndexOf("Usage verified", StringComparison.OrdinalIgnoreCase) >= 0 ||
+               Regex.IsMatch(cardScope, @"\b100\s*%") ||
+               Regex.IsMatch(cardScope, @"\b0s\s*more\s*needed", RegexOptions.IgnoreCase);
+    }
+
+    private int ParseSecondsNeeded(string xml, int buttonY = 0)
+    {
+        string cardScope = xml;
+        if (buttonY > 0)
+        {
+            try
+            {
+                MatchCollection matches = Regex.Matches(xml, @"<node [^>]*text=""([^""]*)""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
+                List<string> nearTexts = new List<string>();
+                foreach (Match m in matches)
+                {
+                    string t = m.Groups[1].Value.Trim();
+                    if (string.IsNullOrEmpty(t)) continue;
+                    int y1 = int.Parse(m.Groups[3].Value);
+                    int y2 = int.Parse(m.Groups[5].Value);
+                    int yc = (y1 + y2) / 2;
+                    if (Math.Abs(yc - buttonY) <= 140)
+                    {
+                        nearTexts.Add(t);
+                    }
+                }
+                if (nearTexts.Count > 0)
+                {
+                    cardScope = string.Join(" | ", nearTexts);
+                    Log(string.Format("[💎 Claimer] Card node texts near Y={0}: {1}", buttonY, cardScope.Length > 100 ? cardScope.Substring(0, 100) + "..." : cardScope));
+                }
+            }
+            catch { }
+        }
+
+        if (cardScope.IndexOf("Usage verified", StringComparison.OrdinalIgnoreCase) >= 0 ||
+            Regex.IsMatch(cardScope, @"\b100\s*%") ||
+            Regex.IsMatch(cardScope, @"\b0s\s*more\s*needed", RegexOptions.IgnoreCase))
+        {
+            return 0;
+        }
+
+        Match m1 = Regex.Match(cardScope, @"(\d+)\s*m(?:in)?\s*(\d+)\s*s(?:ec)?\s*more\s*needed", RegexOptions.IgnoreCase);
+        if (m1.Success)
+        {
+            int mins = int.Parse(m1.Groups[1].Value);
+            int secs = int.Parse(m1.Groups[2].Value);
+            int total = (mins * 60) + secs;
+            return total > 0 ? total + 4 : 0;
+        }
+
+        Match m1b = Regex.Match(cardScope, @"(\d+)\s*m(?:in)?\s*more\s*needed", RegexOptions.IgnoreCase);
+        if (m1b.Success)
+        {
+            int mins = int.Parse(m1b.Groups[1].Value);
+            return mins > 0 ? (mins * 60) + 4 : 0;
+        }
+
+        Match m2 = Regex.Match(cardScope, @"(\d+)\s*s(?:ec)?\s*more\s*needed", RegexOptions.IgnoreCase);
+        if (m2.Success)
+        {
+            int secs = int.Parse(m2.Groups[1].Value);
+            return secs > 0 ? secs + 4 : 0;
+        }
+
+        Match mProgress = Regex.Match(cardScope, @"(\d+)\s*m\s*(\d+)\s*s\s*\/\s*(\d+)\s*m\s*(\d+)\s*s", RegexOptions.IgnoreCase);
+        if (mProgress.Success)
+        {
+            int doneSec = int.Parse(mProgress.Groups[1].Value) * 60 + int.Parse(mProgress.Groups[2].Value);
+            int totalSec = int.Parse(mProgress.Groups[3].Value) * 60 + int.Parse(mProgress.Groups[4].Value);
+            int diff = totalSec - doneSec;
+            if (diff > 0) return diff + 4;
+            return 0;
+        }
+
+        Match mProgressSec = Regex.Match(cardScope, @"(\d+)\s*s\s*\/\s*(\d+)\s*m\s*(\d+)\s*s", RegexOptions.IgnoreCase);
+        if (mProgressSec.Success)
+        {
+            int doneSec = int.Parse(mProgressSec.Groups[1].Value);
+            int totalSec = int.Parse(mProgressSec.Groups[3].Value) * 60 + int.Parse(mProgressSec.Groups[4].Value);
+            int diff = totalSec - doneSec;
+            if (diff > 0) return diff + 4;
+            return 0;
+        }
+
+        Match m3 = Regex.Match(cardScope, @"Use\s*app\s*for\s*(\d+)\s*(?:more\s*)?(?:min|minutes)", RegexOptions.IgnoreCase);
+        if (m3.Success)
+        {
+            int mins = int.Parse(m3.Groups[1].Value);
+            return mins > 0 ? (mins * 60) + 4 : 0;
+        }
+
+        Match m4 = Regex.Match(cardScope, @"using\s*it\s*for\s*(\d+)\s*(?:min|minutes)", RegexOptions.IgnoreCase);
+        if (m4.Success)
+        {
+            int mins = int.Parse(m4.Groups[1].Value);
+            return mins > 0 ? (mins * 60) + 4 : 0;
+        }
+
+        return 0;
+    }
+
+    private bool FindAndClickReadyOfferCard(string xml, HashSet<string> skippedApps, out string clickedTitle)
+    {
+        clickedTitle = "";
         try
         {
-            for (int loop = 0; loop < 18 && isAutoOffering; loop++)
+            MatchCollection titleNodes = Regex.Matches(xml, @"<node [^>]*text=""([^""]+)""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
+
+            foreach (Match tm in titleNodes)
             {
+                string rawTitle = tm.Groups[1].Value.Trim();
+                string cleanTitle = WebUtility.HtmlDecode(rawTitle).Trim();
+                int tx1 = int.Parse(tm.Groups[2].Value);
+                int ty1 = int.Parse(tm.Groups[3].Value);
+                int tx2 = int.Parse(tm.Groups[4].Value);
+                int ty2 = int.Parse(tm.Groups[5].Value);
+
+                if (tx1 < 50 || tx1 > 220 || (ty2 - ty1) < 15 || (ty2 - ty1) > 100) continue;
+
+                if (cleanTitle == "Progress" || cleanTitle == "How to Complete" || cleanTitle.Contains("Important Guidelines") ||
+                    cleanTitle == "Load More" || cleanTitle == "Pending Offers" || cleanTitle.Contains("active pending") ||
+                    cleanTitle == "My Super Offers" || cleanTitle == "Refresh offers" || cleanTitle.StartsWith("Unlocks in") ||
+                    cleanTitle.StartsWith("Installed") || cleanTitle.Contains("ago") || cleanTitle.StartsWith("Use app for") ||
+                    cleanTitle.EndsWith("tasks"))
+                    continue;
+
+                if (ty1 < 100 || ty2 > 1540) continue;
+
+                if (skippedApps != null && (skippedApps.Contains(rawTitle) || skippedApps.Contains(cleanTitle)))
+                {
+                    continue;
+                }
+
+                int cardTop = Math.Max(0, ty1 - 30);
+                int cardBottom = ty1 + 200;
+
+                MatchCollection cardTexts = Regex.Matches(xml, @"<node [^>]*text=""([^""]+)""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
+                List<string> texts = new List<string>();
+                foreach (Match cm in cardTexts)
+                {
+                    string ct = cm.Groups[1].Value.Trim();
+                    if (string.IsNullOrEmpty(ct)) continue;
+                    int cy1 = int.Parse(cm.Groups[3].Value);
+                    int cy2 = int.Parse(cm.Groups[5].Value);
+                    if (cy1 >= cardTop && cy2 <= cardBottom + 10)
+                    {
+                        texts.Add(ct);
+                    }
+                }
+
+                string cardContent = string.Join(" | ", texts);
+
+                int tasksDone = -1;
+                int tasksTotal = -1;
+                Match mTasks = Regex.Match(cardContent, @"(\d+)\s*/\s*(\d+)\s*tasks", RegexOptions.IgnoreCase);
+                if (mTasks.Success)
+                {
+                    tasksDone = int.Parse(mTasks.Groups[1].Value);
+                    tasksTotal = int.Parse(mTasks.Groups[2].Value);
+                }
+
+                bool isMilestonesText = cardContent.IndexOf("All milestones completed", StringComparison.OrdinalIgnoreCase) >= 0;
+                bool isCooldown = Regex.IsMatch(cardContent, @"Unlocks\s*in\s*(?:\d+h|\d+m|[1-9]\d*s)", RegexOptions.IgnoreCase);
+                bool isReady = Regex.IsMatch(cardContent, @"(?:Use\s*app\s*for|Claim|Open\s*App|Usage\s*verified|Ready)", RegexOptions.IgnoreCase);
+
+                if (tasksDone >= 0 && tasksTotal > 0 && tasksDone >= tasksTotal)
+                {
+                    Log(string.Format("[Claimer] '{0}' is 100% completed ({1}/{2} tasks). Skipping.", cleanTitle, tasksDone, tasksTotal));
+                    if (skippedApps != null) { skippedApps.Add(rawTitle); skippedApps.Add(cleanTitle); }
+                    continue;
+                }
+
+                if (isCooldown)
+                {
+                    if (skippedApps != null) { skippedApps.Add(rawTitle); skippedApps.Add(cleanTitle); }
+                    continue;
+                }
+
+                if (isReady)
+                {
+                    int tapX = 450;
+                    int tapY = ty1 + 75;
+                    clickedTitle = cleanTitle;
+                    if (skippedApps != null) { skippedApps.Add(rawTitle); skippedApps.Add(cleanTitle); }
+                    Log(string.Format("[💎 Claimer] Found ready offer '{0}'! Opening card at ({1}, {2})...", cleanTitle, tapX, tapY));
+                    AdbTap(tapX, tapY);
+                    return true;
+                }
+
+                if (isMilestonesText && (tasksDone < tasksTotal || tasksDone < 0))
+                {
+                    int tapX = 450;
+                    int tapY = ty1 + 75;
+                    clickedTitle = cleanTitle;
+                    if (skippedApps != null) { skippedApps.Add(rawTitle); skippedApps.Add(cleanTitle); }
+                    string taskInfo = (tasksDone >= 0 && tasksTotal > 0) ? string.Format(" ({0}/{1} tasks)", tasksDone, tasksTotal) : "";
+                    Log(string.Format("[🎁 Bonus Verifier] '{0}'{1} has pending Bonus! Opening card to verify...", cleanTitle, taskInfo));
+                    AdbTap(tapX, tapY);
+                    return true;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log("[Claimer] Error scanning offer cards: " + ex.Message);
+        }
+
+        return false;
+    }
+
+    private bool CheckAndClickLoadMore(string xml)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(xml)) return false;
+
+            Match nodeMatch = Regex.Match(xml, @"<node\b[^>]*(?:text|content-desc)=""[^""]*Load More[^""]*""[^>]*>", RegexOptions.IgnoreCase);
+            if (nodeMatch.Success)
+            {
+                string tag = nodeMatch.Value;
+                int tapX = 450;
+                int tapY = 1450;
+
+                Match bMatch = Regex.Match(tag, @"bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
+                if (bMatch.Success)
+                {
+                    int x1 = int.Parse(bMatch.Groups[1].Value);
+                    int y1 = int.Parse(bMatch.Groups[2].Value);
+                    int x2 = int.Parse(bMatch.Groups[3].Value);
+                    int y2 = int.Parse(bMatch.Groups[4].Value);
+                    if (x2 > x1 && y2 > y1 && (x2 - x1) > 50 && (y2 - y1) > 15)
+                    {
+                        tapX = (x1 + x2) / 2;
+                        tapY = (y1 + y2) / 2;
+                    }
+                }
+
+                Log(string.Format("[💎 Claimer] Found 'Load More' button at ({0}, {1}). Tapping to reveal additional active offers...", tapX, tapY));
+                AdbTap(tapX, tapY);
+                Thread.Sleep(3000);
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log("[Claimer] Error in CheckAndClickLoadMore: " + ex.Message);
+        }
+        return false;
+    }
+
+    private void ProcessOfferAppDetails(string targetTitle, HashSet<string> cycleCompletedApps, HashSet<string> cooldownBonusApps = null)
+    {
+        int consecutiveLoops = 0;
+        int scrollAttempts = 0;
+        int consecutiveVerifyTaps = 0;
+        string appTitle = targetTitle ?? "";
+        string offerPkg = "";
+
+        try
+        {
+            while (isAutoOffering && consecutiveLoops < 20)
+            {
+                consecutiveLoops++;
                 string xml = DumpAndReadXml("/sdcard/detail_chk.xml");
-                if (string.IsNullOrEmpty(xml)) { Thread.Sleep(1000); continue; }
-
-                int cx, cy;
-                if (TryFindNodeBounds(xml, "Claim", out cx, out cy) || TryFindNodeBounds(xml, "CLAIM", out cx, out cy))
+                if (string.IsNullOrEmpty(xml))
                 {
-                    AdbTap(cx, cy);
-                    lock (statsLock) { todayCoinsClaimed += 100; totalCoinsClaimed += 100; todayOffersClaimed++; totalOffersClaimed++; }
-                    AddClaimHistory(string.Format("{0} (+Claimed)", string.IsNullOrEmpty(appTitle) ? "Offer" : appTitle));
-                    Thread.Sleep(2000);
-                    continue;
-                }
-
-                bool isAppNotDetected = Regex.IsMatch(xml, @"(app not detected|verification failed|not recognized|please install|app not found|already in your pending)", RegexOptions.IgnoreCase);
-                int vx = 0, vy = 0;
-                bool isVerify = TryFindNodeBounds(xml, "Verify Usage", out vx, out vy) ||
-                                TryFindNodeBounds(xml, "Verify Installation", out vx, out vy) ||
-                                TryFindNodeBounds(xml, "Verify", out vx, out vy);
-
-                if (isAppNotDetected || (isVerify && verifyRetries >= 2))
-                {
-                    int rx, ry;
-                    if (TryFindNodeBounds(xml, "Try Different App", out rx, out ry) ||
-                        TryFindNodeBounds(xml, "Try a different app", out rx, out ry) ||
-                        TryFindNodeBounds(xml, "Restart Offer", out rx, out ry))
-                    {
-                        AdbTap(rx, ry);
-                        Thread.Sleep(1800);
-                        string confXml = DumpAndReadXml("/sdcard/restart_conf.xml");
-                        int cfx, cfy;
-                        if (TryFindNodeBounds(confXml, "Restart", out cfx, out cfy) || TryFindNodeBounds(confXml, "Confirm", out cfx, out cfy)) AdbTap(cfx, cfy);
-                        Log("[Claimer] App not detected -> switched/restarted offer cleanly (zero uninstall).");
-                        return;
-                    }
-                    AdbSwipeRef(450, 1200, 450, 500, 320);
                     Thread.Sleep(1000);
-                    verifyRetries++;
-                    if (verifyRetries >= 4)
-                    {
-                        Log("[Claimer] App not detected persisted -> backing out of Verify loop.");
-                        return;
-                    }
                     continue;
                 }
 
-                int ox = 0, oy = 0;
-                bool isOpen = !isVerify && TryFindNodeBounds(xml, "Open App", out ox, out oy);
-                if (isVerify)
+                Match tm = Regex.Match(xml, @"<node[^>]*class=""android\.widget\.TextView""[^>]*bounds=""\[102,\d+\]\[\d+,\d+\]""[^>]*text=""([^""]+)""");
+                if (tm.Success) appTitle = tm.Groups[1].Value.Trim();
+                if (string.IsNullOrEmpty(appTitle))
                 {
-                    verifyRetries++;
-                    AdbTap(vx, vy);
-                    Thread.Sleep(4500);
-                    continue;
+                    Match tm2 = Regex.Match(xml, @"<node[^>]*text=""([^""]+)""[^>]*class=""android\.widget\.TextView""");
+                    if (tm2.Success) appTitle = tm2.Groups[1].Value.Trim();
                 }
-                if (isOpen)
-                {
-                    AdbTap(ox, oy);
-                    Thread.Sleep(3000);
-                    DismissAppDialogs();
-                    string pkg = ExtractPackageName(GetCurrentFocus());
-                    if (pkg == "com.android.vending" || pkg.Contains("vending"))
-                    {
-                        AdbKey(4); Thread.Sleep(500); LaunchTargetAppOnDevice(adbPort); break;
-                    }
 
-                    int crashCount = 0;
-                    for (int sec = 65; sec > 0 && isAutoOffering; sec--)
+                MatchCollection pms = Regex.Matches(xml, @"<node[^>]*text=""([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)+)""");
+                foreach (Match pm in pms)
+                {
+                    string candidate = pm.Groups[1].Value.Trim();
+                    if (candidate != "com.quiz.earn.money.game" &&
+                        !candidate.StartsWith("android.") &&
+                        !candidate.StartsWith("com.android.") &&
+                        !candidate.StartsWith("com.google.") &&
+                        !candidate.Contains("accessibility"))
                     {
-                        if (sec % 10 == 0 && DismissAppDialogs() && isLastDismissCrash)
+                        offerPkg = candidate;
+                        break;
+                    }
+                }
+
+                // 1. Check for Claim Button first! (Matches "Claim" or "CLAIM" in text or content-desc)
+                int cx, cy;
+                if ((TryFindNodeBounds(xml, "Claim", out cx, out cy) ||
+                     TryFindNodeBounds(xml, "CLAIM", out cx, out cy)) && cy < 1560)
+                {
+                    int rewardCoins = 100;
+                    try
+                    {
+                        MatchCollection cms = Regex.Matches(xml, @"<node[^>]*text=""([0-9]{2,5})""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
+                        int bestDist = int.MaxValue;
+                        foreach (Match cm in cms)
                         {
-                            crashCount++;
-                            if (crashCount >= 2)
+                            int ny = (int.Parse(cm.Groups[3].Value) + int.Parse(cm.Groups[5].Value)) / 2;
+                            int dist = Math.Abs(ny - cy);
+                            if (dist < bestDist && dist < 160)
                             {
-                                // Clean offer state reset (zero package removal)
-                                LaunchTargetAppOnDevice(adbPort);
-                                Thread.Sleep(2500);
-                                string stuckXml = DumpAndReadXml("/sdcard/stuck.xml");
-                                int sx, sy;
-                                if (TryFindNodeBounds(stuckXml, "Restart Offer", out sx, out sy)) AdbTap(sx, sy);
-                                else AdbSwipeRef(450, 1250, 450, 550, 350);
-                                Log("[Claimer] Repeated crash -> reset offer state cleanly (zero uninstall).");
-                                return;
+                                bestDist = dist;
+                                int val;
+                                if (int.TryParse(cm.Groups[1].Value, out val) && val > 0)
+                                {
+                                    rewardCoins = val;
+                                }
                             }
                         }
-                        if (sec % 15 == 0) AdbSwipeRef(450, 700, 450, 720, 120);
-                        Thread.Sleep(1000);
                     }
-                    LaunchTargetAppOnDevice(adbPort);
-                    Thread.Sleep(2500);
+                    catch { }
+
+                    Log(string.Format("[💎 Claimer] Milestone / Bonus ready! Tapping CLAIM (+{0} Coins) at ({1}, {2})...", rewardCoins, cx, cy));
+                    AdbTap(cx, cy);
+
+                    lock (statsLock)
+                    {
+                        todayCoinsClaimed += rewardCoins;
+                        totalCoinsClaimed += rewardCoins;
+                        todayOffersClaimed++;
+                        totalOffersClaimed++;
+                    }
+                    string titleTag = string.IsNullOrEmpty(appTitle) ? (string.IsNullOrEmpty(targetTitle) ? "Offer Milestone" : targetTitle) : appTitle;
+                    AddClaimHistory(string.Format("{0} (+{1:N0} Coins)", titleTag, rewardCoins));
+                    SaveStatsToFile();
+                    UpdateDataDashboard();
+
+                    consecutiveVerifyTaps = 0;
+                    Thread.Sleep(2000);
+
+                    // Check for reward confirmation popup / dialog
+                    string popupXml = DumpAndReadXml("/sdcard/claim_popup.xml");
+                    int px, py;
+                    if (TryFindNodeBounds(popupXml, "Awesome", out px, out py) ||
+                        TryFindNodeBounds(popupXml, "OK", out px, out py) ||
+                        TryFindNodeBounds(popupXml, "Collect", out px, out py) ||
+                        TryFindNodeBounds(popupXml, "Continue", out px, out py) ||
+                        TryFindNodeBounds(popupXml, "Claim", out px, out py))
+                    {
+                        Log(string.Format("[💎 Claimer] Dismissing reward confirmation dialog at ({0}, {1})...", px, py));
+                        AdbTap(px, py);
+                        Thread.Sleep(1500);
+                    }
+
+                    continue; // Re-check if next milestone unlocked on this same page!
+                }
+
+                // 2. Check for "Verify Usage" OR "Open App" Button!
+                int vx = 0, vy = 0;
+                bool isVerify = TryFindNodeBounds(xml, "Verify Usage", out vx, out vy) ||
+                                TryFindNodeBounds(xml, "Verify", out vx, out vy);
+                int ox = 0, oy = 0;
+                bool isOpenApp = !isVerify && TryFindNodeBounds(xml, "Open App", out ox, out oy);
+
+                int actionX = isVerify ? vx : (isOpenApp ? ox : 0);
+                int actionY = isVerify ? vy : (isOpenApp ? oy : 0);
+
+                if ((isVerify || isOpenApp) && actionY < 1560)
+                {
+                    // CASE A: Button is "Open App" AND usage is already 100% or verified!
+                    if (isOpenApp && IsUsageCompleted(xml, actionY))
+                    {
+                        Log(string.Format("[💎 Claimer] Usage is already 100% / verified! Tapping 'Open App' button at ({0}, {1}) to trigger Claim unlock...", actionX, actionY));
+                        AdbTap(actionX, actionY);
+                        Thread.Sleep(4500); // Allow target app to launch and Quiz & Earn to register open
+
+                        Log("[💎 Claimer] Returning to Quiz & Earn to collect reward...");
+                        LaunchTargetAppOnDevice(adbPort);
+                        Thread.Sleep(3000);
+                        continue; // Re-check screen: Claim button is now unlocked and Section 1 will claim it!
+                    }
+
+                    // CASE B: Button is "Verify Usage", tap it first to submit/refresh usage verification!
+                    if (isVerify)
+                    {
+                        Log(string.Format("[💎 Claimer] Found 'Verify Usage' at ({0}, {1}). Tapping to verify usage...", actionX, actionY));
+                        AdbTap(actionX, actionY);
+                        Thread.Sleep(4000); // Allow Quiz & Earn to query UsageStats & update card UI
+
+                        string afterVerifyXml = DumpAndReadXml("/sdcard/after_verify.xml");
+                        if (!string.IsNullOrEmpty(afterVerifyXml))
+                        {
+                            xml = afterVerifyXml;
+                            int ncx, ncy;
+                            if ((TryFindNodeBounds(xml, "Claim", out ncx, out ncy) ||
+                                 TryFindNodeBounds(xml, "CLAIM", out ncx, out ncy)) && ncy < 1560)
+                            {
+                                Log(string.Format("[💎 Claimer] Verified! 'Claim' button unlocked at ({0}, {1}). Proceeding to claim...", ncx, ncy));
+                                continue;
+                            }
+                        }
+                    }
+
+                    int staySeconds = ParseSecondsNeeded(xml, actionY);
+                    if (isOpenApp && staySeconds <= 0 && !IsUsageCompleted(xml, actionY))
+                    {
+                        staySeconds = 65;
+                    }
+
+                    if (staySeconds > 0)
+                    {
+                        Log(string.Format("[💎 Claimer] Usage required: {0}s ({1}m {2}s) in app '{3}'. Launching to complete time...",
+                            staySeconds, staySeconds / 60, staySeconds % 60, string.IsNullOrEmpty(offerPkg) ? "target app" : offerPkg));
+
+                        if (isOpenApp)
+                        {
+                            Log(string.Format("[💎 Claimer] Tapping 'Open App' button on screen at ({0}, {1})...", actionX, actionY));
+                            AdbTap(actionX, actionY);
+                            Thread.Sleep(3500);
+                        }
+                        else if (!string.IsNullOrEmpty(offerPkg))
+                        {
+                            RunAdb(string.Format("shell monkey -p {0} -c android.intent.category.LAUNCHER 1", offerPkg));
+                            Thread.Sleep(3500);
+                        }
+                        else
+                        {
+                            AdbTap(actionX, actionY);
+                            Thread.Sleep(3500);
+                        }
+
+                        DismissAppDialogs();
+
+                        string targetPkg = ExtractPackageName(GetCurrentFocus());
+                        if (targetPkg == "com.android.vending" || targetPkg.Contains("vending") || targetPkg.Contains("google.android.finsky"))
+                        {
+                            Log("[Claimer] Google Play Store opened instead of installed offer app. Closing and skipping...");
+                            AdbKey(4);
+                            Thread.Sleep(600);
+                            RunAdb("shell am force-stop com.android.vending");
+                            LaunchTargetAppOnDevice(adbPort);
+                            Thread.Sleep(1500);
+                            if (!string.IsNullOrEmpty(appTitle)) cycleCompletedApps.Add(appTitle);
+                            break;
+                        }
+
+                        if ((string.IsNullOrEmpty(targetPkg) || targetPkg == "com.quiz.earn.money.game") && !string.IsNullOrEmpty(offerPkg))
+                        {
+                            Log(string.Format("[Claimer] Target app did not launch on button tap. Direct launching '{0}'...", offerPkg));
+                            RunAdb(string.Format("shell monkey -p {0} -c android.intent.category.LAUNCHER 1", offerPkg));
+                            Thread.Sleep(3500);
+                            targetPkg = ExtractPackageName(GetCurrentFocus());
+                        }
+
+                        if (targetPkg == "com.quiz.earn.money.game")
+                        {
+                            Log("[Claimer] Warning: Target app could not be opened. Returning to offers list...");
+                            break;
+                        }
+
+                        Log(string.Format("[💎 Claimer] Staying active in app '{0}' for {1}s...", targetPkg, staySeconds));
+
+                        int remaining = staySeconds;
+                        int keepAlive = 0;
+                        int crashCount = 0;
+                        while (isAutoOffering && remaining > 0)
+                        {
+                            if (autoRecoverBlueStacks && !IsBlueStacksProcessRunning())
+                            {
+                                EnsureBlueStacksAliveAndReady(string.Format("Offer App Usage ({0})", targetPkg));
+                                break;
+                            }
+                            int rm = remaining / 60;
+                            int rs = remaining % 60;
+                            string pkgShort = string.IsNullOrEmpty(targetPkg) ? "Offer App" : targetPkg;
+                            if (pkgShort.Contains("."))
+                            {
+                                string[] pts = pkgShort.Split('.');
+                                pkgShort = pts[pts.Length - 1];
+                            }
+                            string status = string.Format("💎 {0:D2}:{1:D2} left ({2})", rm, rs, pkgShort);
+
+                            SafeBeginInvoke(() => {
+                                if (lblBoostStatus != null)
+                                {
+                                    lblBoostStatus.Text = status;
+                                    lblBoostStatus.ForeColor = Color.FromArgb(180, 180, 185);
+                                }
+                            });
+
+                            if (keepAlive == 3 || keepAlive == 7 || (keepAlive > 0 && keepAlive % 10 == 0))
+                            {
+                                bool dialogDismissed = DismissAppDialogs();
+                                if (dialogDismissed && isLastDismissCrash)
+                                {
+                                    crashCount++;
+                                    Log(string.Format("[💎 Claimer] App keeps stopping! Crash count={0}/2 (app={1})", crashCount, targetPkg));
+                                    if (crashCount >= 2)
+                                    {
+                                        Log("[💎 Claimer] App keeps stopping repeatedly! Returning to Quiz & Earn...");
+                                        LaunchTargetAppOnDevice(adbPort);
+                                        Thread.Sleep(3000);
+                                        if (!string.IsNullOrEmpty(appTitle)) cycleCompletedApps.Add(appTitle);
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if (keepAlive % 15 == 0)
+                            {
+                                AdbSwipeRef(450, 700, 450, 720, 120);
+                            }
+
+                            Thread.Sleep(1000);
+                            remaining--;
+                            keepAlive++;
+                        }
+
+                        if (!isAutoOffering) return;
+
+                        Log("[💎 Claimer] Required time completed! Returning to Quiz & Earn...");
+                        LaunchTargetAppOnDevice(adbPort);
+                        Thread.Sleep(3000);
+
+                        consecutiveVerifyTaps = 0;
+
+                        string retXml = DumpAndReadXml("/sdcard/after_usage.xml");
+                        int rcx, rcy;
+                        if ((TryFindNodeBounds(retXml, "Claim", out rcx, out rcy) ||
+                             TryFindNodeBounds(retXml, "CLAIM", out rcx, out rcy)) && rcy < 1560)
+                        {
+                            Log(string.Format("[💎 Claimer] Claim button already visible at ({0}, {1})! Claiming...", rcx, rcy));
+                            continue;
+                        }
+
+                        int rvx, rvy;
+                        if ((TryFindNodeBounds(retXml, "Verify Usage", out rvx, out rvy) ||
+                             TryFindNodeBounds(retXml, "Verify", out rvx, out rvy)) && rvy < 1560)
+                        {
+                            Log(string.Format("[💎 Claimer] Returned from app! Tapping 'Verify Usage' at ({0}, {1}) to verify newly elapsed time...", rvx, rvy));
+                            AdbTap(rvx, rvy);
+                            Thread.Sleep(4000);
+                        }
+                        continue;
+                    }
+                    else
+                    {
+                        if (isVerify)
+                        {
+                            consecutiveVerifyTaps++;
+                            if (consecutiveVerifyTaps <= 2)
+                            {
+                                Log(string.Format("[💎 Claimer] Usage appears fulfilled. Tapping 'Verify Usage' again ({0}/2) to confirm with server...", consecutiveVerifyTaps));
+                                AdbTap(actionX, actionY);
+                                Thread.Sleep(4000);
+                                continue;
+                            }
+                        }
+                        else if (isOpenApp)
+                        {
+                            Log(string.Format("[💎 Claimer] Tapping 'Open App' button on screen at ({0}, {1})...", actionX, actionY));
+                            AdbTap(actionX, actionY);
+                            Thread.Sleep(4500);
+                            Log("[💎 Claimer] Returning to Quiz & Earn to check Claim button...");
+                            LaunchTargetAppOnDevice(adbPort);
+                            Thread.Sleep(3000);
+                            continue;
+                        }
+                    }
+                }
+
+                // 3. Scroll Down to Reveal Lower Milestones & "BONUS REWARDS" section
+                if (scrollAttempts < 3)
+                {
+                    scrollAttempts++;
+                    Log(string.Format("[💎 Claimer] Scrolling down to inspect BONUS REWARDS & lower milestones ({0}/3)...", scrollAttempts));
+                    AdbSwipeRef(450, 1100, 450, 400, 350);
+                    Thread.Sleep(1500);
                     continue;
                 }
 
-                if (loop < 3) { AdbSwipeRef(450, 1100, 450, 420, 350); Thread.Sleep(1200); }
-                else break;
+                // 4. Check if the app's remaining milestone or bonus is on cooldown
+                string cdStr = "";
+                Match cdMatch = Regex.Match(xml, @"text=""Unlocks\s*in\s*""[^>]*>\s*<node[^>]*text=""([0-9hm\s]+)""", RegexOptions.IgnoreCase);
+                if (cdMatch.Success) cdStr = cdMatch.Groups[1].Value.Trim();
+                else
+                {
+                    Match cdMatch2 = Regex.Match(xml, @"(?:Unlocks\s*in|After)\s*([0-9hm\s]+)", RegexOptions.IgnoreCase);
+                    if (cdMatch2.Success) cdStr = cdMatch2.Groups[1].Value.Trim();
+                }
+
+                string displayTitle = string.IsNullOrEmpty(appTitle) ? targetTitle : appTitle;
+                if (!string.IsNullOrEmpty(cdStr))
+                {
+                    Log(string.Format("[🎁 Bonus Verified] '{0}' Bonus is locked on cooldown: Unlocks in {1}. Verified not missed!", displayTitle, cdStr));
+                    if (cooldownBonusApps != null)
+                    {
+                        if (!string.IsNullOrEmpty(targetTitle)) cooldownBonusApps.Add(targetTitle);
+                        if (!string.IsNullOrEmpty(appTitle)) cooldownBonusApps.Add(appTitle);
+                    }
+                }
+                else
+                {
+                    if (xml.Contains("All milestones completed") || xml.Contains("Bonus claimed") || xml.Contains("Completed"))
+                    {
+                        Log(string.Format("[✅ Verified] '{0}' Bonus & all milestones have been verified and processed.", displayTitle));
+                    }
+                    else
+                    {
+                        Log(string.Format("[💎 Claimer] Verified '{0}': No active or claimable bonus found right now. Returning to offers list...", displayTitle));
+                    }
+                }
+
+                break;
             }
         }
         finally
         {
-            if (cycleCompletedApps != null && !string.IsNullOrEmpty(targetTitle)) cycleCompletedApps.Add(targetTitle);
+            if (cycleCompletedApps != null)
+            {
+                if (!string.IsNullOrEmpty(targetTitle))
+                {
+                    cycleCompletedApps.Add(targetTitle);
+                    cycleCompletedApps.Add(WebUtility.HtmlDecode(targetTitle).Trim());
+                }
+                if (!string.IsNullOrEmpty(appTitle))
+                {
+                    cycleCompletedApps.Add(appTitle);
+                    cycleCompletedApps.Add(WebUtility.HtmlDecode(appTitle).Trim());
+                }
+            }
+
             AdbKey(4);
-            Thread.Sleep(1500);
+            Thread.Sleep(2000);
         }
     }
 
@@ -1854,39 +2757,277 @@ public class QuizEarnApp : Form
     {
         try
         {
-            foreach (string dev in GetAllConnectedAdbDevices())
+            Log("[💎 Claimer] Initializing Auto-Offer & Coin Claimer...");
+            int totalAppsProcessed = 0;
+
+            List<string> targetDevices = GetAllConnectedAdbDevices();
+            if (targetDevices.Count == 0)
+            {
+                EnsureConnected();
+                if (!string.IsNullOrEmpty(adbPort)) targetDevices.Add(adbPort);
+            }
+
+            Log(string.Format("[💎 Claimer] Found {0} online instance(s) to process: {1}", targetDevices.Count, string.Join(", ", targetDevices)));
+
+            foreach (string dev in targetDevices)
             {
                 if (!isAutoOffering) break;
                 adbPort = dev;
-                UpdateScreenResolution();
-                HashSet<string> completed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                UpdatePortLabel("Claimer: " + adbPort);
+                Log(string.Format("[💎 Claimer] === Processing Instance {0} ===", dev));
+
+                HashSet<string> cycleCompletedApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                HashSet<string> cooldownBonusApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                string lastOpenedTitle = "";
+                int consecutiveEmptyDumps = 0;
+                int unrecognizedCount = 0;
 
                 while (isAutoOffering)
                 {
-                    if (!IsKnownQuizApp(GetCurrentFocus())) { LaunchTargetAppOnDevice(dev); Thread.Sleep(2000); }
-                    string xml = DumpAndReadXml("/sdcard/offer_flow.xml");
-                    if (string.IsNullOrEmpty(xml)) { Thread.Sleep(1000); continue; }
+                    if (autoRecoverBlueStacks && !IsBlueStacksProcessRunning())
+                    {
+                        EnsureBlueStacksAliveAndReady("Auto-Offer Claimer Loop");
+                        Thread.Sleep(2000);
+                        continue;
+                    }
 
-                    if (xml.Contains("REWARDS") || xml.Contains("Remove Wrong App") || xml.Contains("Usage Progress"))
+                    string curFocus = GetCurrentFocus();
+                    if (!curFocus.Contains("com.quiz.earn.money.game") && !curFocus.Contains("vending"))
                     {
-                        ProcessOfferAppDetails("", completed);
+                        LaunchTargetAppOnDevice(dev);
+                        Thread.Sleep(2000);
+                    }
+
+                    string xml = DumpAndReadXml("/sdcard/offer_flow.xml");
+                    if (string.IsNullOrEmpty(xml) || !xml.Contains("<hierarchy"))
+                    {
+                        consecutiveEmptyDumps++;
+                        if (consecutiveEmptyDumps >= 3)
+                        {
+                            Log(string.Format("[💎 Claimer] Instance {0} ADB unresponsive. Verifying...", dev));
+                            EnsureConnected();
+                            consecutiveEmptyDumps = 0;
+                        }
+                        Thread.Sleep(1000);
                         continue;
                     }
-                    int ax, ay;
-                    if (TryFindNodeBounds(xml, "Open App", out ax, out ay) || TryFindNodeBounds(xml, "Claim", out ax, out ay) || TryFindNodeBounds(xml, "My Offers", out ax, out ay))
+                    consecutiveEmptyDumps = 0;
+
+                    // SCREEN A: Inside an offer app details page
+                    if (xml.Contains("REWARDS") || xml.Contains("Remove Wrong App") || xml.Contains("Usage Progress") || xml.Contains("Initial Install Reward"))
                     {
-                        AdbTap(ax, ay);
-                        Thread.Sleep(2500);
+                        unrecognizedCount = 0;
+                        Log("[💎 Claimer] Inside offer app details page. Processing milestones & bonus...");
+                        ProcessOfferAppDetails(lastOpenedTitle, cycleCompletedApps, cooldownBonusApps);
+                        totalAppsProcessed++;
+                        Thread.Sleep(1500);
+
+                        string verifyXml = DumpAndReadXml("/sdcard/verify_back.xml");
+                        if (verifyXml.Contains("REWARDS") || verifyXml.Contains("Remove Wrong App") || verifyXml.Contains("Initial Install Reward"))
+                        {
+                            Log("[💎 Claimer] Still on detail page. Sending hardware Back button again...");
+                            AdbKey(4);
+                            Thread.Sleep(1500);
+                        }
                         continue;
                     }
-                    break;
+
+                    // SCREEN B: On "My Super Offers" list
+                    if (xml.Contains("My Super Offers") || xml.Contains("Pending Offers") || xml.Contains("How to Complete") || xml.Contains("tasks"))
+                    {
+                        unrecognizedCount = 0;
+                        if (xml.Contains("Failed to load offers"))
+                        {
+                            Log("[💎 Claimer] Detected 'Failed to load offers'. Tapping Refresh button...");
+                            AdbTap(846, 90);
+                            Thread.Sleep(3000);
+                            continue;
+                        }
+
+                        if (Regex.IsMatch(xml, @"Unlocks\s*in\s*0[ms]", RegexOptions.IgnoreCase))
+                        {
+                            Log("[💎 Claimer] Detected offer with 0m cooldown! Tapping Refresh offers...");
+                            AdbTap(846, 90);
+                            Thread.Sleep(3000);
+                            cooldownBonusApps.Clear();
+                            cycleCompletedApps.Clear();
+                            continue;
+                        }
+
+                        Log("[💎 Claimer] On 'My Super Offers' list. Scanning for ready apps & bonus rewards...");
+
+                        if (CheckAndClickLoadMore(xml))
+                        {
+                            xml = DumpAndReadXml("/sdcard/offer_flow.xml");
+                        }
+
+                        string clickedTitle;
+                        bool foundApp = FindAndClickReadyOfferCard(xml, cycleCompletedApps, out clickedTitle);
+                        if (foundApp)
+                        {
+                            lastOpenedTitle = clickedTitle;
+                            Thread.Sleep(2500);
+                            continue;
+                        }
+                        else
+                        {
+                            bool foundOnScroll = false;
+                            for (int scrollPass = 1; scrollPass <= 4; scrollPass++)
+                            {
+                                Log(string.Format("[💎 Claimer] Scrolling down to find more ready offers (page {0}/4)...", scrollPass));
+                                AdbSwipeRef(450, 1200, 450, 400, 350);
+                                Thread.Sleep(2000);
+                                string scrolledXml = DumpAndReadXml("/sdcard/offer_flow.xml");
+
+                                if (CheckAndClickLoadMore(scrolledXml))
+                                {
+                                    scrolledXml = DumpAndReadXml("/sdcard/offer_flow.xml");
+                                }
+
+                                if (Regex.IsMatch(scrolledXml, @"Unlocks\s*in\s*0[ms]", RegexOptions.IgnoreCase))
+                                {
+                                    Log("[💎 Claimer] Detected offer with 0m cooldown! Tapping Refresh offers...");
+                                    AdbTap(846, 90);
+                                    Thread.Sleep(3000);
+                                    cooldownBonusApps.Clear();
+                                    cycleCompletedApps.Clear();
+                                    scrolledXml = DumpAndReadXml("/sdcard/offer_flow.xml");
+                                }
+                                if (FindAndClickReadyOfferCard(scrolledXml, cycleCompletedApps, out clickedTitle))
+                                {
+                                    lastOpenedTitle = clickedTitle;
+                                    foundOnScroll = true;
+                                    break;
+                                }
+                            }
+
+                            if (!foundOnScroll)
+                            {
+                                MatchCollection cdMatches = Regex.Matches(xml, @"Unlocks\s*in\s*([0-9hm\s]+)", RegexOptions.IgnoreCase);
+                                string nextUnlock = "a few hours";
+                                if (cdMatches.Count > 0)
+                                {
+                                    nextUnlock = cdMatches[0].Groups[1].Value.Trim();
+                                }
+                                Log(string.Format("[💎 Claimer] [{0}] All pending offers are on cooldown or completed! Next offer unlocks in ~{1}.", dev, nextUnlock));
+
+                                SafeBeginInvoke(() => {
+                                    if (lblBoostStatus != null)
+                                    {
+                                        lblBoostStatus.Text = string.Format("Cooldown (Next: {0})", nextUnlock);
+                                        lblBoostStatus.ForeColor = Color.FromArgb(150, 150, 155);
+                                    }
+                                });
+
+                                AdbKey(4);
+                                Thread.Sleep(1500);
+                                break;
+                            }
+                            continue;
+                        }
+                    }
+
+                    // SCREEN C0: 25 Gems Milestone / Start Offer Screen
+                    if (xml.Contains("Gems Collected") || (xml.Contains("25") && xml.Contains("1000") && (xml.Contains("Start Offer") || xml.Contains("Start"))))
+                    {
+                        unrecognizedCount = 0;
+                        Log("[💎 Claimer] 25 Gems Milestone reached! Tapping 'Start Offer' button...");
+                        int sox, soy;
+                        if (TryFindNodeBounds(xml, "Start Offer", out sox, out soy) || TryFindNodeBounds(xml, "Start", out sox, out soy))
+                        {
+                            AdbTap(sox, soy);
+                        }
+                        else
+                        {
+                            AdbTap(450, 1226);
+                        }
+                        Thread.Sleep(3500);
+                        continue;
+                    }
+
+                    // SCREEN C: On Quiz screen with "My Offers" button
+                    if (xml.Contains("captchas for Guaranteed") || xml.Contains("My Offers") || (xml.Contains("Quiz") && xml.Contains("Super Offer")))
+                    {
+                        unrecognizedCount = 0;
+                        Log("[💎 Claimer] Found Quiz screen. Opening 'My Offers'...");
+                        int tx, ty;
+                        if (TryFindNodeBounds(xml, "My Offers", out tx, out ty))
+                        {
+                            AdbTap(tx, ty);
+                        }
+                        else
+                        {
+                            AdbTap(450, 832);
+                        }
+                        Thread.Sleep(3000);
+                        continue;
+                    }
+
+                    // SCREEN D: On Home screen
+                    if (xml.Contains("SUPER OFFER") || (xml.Contains("Guaranteed") && xml.Contains("1,000")) || (xml.Contains("Go to Wallet") && xml.Contains("Tasks")))
+                    {
+                        unrecognizedCount = 0;
+                        Log("[💎 Claimer] On Home screen. Tapping Super Offer card...");
+                        int scx, scy;
+                        if (TryFindNodeBounds(xml, "SUPER OFFER", out scx, out scy) ||
+                            TryFindNodeBounds(xml, "1,000", out scx, out scy) ||
+                            TryFindNodeBounds(xml, "Claim", out scx, out scy))
+                        {
+                            AdbTap(scx, Math.Min(scy + 40, 640));
+                        }
+                        else
+                        {
+                            AdbTap(265, 570);
+                        }
+                        Thread.Sleep(3000);
+                        continue;
+                    }
+
+                    // SCREEN E: Ad playing
+                    if (xml.Contains("Ad") || xml.Contains("Reward in") || xml.Contains("video will end in") || xml.Contains("Sponsored"))
+                    {
+                        unrecognizedCount = 0;
+                        Log("[💎 Claimer] Ad detected during claim flow. Dismissing...");
+                        DismissAppDialogs();
+                        AdbTap(846, 60);
+                        AdbTap(54, 60);
+                        Thread.Sleep(2000);
+                        continue;
+                    }
+
+                    unrecognizedCount++;
+                    if (unrecognizedCount <= 3)
+                    {
+                        Log(string.Format("[💎 Claimer] Screen unrecognized ({0}/3), waiting for screen to settle...", unrecognizedCount));
+                        Thread.Sleep(2000);
+                        continue;
+                    }
+
+                    unrecognizedCount = 0;
+                    Log("[💎 Claimer] Navigating to Quiz & Earn Home screen...");
+                    LaunchTargetAppOnDevice(dev);
+                    Thread.Sleep(2500);
                 }
             }
+
+            Log(string.Format("[💎 Claimer] Auto-Offer session complete across all instances! Processed {0} apps.", totalAppsProcessed));
+            try { System.Media.SystemSounds.Asterisk.Play(); } catch { }
+        }
+        catch (Exception ex)
+        {
+            Log("[💎 Claimer] Error: " + ex.Message);
         }
         finally
         {
-            isAutoOffering = false; isBoosting = false;
-            SafeBeginInvoke(() => lblBoostStatus.Text = "Claimer: Idle");
+            isAutoOffering = false;
+            isBoosting = false;
+            SafeBeginInvoke(() => {
+                if (lblBoostStatus != null)
+                {
+                    lblBoostStatus.Text = "Claimer: Idle";
+                    lblBoostStatus.ForeColor = Color.FromArgb(110, 110, 115);
+                }
+            });
         }
     }
 
@@ -2015,7 +3156,7 @@ public class QuizEarnApp : Form
         {
             if (!EnsureConnected())
             {
-                if (autoRecoverBlueStacks && !IsBlueStacksProcessRunning()) EnsureBlueStacksAliveAndReady("Bot Startup");
+                if (autoRecoverBlueStacks) EnsureBlueStacksAliveAndReady("Bot Startup");
                 if (!EnsureConnected()) { Log("[Error] No ADB device online."); StopBot(); return; }
             }
 
@@ -2145,7 +3286,21 @@ public class QuizEarnApp : Form
 
                 if ((DateTime.Now - lastProgressTime).TotalSeconds > 90)
                 {
-                    RestartQuizAppCleanly("Inactivity watchdog (90s)");
+                    string state = RunAdbDevice(adbPort, "get-state").Trim();
+                    if (!state.Equals("device", StringComparison.OrdinalIgnoreCase))
+                    {
+                        Log(string.Format("[Recovery] Active device {0} lost connection ({1})! Attempting recovery...", adbPort, state));
+                        var inst = DiscoverBlueStacksInstances().FirstOrDefault(x => x.CandidatePorts.Any(p => adbPort.Contains(p)));
+                        if (inst != null && autoRecoverBlueStacks)
+                        {
+                            RecoverBlueStacksInstance(inst);
+                            EnsureConnected();
+                        }
+                    }
+                    else
+                    {
+                        RestartQuizAppCleanly("Inactivity watchdog (90s)");
+                    }
                     lastProgressTime = DateTime.Now;
                 }
                 Thread.Sleep(turboSpeedEnabled ? 150 : 500);

@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Quiz &amp; Earn Lite</string>
+    <string name="accessibility_service_desc">Calculates math quiz problems, collects gems and closes ads. Auto-stops and sounds an alert at 25 gems.</string>
+</resources>
