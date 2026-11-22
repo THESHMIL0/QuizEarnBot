@@ -1158,18 +1158,6 @@ public class QuizEarnApp : Form
             ? string.Format("shell am start-foreground-service -a {0}.{1} {2}", PKG_BOT_ASSISTANT, action, OVERLAY_COMPONENT)
             : string.Format("shell am startservice -a {0}.{1} {2}", PKG_BOT_ASSISTANT, action, OVERLAY_COMPONENT);
         RunAdbDevice(deviceId, cmd);
-
-        if (action == "START")
-        {
-            // CRITICAL: Player 3 (5585) & Player 4 (5595) are Pure Gem Farmers (AUTO_OFFER_OFF).
-            // Player 1 (5555 / 5556 / 5557) is Master Auto-Installer (AUTO_OFFER_ON).
-            bool isGemFarmer = deviceId.Contains("5585") || deviceId.Contains("5595");
-            string offerAction = isGemFarmer ? "AUTO_OFFER_OFF" : "AUTO_OFFER_ON";
-            string offerCmd = (sdk >= 26)
-                ? string.Format("shell am start-foreground-service -a {0}.{1} {2}", PKG_BOT_ASSISTANT, offerAction, OVERLAY_COMPONENT)
-                : string.Format("shell am startservice -a {0}.{1} {2}", PKG_BOT_ASSISTANT, offerAction, OVERLAY_COMPONENT);
-            RunAdbDevice(deviceId, offerCmd);
-        }
     }
 
     private void EnsureAccessibilityEnabled(string deviceId, string currentServices)
@@ -1756,66 +1744,63 @@ public class QuizEarnApp : Form
         new Thread(() =>
         {
             EnsureConnected();
+            string destName = string.Format("Screenshot_{0:yyyyMMdd_HHmmss}.png", DateTime.Now);
+            string remotePath = "/sdcard/Pictures/Screenshots/" + destName;
+            string dcimPath = "/sdcard/DCIM/Screenshots/" + destName;
             int capturedCount = 0;
-            string latestCapturedFile = "";
             foreach (string dev in GetAllConnectedAdbDevices())
             {
                 try
                 {
-                    // 1. If file picker or photo picker is in foreground, dismiss it first
-                    // so we capture the ACTUAL app screen, not the picker overlay
-                    string topDump = RunAdbDevice(dev, "shell dumpsys window").ToLower();
-                    if (topDump.Contains("documentsui") || topDump.Contains("photopicker") ||
-                        topDump.Contains("pickactivity") || topDump.Contains("filepickerdialog") ||
-                        topDump.Contains("resolveractivity"))
-                    {
-                        Log("[Screenshot] File/Photo picker detected on " + dev + " - dismissing to capture real screen...");
-                        RunAdbDevice(dev, "shell input keyevent KEYCODE_BACK");
-                        Thread.Sleep(700);
-                    }
-
-                    // 2. Ensure destination directories exist
                     RunAdbDevice(dev, "shell mkdir -p /sdcard/Pictures/Screenshots /sdcard/DCIM/Screenshots");
 
-                    // 3. Trigger Android's native system screenshot via KEYCODE_SYSRQ (120)
-                    RunAdbDevice(dev, "shell input keyevent 120");
-                    Thread.Sleep(1400);
-
-                    // 4. Check if valid screenshot was created
-                    string newest = RunAdbDevice(dev, "shell \"ls -1t /sdcard/Pictures/Screenshots/*.png 2>/dev/null | grep -v '\\.pending' | head -n 1\"").Trim();
-                    long sz = 0;
-                    if (!string.IsNullOrEmpty(newest) && !newest.Contains("No such"))
+                    // If file picker (DocumentsUI) is in foreground, dismiss it first
+                    // so we capture the ACTUAL app screen, not the picker overlay
+                    string topActivity = RunAdbDevice(dev, "shell dumpsys window windows").ToLower();
+                    if (topActivity.Contains("com.android.documentsui") || topActivity.Contains("pickactivity") || topActivity.Contains("filepickerdialog"))
                     {
-                        string sizeOut = RunAdbDevice(dev, "shell stat -c %s " + newest).Trim();
-                        long.TryParse(sizeOut, out sz);
+                        Log("[Screenshot] File picker detected on " + dev + " - dismissing to capture real screen...");
+                        RunAdbDevice(dev, "shell input keyevent KEYCODE_BACK");
+                        Thread.Sleep(800); // wait for picker to close and app to come to foreground
                     }
 
-                    // 5. Fallback to direct screencap if keyevent 120 didn't produce file
-                    if (sz < 10000)
+                    string tempPath = "/data/local/tmp/_ss_tmp.png";
+                    RunAdbDevice(dev, "shell rm -f " + tempPath);
+
+                    // Use dedicated 15-second timeout screencap into temp path first
+                    bool ok = RunAdbScreencap(dev, tempPath);
+                    if (!ok)
                     {
-                        string destName = string.Format("Screenshot_{0:yyyyMMdd_HHmmss}.png", DateTime.Now);
-                        string remotePath = "/sdcard/Pictures/Screenshots/" + destName;
-                        string dcimPath = "/sdcard/DCIM/Screenshots/" + destName;
-                        RunAdbDevice(dev, "shell screencap -p " + remotePath);
-                        RunAdbDevice(dev, "shell cp " + remotePath + " " + dcimPath + " 2>/dev/null; true");
-                        RunAdbDevice(dev, "shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d \"file://" + remotePath + "\"");
-                        RunAdbDevice(dev, "shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d \"file://" + dcimPath + "\"");
-                        string sizeOut = RunAdbDevice(dev, "shell stat -c %s " + remotePath).Trim();
+                        Log(string.Format("[Screenshot] screencap timed out on {0}, retrying...", dev));
+                        Thread.Sleep(500);
+                        ok = RunAdbScreencap(dev, tempPath);
+                    }
+
+                    long sz = 0;
+                    if (ok)
+                    {
+                        string sizeOut = RunAdbDevice(dev, "shell stat -c %s " + tempPath).Trim();
                         long.TryParse(sizeOut, out sz);
-                        newest = remotePath;
                     }
 
                     if (sz > 10000)
                     {
-                        // Clean up any 0-byte or corrupted temp files in Screenshots folder
-                        RunAdbDevice(dev, "shell \"find /sdcard/Pictures/Screenshots/ -size 0 -delete 2>/dev/null; true\"");
+                        // Safely copy verified valid screenshot into destination directories
+                        RunAdbDevice(dev, string.Format("shell \"cp {0} {1} && cp {0} {2} && rm -f {0}\"", tempPath, remotePath, dcimPath));
+
+                        // Broadcast media scanner so Gallery, Recent Images, and Photo Picker index the real image immediately
+                        RunAdbDevice(dev, "shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d \"file://" + remotePath + "\"");
+                        RunAdbDevice(dev, "shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d \"file://" + dcimPath + "\"");
+                        RunAdbDevice(dev, "shell cmd media.scanner scan " + remotePath + " 2>/dev/null; true");
+                        RunAdbDevice(dev, "shell cmd media.scanner scan " + dcimPath + " 2>/dev/null; true");
+
                         capturedCount++;
-                        latestCapturedFile = System.IO.Path.GetFileName(newest);
-                        Log(string.Format("[Screenshot] Captured {0} bytes on {1} -> {2}", sz, dev, latestCapturedFile));
+                        Log(string.Format("[Screenshot] Captured {0} bytes on {1} -> {2}", sz, dev, destName));
                     }
                     else
                     {
                         Log(string.Format("[Screenshot] ERROR: Captured image invalid ({0} bytes) on {1}.", sz, dev));
+                        RunAdbDevice(dev, "shell rm -f " + tempPath + " " + remotePath + " " + dcimPath);
                     }
                 }
                 catch (Exception ex)
@@ -1824,7 +1809,7 @@ public class QuizEarnApp : Form
                 }
             }
             if (capturedCount > 0)
-                Log(string.Format("[Screenshot] Done! Real screen saved to Gallery on {0} device(s): {1}", capturedCount, latestCapturedFile));
+                Log(string.Format("[Screenshot] Done! Saved to Gallery on {0} device(s): {1}", capturedCount, destName));
             else
                 Log("[Screenshot] WARNING: Screenshot failed on all devices. Check ADB connection.");
         }) { IsBackground = true }.Start();
@@ -1988,7 +1973,8 @@ public class QuizEarnApp : Form
         {
             string tag = n.Value;
             bool match = (isCrash && Regex.IsMatch(tag, @"text=""[^""]*(Close app|Close|OK)\b[^""]*""", RegexOptions.IgnoreCase)) ||
-                         Regex.IsMatch(tag, @"text=""[^""]*(don.*?allow|\bdeny\b|Not now|Maybe later|Dismiss)\b[^""]*""", RegexOptions.IgnoreCase);
+                         Regex.IsMatch(tag, @"text=""[^""]*(don.*?allow|\bdeny\b|Not now|Maybe later|Dismiss|OK|Continue|Accept|Agree|Got it|While using the app|Only this time|\bAllow\b)\b[^""]*""", RegexOptions.IgnoreCase) ||
+                         Regex.IsMatch(tag, @"content-desc=""[^""]*(Close|Dismiss|OK|Continue|Accept|Agree|Got it|Allow)\b[^""]*""", RegexOptions.IgnoreCase);
             if (!match) continue;
 
             Match bm = Regex.Match(tag, @"bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
@@ -1998,6 +1984,7 @@ public class QuizEarnApp : Form
                 int cy = (int.Parse(bm.Groups[2].Value) + int.Parse(bm.Groups[4].Value)) / 2;
                 if (cx > 0 && cy > 0 && cx < devWidth && cy < devHeight)
                 {
+                    Log(string.Format("[Dialog Dismiss] Auto-dismissing dialog button at ({0}, {1})...", cx, cy));
                     AdbTap(cx, cy);
                     if (isCrash) isLastDismissCrash = true;
                     Thread.Sleep(1100);
@@ -2254,8 +2241,8 @@ public class QuizEarnApp : Form
 
                 if (cleanTitle == "Progress" || cleanTitle == "How to Complete" || cleanTitle.Contains("Important Guidelines") ||
                     cleanTitle == "Load More" || cleanTitle == "Pending Offers" || cleanTitle.Contains("active pending") ||
-                    cleanTitle == "My Super Offers" || cleanTitle == "Refresh offers" || cleanTitle.StartsWith("Unlocks in") ||
-                    cleanTitle.StartsWith("Installed") || cleanTitle.Contains("ago") || cleanTitle.StartsWith("Use app for") ||
+                    cleanTitle == "My Super Offers" || cleanTitle == "Refresh offers" || cleanTitle.Contains("Unlocks in") ||
+                    cleanTitle.StartsWith("Installed") || cleanTitle.Contains("ago") || cleanTitle.Contains("Use app for") ||
                     cleanTitle.EndsWith("tasks"))
                     continue;
 
@@ -2296,7 +2283,7 @@ public class QuizEarnApp : Form
 
                 bool isMilestonesText = cardContent.IndexOf("All milestones completed", StringComparison.OrdinalIgnoreCase) >= 0;
                 bool isCooldown = Regex.IsMatch(cardContent, @"Unlocks\s*in\s*(?:\d+h|\d+m|[1-9]\d*s)", RegexOptions.IgnoreCase);
-                bool isReady = Regex.IsMatch(cardContent, @"(?:Use\s*app\s*for|Claim|Open\s*App|Usage\s*verified|Ready)", RegexOptions.IgnoreCase);
+                bool isReady = Regex.IsMatch(cardContent, @"(?:Use\s*app\s*for|Claim|Collect|Open\s*App|Usage\s*verified|Ready)", RegexOptions.IgnoreCase);
 
                 if (tasksDone >= 0 && tasksTotal > 0 && tasksDone >= tasksTotal)
                 {
@@ -2426,10 +2413,16 @@ public class QuizEarnApp : Form
                     }
                 }
 
-                // 1. Check for Claim Button first! (Matches "Claim" or "CLAIM" in text or content-desc)
+                // 1. Check for Claim / Collect Button first! (Matches "Claim", "CLAIM", "Collect", "COLLECT", "Collect Coins")
                 int cx, cy;
-                if ((TryFindNodeBounds(xml, "Claim", out cx, out cy) ||
-                     TryFindNodeBounds(xml, "CLAIM", out cx, out cy)) && cy < 1560)
+                bool hasClaimBtn = (TryFindNodeBounds(xml, "Claim", out cx, out cy) ||
+                                    TryFindNodeBounds(xml, "CLAIM", out cx, out cy) ||
+                                    TryFindNodeBounds(xml, "Collect Coins", out cx, out cy) ||
+                                    TryFindNodeBounds(xml, "Collect", out cx, out cy) ||
+                                    TryFindNodeBounds(xml, "COLLECT", out cx, out cy) ||
+                                    TryFindNodeBounds(xml, "Claim Coins", out cx, out cy) ||
+                                    TryFindNodeBounds(xml, "Claim Reward", out cx, out cy)) && cy < 1560;
+                if (hasClaimBtn)
                 {
                     int rewardCoins = 100;
                     try
@@ -2525,10 +2518,14 @@ public class QuizEarnApp : Form
                         {
                             xml = afterVerifyXml;
                             int ncx, ncy;
-                            if ((TryFindNodeBounds(xml, "Claim", out ncx, out ncy) ||
-                                 TryFindNodeBounds(xml, "CLAIM", out ncx, out ncy)) && ncy < 1560)
+                            bool nHasClaim = (TryFindNodeBounds(xml, "Claim", out ncx, out ncy) ||
+                                              TryFindNodeBounds(xml, "CLAIM", out ncx, out ncy) ||
+                                              TryFindNodeBounds(xml, "Collect Coins", out ncx, out ncy) ||
+                                              TryFindNodeBounds(xml, "Collect", out ncx, out ncy) ||
+                                              TryFindNodeBounds(xml, "COLLECT", out ncx, out ncy)) && ncy < 1560;
+                            if (nHasClaim)
                             {
-                                Log(string.Format("[💎 Claimer] Verified! 'Claim' button unlocked at ({0}, {1}). Proceeding to claim...", ncx, ncy));
+                                Log(string.Format("[💎 Claimer] Verified! 'Claim/Collect' button unlocked at ({0}, {1}). Proceeding to claim...", ncx, ncy));
                                 continue;
                             }
                         }
@@ -2659,8 +2656,14 @@ public class QuizEarnApp : Form
 
                         string retXml = DumpAndReadXml("/sdcard/after_usage.xml");
                         int rcx, rcy;
-                        if ((TryFindNodeBounds(retXml, "Claim", out rcx, out rcy) ||
-                             TryFindNodeBounds(retXml, "CLAIM", out rcx, out rcy)) && rcy < 1560)
+                        bool rHasClaim = (TryFindNodeBounds(retXml, "Claim", out rcx, out rcy) ||
+                                          TryFindNodeBounds(retXml, "CLAIM", out rcx, out rcy) ||
+                                          TryFindNodeBounds(retXml, "Collect Coins", out rcx, out rcy) ||
+                                          TryFindNodeBounds(retXml, "Collect", out rcx, out rcy) ||
+                                          TryFindNodeBounds(retXml, "COLLECT", out rcx, out rcy) ||
+                                          TryFindNodeBounds(retXml, "Claim Coins", out rcx, out rcy) ||
+                                          TryFindNodeBounds(retXml, "Claim Reward", out rcx, out rcy)) && rcy < 1560;
+                        if (rHasClaim)
                         {
                             Log(string.Format("[💎 Claimer] Claim button already visible at ({0}, {1})! Claiming...", rcx, rcy));
                             continue;
@@ -2763,9 +2766,33 @@ public class QuizEarnApp : Form
                 }
             }
 
-            AdbKey(4);
-            Thread.Sleep(2000);
+            NavigateBackFromOfferDetails();
         }
+    }
+
+    private void NavigateBackFromOfferDetails()
+    {
+        try
+        {
+            Log("[💎 Claimer] Exiting offer details page back to offers list...");
+            // Step 1: Tap UI back arrow at top-left (bounds [24,60][84,120], center (54, 90) on 900x1600)
+            AdbTapRef(54, 90);
+            Thread.Sleep(1200);
+
+            // Step 2: Fallback keyevent back
+            AdbKey(4);
+            Thread.Sleep(1000);
+
+            // Step 3: Check if still on details page
+            string checkXml = DumpAndReadXml("/sdcard/check_exit.xml");
+            if (!string.IsNullOrEmpty(checkXml) && (checkXml.Contains("REWARDS") || checkXml.Contains("Remove Wrong App") || checkXml.Contains("Initial Install Reward")))
+            {
+                Log("[💎 Claimer] Still on details page! Retrying tap at (54, 90)...");
+                AdbTapRef(54, 90);
+                Thread.Sleep(1500);
+            }
+        }
+        catch { }
     }
 
     private void AutoOfferWorkerLoop()
@@ -2838,11 +2865,10 @@ public class QuizEarnApp : Form
                         Thread.Sleep(1500);
 
                         string verifyXml = DumpAndReadXml("/sdcard/verify_back.xml");
-                        if (verifyXml.Contains("REWARDS") || verifyXml.Contains("Remove Wrong App") || verifyXml.Contains("Initial Install Reward"))
+                        if (!string.IsNullOrEmpty(verifyXml) && (verifyXml.Contains("REWARDS") || verifyXml.Contains("Remove Wrong App") || verifyXml.Contains("Initial Install Reward")))
                         {
-                            Log("[💎 Claimer] Still on detail page. Sending hardware Back button again...");
-                            AdbKey(4);
-                            Thread.Sleep(1500);
+                            Log("[💎 Claimer] Still on detail page. Calling NavigateBackFromOfferDetails()...");
+                            NavigateBackFromOfferDetails();
                         }
                         continue;
                     }
@@ -2986,7 +3012,9 @@ public class QuizEarnApp : Form
                         int scx, scy;
                         if (TryFindNodeBounds(xml, "SUPER OFFER", out scx, out scy) ||
                             TryFindNodeBounds(xml, "1,000", out scx, out scy) ||
-                            TryFindNodeBounds(xml, "Claim", out scx, out scy))
+                            TryFindNodeBounds(xml, "Claim", out scx, out scy) ||
+                            TryFindNodeBounds(xml, "Collect", out scx, out scy) ||
+                            TryFindNodeBounds(xml, "Collect Coins", out scx, out scy))
                         {
                             AdbTap(scx, Math.Min(scy + 40, 640));
                         }

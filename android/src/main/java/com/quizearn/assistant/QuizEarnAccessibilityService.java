@@ -2500,7 +2500,43 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         }
         if (isOfferApprovedPage) {
             offerState = OFFER_STATE_REWARD_CLAIM;
-            performGlobalAction(GLOBAL_ACTION_BACK);
+
+            // Check if any milestone on this page is ready to Claim / Collect
+            NodeItem pageClaimBtn = null;
+            for (NodeItem item : allNodes) {
+                String pt = item.text.trim().toLowerCase();
+                if ((pt.equals("claim") || pt.equals("collect") || pt.equals("collect coins") ||
+                     pt.equals("claim now") || pt.equals("claim reward") || pt.equals("collect reward") ||
+                     pt.startsWith("claim ") || pt.startsWith("collect ")) &&
+                    item.rect.centerY() < safeBottomCutoffY) {
+                    if (!pt.contains("watch an ad") && !pt.contains("collect gem")) {
+                        pageClaimBtn = item;
+                        break;
+                    }
+                }
+            }
+            if (pageClaimBtn != null) {
+                tapNode(pageClaimBtn);
+                lastTapTime = now + 2500;
+                currentStatus = "Claiming Milestone Reward!";
+                return true;
+            }
+
+            // Navigate back from detail page via UI back arrow button or coordinate tap
+            NodeItem backArrowBtn = null;
+            for (NodeItem item : allNodes) {
+                if (item.rect.centerX() < (int)(screenW * 0.18f) && item.rect.centerY() < (int)(screenH * 0.12f) &&
+                    (item.className.contains("Button") || item.clickable)) {
+                    backArrowBtn = item;
+                    break;
+                }
+            }
+            if (backArrowBtn != null) {
+                tapNode(backArrowBtn);
+            } else {
+                tapCoordinates((int)(screenW * 0.06f), (int)(screenH * 0.056f));
+                performGlobalAction(GLOBAL_ACTION_BACK);
+            }
             lastTapTime = now + 1500;
             currentStatus = "Reward Approved! Returning...";
             return true;
@@ -2516,7 +2552,20 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         }
         if (isMyOffersPage) {
             Log.i(TAG, "On My Offers page: pressing back to return to quiz loop and resetting gems to 0.");
-            performGlobalAction(GLOBAL_ACTION_BACK);
+            NodeItem backArrowBtn = null;
+            for (NodeItem item : allNodes) {
+                if (item.rect.centerX() < (int)(screenW * 0.18f) && item.rect.centerY() < (int)(screenH * 0.12f) &&
+                    (item.className.contains("Button") || item.clickable)) {
+                    backArrowBtn = item;
+                    break;
+                }
+            }
+            if (backArrowBtn != null) {
+                tapNode(backArrowBtn);
+            } else {
+                tapCoordinates((int)(screenW * 0.06f), (int)(screenH * 0.056f));
+                performGlobalAction(GLOBAL_ACTION_BACK);
+            }
             lastTapTime = now + 1500;
             currentStatus = "Offer Complete! Back to Quiz...";
             liveGems = 0;
@@ -2529,15 +2578,33 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             return true;
         }
 
+        // Universal Claim / Collect reward check across all screens
+        NodeItem claimBtn = null;
+        for (NodeItem item : allNodes) {
+            String t = item.text.trim().toLowerCase();
+            if ((t.equals("claim") || t.equals("collect") || t.equals("collect coins") ||
+                 t.equals("claim now") || t.equals("claim reward") || t.equals("collect reward") ||
+                 t.startsWith("claim ") || t.startsWith("collect ")) &&
+                item.rect.centerY() < safeBottomCutoffY) {
+                if (!t.contains("watch an ad") && !t.contains("collect gem")) {
+                    claimBtn = item;
+                    break;
+                }
+            }
+        }
+        if (claimBtn != null) {
+            tapNode(claimBtn);
+            lastTapTime = now + 2500;
+            currentStatus = "1,000 Coins Claimed!";
+            offerState = OFFER_STATE_IDLE;
+            return true;
+        }
+
         if (offerState == OFFER_STATE_REWARD_CLAIM) {
             boolean hasSuperOfferCard = false;
-            NodeItem claimBtn = null;
             for (NodeItem item : allNodes) {
                 String t = item.text.toLowerCase();
                 if (t.contains("super offer") || t.contains("guaranteed")) hasSuperOfferCard = true;
-                if (t.equals("claim") || t.equals("claim now") || t.startsWith("claim")) {
-                    if (item.rect.centerX() < screenW / 2) claimBtn = item;
-                }
             }
             if (hasSuperOfferCard && claimBtn != null) {
                 tapNode(claimBtn);
