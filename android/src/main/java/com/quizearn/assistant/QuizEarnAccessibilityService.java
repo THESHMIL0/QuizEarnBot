@@ -1430,7 +1430,15 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
-            if (isOfferDetailPage || (offerState != OFFER_STATE_IDLE)) isHomeScreen = false;
+            if (hasHomeScreen) {
+                if (offerState != OFFER_STATE_IDLE) {
+                    Log.i(TAG, "Returned to Home screen: resetting offerState (" + offerState + ") to OFFER_STATE_IDLE.");
+                    offerState = OFFER_STATE_IDLE;
+                }
+                isHomeScreen = true;
+            } else if (isOfferDetailPage || (offerState != OFFER_STATE_IDLE)) {
+                isHomeScreen = false;
+            }
 
             if (rewardPopupBtn != null) {
                 tapNode(rewardPopupBtn);
