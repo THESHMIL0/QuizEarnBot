@@ -878,6 +878,19 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 externalAppBackCount = 0;
             }
 
+            // 0. Pre-scan for Active Quiz Prompt (Question on screen)
+            boolean hasQuizPrompt = false;
+            for (NodeItem item : allNodes) {
+                String t = item.text.trim().toLowerCase();
+                String d = item.contentDesc.trim().toLowerCase();
+                if (t.contains("select the correct number") || d.contains("select the correct number") ||
+                    t.contains("attempts left") || d.contains("attempts left") ||
+                    t.contains("correct number") || d.contains("correct number")) {
+                    hasQuizPrompt = true;
+                    break;
+                }
+            }
+
             // 1. Check Home Screen FIRST
             boolean hasHomeScreen = false;
             for (NodeItem item : allNodes) {
@@ -892,9 +905,9 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
-            // 2. Check Super/Mega Offer Milestone Screen Detection (Checked FIRST so 25 gems unlocked screen is NEVER missed or misclassified)
+            // 2. Check Super/Mega Offer Milestone Screen Detection (ONLY if NOT on Home and NOT on Quiz Question)
             boolean hasSuperOfferMilestone = false;
-            if (!hasHomeScreen) {
+            if (!hasHomeScreen && !hasQuizPrompt) {
                 for (NodeItem item : allNodes) {
                     String t = item.text.trim().toLowerCase();
                     String d = item.contentDesc.trim().toLowerCase();
@@ -915,10 +928,6 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                         t.contains("start offer") || d.contains("start offer") ||
                         t.contains("gems collected") || d.contains("gems collected") ||
                         t.contains("how to complete") || d.contains("how to complete") ||
-                        (t.contains("super offer") && !t.contains("gems to unlock") && !t.contains("gems to super offer")) ||
-                        (d.contains("super offer") && !d.contains("gems to unlock") && !d.contains("gems to super offer")) ||
-                        (t.contains("mega offer") && !t.contains("gems to unlock") && !t.contains("gems to mega offer")) ||
-                        (d.contains("mega offer") && !d.contains("gems to unlock") && !d.contains("gems to mega offer")) ||
                         t.contains("guaranteed 1,000 coins") || t.contains("guaranteed 1000 coins") ||
                         t.contains("guaranteed 800 coins") || t.contains("guaranteed 700 coins") ||
                         t.contains("app usage progress") || d.contains("app usage progress") ||
@@ -958,36 +967,38 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             }
 
             // 4. Check active quiz elements (ONLY if not Home, not Milestone, and not Collect Gem)
-            boolean hasActiveQuiz = false;
+            boolean hasActiveQuiz = hasQuizPrompt;
             if (!hasHomeScreen && !hasSuperOfferMilestone && !hasCollectGem) {
-                for (NodeItem item : allNodes) {
-                    String t = item.text.trim().toLowerCase();
-                    String d = item.contentDesc.trim().toLowerCase();
-                    if (t.contains("select the correct number") || d.contains("select the correct number") ||
-                        t.contains("attempts left") || d.contains("attempts left")) {
-                        hasActiveQuiz = true;
-                        break;
-                    }
-                    int cy = item.rect.centerY();
-                    if (cy >= (int)(screenH * 0.10f) && cy <= (int)(screenH * 0.42f)) {
-                        String raw = item.text.trim();
-                        String rawLower = raw.toLowerCase();
-                        boolean isGemOrProgressText = raw.contains("/25") || raw.contains("/ 25") ||
-                            raw.contains("/50") || rawLower.contains("gem") ||
-                            rawLower.contains("unlock") || rawLower.contains("super offer") ||
-                            rawLower.contains("mega offer") ||
-                            rawLower.contains("attempt") || rawLower.contains("left");
-                        if (!isGemOrProgressText &&
-                            (mathPattern.matcher(raw).find() || numPattern.matcher(cleanNumText(raw)).matches())) {
+                if (!hasActiveQuiz) {
+                    for (NodeItem item : allNodes) {
+                        String t = item.text.trim().toLowerCase();
+                        String d = item.contentDesc.trim().toLowerCase();
+                        if (t.contains("select the correct number") || d.contains("select the correct number") ||
+                            t.contains("attempts left") || d.contains("attempts left")) {
                             hasActiveQuiz = true;
                             break;
                         }
-                    }
-                    if (cy >= (int)(screenH * 0.26f) && cy <= (int)(screenH * 0.68f)) {
-                        String raw = cleanNumText(item.text.trim());
-                        if (numPattern.matcher(raw).matches()) {
-                            hasActiveQuiz = true;
-                            break;
+                        int cy = item.rect.centerY();
+                        if (cy >= (int)(screenH * 0.10f) && cy <= (int)(screenH * 0.42f)) {
+                            String raw = item.text.trim();
+                            String rawLower = raw.toLowerCase();
+                            boolean isGemOrProgressText = raw.contains("/25") || raw.contains("/ 25") ||
+                                raw.contains("/50") || rawLower.contains("gem") ||
+                                rawLower.contains("unlock") || rawLower.contains("super offer") ||
+                                rawLower.contains("mega offer") ||
+                                rawLower.contains("attempt") || rawLower.contains("left");
+                            if (!isGemOrProgressText &&
+                                (mathPattern.matcher(raw).find() || numPattern.matcher(cleanNumText(raw)).matches())) {
+                                hasActiveQuiz = true;
+                                break;
+                            }
+                        }
+                        if (cy >= (int)(screenH * 0.26f) && cy <= (int)(screenH * 0.68f)) {
+                            String raw = cleanNumText(item.text.trim());
+                            if (numPattern.matcher(raw).matches()) {
+                                hasActiveQuiz = true;
+                                break;
+                            }
                         }
                     }
                 }
