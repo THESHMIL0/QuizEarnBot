@@ -892,14 +892,17 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
-            // 2. Check Super/Mega Offer Milestone Screen Detection (when NOT on home screen)
+            // 2. Check Super/Mega Offer Milestone Screen Detection (Checked FIRST so 25 gems unlocked screen is NEVER missed or misclassified)
             boolean hasSuperOfferMilestone = false;
             if (!hasHomeScreen) {
                 for (NodeItem item : allNodes) {
                     String t = item.text.trim().toLowerCase();
                     String d = item.contentDesc.trim().toLowerCase();
                     if (t.contains("unlock super offer") || t.contains("unlock mega offer") ||
-                        t.contains("gems to unlock") || t.contains("watch an ad to collect")) {
+                        t.contains("gems to unlock") || t.contains("watch an ad to collect") ||
+                        t.contains("gems to mega offer") || t.contains("gems to super offer") ||
+                        t.contains("+1 mega gem") || t.contains("+1 super gem") || t.contains("+1 gem") ||
+                        t.contains("collect gem & continue") || t.contains("collect gem")) {
                         continue;
                     }
                     if (t.contains("mega offer unlocked") || d.contains("mega offer unlocked") ||
@@ -912,10 +915,10 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                         t.contains("start offer") || d.contains("start offer") ||
                         t.contains("gems collected") || d.contains("gems collected") ||
                         t.contains("how to complete") || d.contains("how to complete") ||
-                        (t.contains("super offer") && !t.contains("gems to unlock")) ||
-                        (d.contains("super offer") && !d.contains("gems to unlock")) ||
-                        (t.contains("mega offer") && !t.contains("gems to unlock")) ||
-                        (d.contains("mega offer") && !d.contains("gems to unlock")) ||
+                        (t.contains("super offer") && !t.contains("gems to unlock") && !t.contains("gems to super offer")) ||
+                        (d.contains("super offer") && !d.contains("gems to unlock") && !d.contains("gems to super offer")) ||
+                        (t.contains("mega offer") && !t.contains("gems to unlock") && !t.contains("gems to mega offer")) ||
+                        (d.contains("mega offer") && !d.contains("gems to unlock") && !d.contains("gems to mega offer")) ||
                         t.contains("guaranteed 1,000 coins") || t.contains("guaranteed 1000 coins") ||
                         t.contains("guaranteed 800 coins") || t.contains("guaranteed 700 coins") ||
                         t.contains("app usage progress") || d.contains("app usage progress") ||
@@ -936,17 +939,18 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
-            // 3. Pre-scan Gem Collection Screen (takes precedence over accidental numeric/ratio matches)
+            // 3. Pre-scan Gem Collection Screen (ONLY if NOT on Milestone and NOT on Home)
             boolean hasCollectGem = false;
             if (!hasHomeScreen && !hasSuperOfferMilestone) {
                 for (NodeItem item : allNodes) {
                     String combined = (item.text.trim().toLowerCase() + " " + item.contentDesc.trim().toLowerCase()).trim();
                     if (combined.contains("collect gem") || combined.contains("collect reward") ||
                         combined.contains("claim gem") || combined.contains("watch an ad") ||
-                        combined.contains("congratulations") || combined.contains("+1 gem") ||
+                        combined.contains("+1 gem") ||
                         combined.contains("+1 mega gem") || combined.contains("+1 super gem") ||
                         combined.contains("mega gem") || combined.contains("super gem") ||
-                        combined.contains("gems to unlock") || combined.contains("gems to mega offer")) {
+                        combined.contains("gems to unlock") || combined.contains("gems to mega offer") ||
+                        combined.contains("gems to super offer")) {
                         hasCollectGem = true;
                         break;
                     }
@@ -1045,7 +1049,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     id.contains("tt_") || id.contains("ia_") || id.contains("close-or-skip-button") ||
                     id.contains("app-interstitial") || id.contains("ad-interstitial") ||
                     id.contains("mys-creative") || id.contains("mys-content") ||
-                    isWebView || t.contains("moloco") || t.contains("liftoff"))) {
+                    (isWebView && isAdActivity) || t.contains("moloco") || t.contains("liftoff"))) {
                     isAd = true;
                 }
             }
@@ -1313,6 +1317,12 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     String t = item.text.trim().toLowerCase();
                     String d = item.contentDesc.trim().toLowerCase();
                     if (t.contains("gems collected") || d.contains("gems collected") ||
+                        t.contains("mega offer unlocked") || d.contains("mega offer unlocked") ||
+                        t.contains("super offer unlocked") || d.contains("super offer unlocked") ||
+                        t.contains("go to mega offer") || d.contains("go to mega offer") ||
+                        t.contains("go to super offer") || d.contains("go to super offer") ||
+                        t.contains("complete the mega offer") || d.contains("complete the mega offer") ||
+                        t.contains("complete the super offer") || d.contains("complete the super offer") ||
                         t.contains("watch a video ad") || t.contains("download and install the advertised") ||
                         t.contains("how to complete - watch tutorial") || t.contains("warning: installing apps other than") ||
                         t.contains("start offer") || t.contains("verify installation") ||
@@ -3042,9 +3052,25 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             }
         }
 
+        boolean hasAdUnavailableToast = false;
         for (NodeItem item : allNodes) {
             String t = item.text.trim().toLowerCase();
-            if (t.equals("try again") || t.contains("try again")) {
+            if (t.contains("ad is unavailable") || t.contains("please try again in a moment")) {
+                hasAdUnavailableToast = true;
+                break;
+            }
+        }
+        if (hasAdUnavailableToast) {
+            currentStatus = "Ad Unavailable. Retrying in 4s...";
+            lastTapTime = now + 4000;
+            lastProgressTime = now;
+            return true;
+        }
+
+        for (NodeItem item : allNodes) {
+            String t = item.text.trim().toLowerCase();
+            String d = item.contentDesc.trim().toLowerCase();
+            if ((t.equals("try again") || d.equals("try again")) && !t.contains("ad is unavailable") && !t.contains("in a moment")) {
                 Log.i(TAG, "Tapping 'Try Again' on network/error dialog.");
                 tapNode(item);
                 lastTapTime = now + 2000;
@@ -3083,8 +3109,48 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             return true;
         }
 
+        boolean isMilestoneOrUnlocked = is25GemsOnScreen || (liveGems >= 25);
+        if (!isMilestoneOrUnlocked) {
+            for (NodeItem item : allNodes) {
+                String t = item.text.trim().toLowerCase();
+                String d = item.contentDesc.trim().toLowerCase();
+                if (t.contains("unlocked") || d.contains("unlocked") ||
+                    t.contains("go to mega offer") || d.contains("go to mega offer") ||
+                    t.contains("go to super offer") || d.contains("go to super offer") ||
+                    t.contains("complete the mega offer") || d.contains("complete the mega offer") ||
+                    t.contains("complete the super offer") || d.contains("complete the super offer")) {
+                    isMilestoneOrUnlocked = true;
+                    is25GemsOnScreen = true;
+                    liveGems = 25;
+                    break;
+                }
+            }
+        }
+
+        if (startOfferBtn == null && isMilestoneOrUnlocked) {
+            for (NodeItem item : allNodes) {
+                String t = item.text.trim().toLowerCase();
+                String d = item.contentDesc.trim().toLowerCase();
+                if (t.contains("go to") || d.contains("go to") || t.contains("claim") || d.contains("claim")) {
+                    if (item.rect.centerY() > screenH * 0.30f && item.rect.centerY() < screenH * 0.70f) {
+                        startOfferBtn = item;
+                        break;
+                    }
+                }
+            }
+            if (startOfferBtn == null) {
+                Log.i(TAG, "Tapping center action button on milestone screen.");
+                tapCoordinates((int)(screenW * 0.50f), (int)(screenH * 0.39f));
+                offerState = OFFER_STATE_DETAIL_PAGE;
+                lastTapTime = now + 2000;
+                lastProgressTime = now;
+                currentStatus = "Opening Offer Details...";
+                return true;
+            }
+        }
+
         if (startOfferBtn != null) {
-            if (liveGems < 25 && !is25GemsOnScreen) {
+            if (!isMilestoneOrUnlocked && liveGems < 25 && !is25GemsOnScreen) {
                 performGlobalAction(GLOBAL_ACTION_BACK);
                 lastTapTime = now + 1500;
                 lastProgressTime = now;
