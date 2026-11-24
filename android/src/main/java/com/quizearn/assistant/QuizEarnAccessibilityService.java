@@ -33,8 +33,10 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
@@ -885,9 +887,29 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 String d = item.contentDesc.trim().toLowerCase();
                 if (t.contains("select the correct number") || d.contains("select the correct number") ||
                     t.contains("attempts left") || d.contains("attempts left") ||
-                    t.contains("correct number") || d.contains("correct number")) {
+                    t.contains("correct number") || d.contains("correct number") ||
+                    t.contains("what is ") || d.contains("what is ") ||
+                    t.contains("use hint") || d.contains("use hint") ||
+                    t.equals("mega quiz") || t.equals("super quiz") ||
+                    t.equals("math") || d.equals("math")) {
                     hasQuizPrompt = true;
                     break;
+                }
+                int cy = item.rect.centerY();
+                if (cy >= (int)(screenH * 0.10f) && cy <= (int)(screenH * 0.45f)) {
+                    String norm = item.text.replace('\u00A0', ' ')
+                                         .replace('\u200B', ' ')
+                                         .replace('\u2013', '-')
+                                         .replace('\u2014', '-')
+                                         .replace('\u2212', '-')
+                                         .replace('x', '*')
+                                         .replace('X', '*')
+                                         .replace('×', '*')
+                                         .replace('÷', '/');
+                    if (mathPattern.matcher(norm).find()) {
+                        hasQuizPrompt = true;
+                        break;
+                    }
                 }
             }
 
@@ -915,7 +937,10 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                         t.contains("gems to unlock") || t.contains("watch an ad to collect") ||
                         t.contains("gems to mega offer") || t.contains("gems to super offer") ||
                         t.contains("+1 mega gem") || t.contains("+1 super gem") || t.contains("+1 gem") ||
-                        t.contains("collect gem & continue") || t.contains("collect gem")) {
+                        t.contains("collect gem & continue") || t.contains("collect gem") ||
+                        t.contains("answer 25 questions") || t.contains("questions for guaranteed") ||
+                        t.contains("use hint") || t.contains("what is") ||
+                        t.contains("/25") || t.contains("/ 25")) {
                         continue;
                     }
                     if (t.contains("mega offer unlocked") || d.contains("mega offer unlocked") ||
@@ -1725,16 +1750,32 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
-            // 5. RESPONSIVE MATH & NUMBER CAPTCHA SOLVER (Fixed single-pass Matcher.find())
-            int qMinY = (int) (screenH * 0.10f);
-            int qMaxY = (int) (screenH * 0.40f);
-            int optMinY = (int) (screenH * 0.25f);
-            int optMaxY = (int) (screenH * 0.68f);
-
+            // 5. RESPONSIVE MATH & NUMBER CAPTCHA SOLVER (100% Precision Algorithm)
             String detectedTarget = null;
             String targetAnsStr = null;
             int questionCenterY = -1;
 
+            // Find the prompt divider node (e.g. "Select the correct number", "attempts left", "Use Hint")
+            NodeItem promptNode = null;
+            for (NodeItem item : allNodes) {
+                String t = item.text.toLowerCase().trim();
+                String d = item.contentDesc.toLowerCase().trim();
+                if (t.contains("select the correct") || d.contains("select the correct") ||
+                    t.contains("attempts left") || d.contains("attempts left") ||
+                    t.contains("correct number") || d.contains("correct number") ||
+                    t.contains("use hint") || d.contains("use hint")) {
+                    promptNode = item;
+                    break;
+                }
+            }
+
+            int promptDividerY = (promptNode != null) ? promptNode.rect.centerY() : (int)(screenH * 0.42f);
+            int qMinY = (int) (screenH * 0.08f);
+            int qMaxY = promptDividerY - dp(5); // Strictly ABOVE prompt!
+            int optMinY = promptDividerY + dp(5); // Strictly BELOW prompt!
+            int optMaxY = (int) (screenH * 0.78f);
+
+            // A) Check for Math Question FIRST in question area
             for (NodeItem item : allNodes) {
                 int cy = item.rect.centerY();
                 if (cy < qMinY || cy > qMaxY) continue;
@@ -1744,15 +1785,26 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     continue;
                 }
                 String lower = rawText.toLowerCase();
-                if (lower.contains("attempt") || lower.contains("select") || lower.contains("correct")) {
+                if (lower.contains("attempt") || lower.contains("select") || lower.contains("correct") || lower.contains("gem")) {
                     continue;
                 }
 
-                Matcher m = mathPattern.matcher(rawText);
+                // Normalize Unicode characters and minus signs
+                String norm = rawText.replace('\u00A0', ' ')
+                                     .replace('\u200B', ' ')
+                                     .replace('\u2013', '-')
+                                     .replace('\u2014', '-')
+                                     .replace('\u2212', '-')
+                                     .replace('x', '*')
+                                     .replace('X', '*')
+                                     .replace('×', '*')
+                                     .replace('÷', '/');
+
+                Matcher m = mathPattern.matcher(norm);
                 boolean foundMath = m.find();
                 boolean isSlashMath = false;
                 if (!foundMath) {
-                    m = mathSlashPattern.matcher(rawText);
+                    m = mathSlashPattern.matcher(norm);
                     isSlashMath = m.find();
                     foundMath = isSlashMath;
                 }
@@ -1765,9 +1817,9 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
                         int ans = Integer.MIN_VALUE;
                         if ("+".equals(op)) ans = n1 + n2;
-                        else if ("-".equals(op) || "–".equals(op) || "—".equals(op)) ans = n1 - n2;
-                        else if ("*".equals(op) || "×".equals(op) || "x".equalsIgnoreCase(op)) ans = n1 * n2;
-                        else if ("/".equals(op) || "÷".equals(op)) {
+                        else if ("-".equals(op)) ans = n1 - n2;
+                        else if ("*".equals(op)) ans = n1 * n2;
+                        else if ("/".equals(op)) {
                             if (n2 != 0 && (n1 % n2 == 0)) ans = n1 / n2;
                         }
 
@@ -1781,50 +1833,49 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
-            boolean hasCaptchaContext = false;
-            for (NodeItem item : allNodes) {
-                String t = item.text.toLowerCase();
-                String d = item.contentDesc.toLowerCase();
-                if (t.contains("select the correct") || d.contains("select the correct") ||
-                    t.contains("attempt") || d.contains("attempt") ||
-                    t.contains("/2")) {
-                    hasCaptchaContext = true;
-                    break;
+            // B) If not Math, check for Number Matching / Captcha Question
+            if (detectedTarget == null) {
+                // Collect candidate options in the options area (strictly below prompt!)
+                Set<String> optionNumbers = new HashSet<>();
+                for (NodeItem opt : allNodes) {
+                    if (isForbiddenElement(opt, screenW, screenH)) continue;
+                    int cy = opt.rect.centerY();
+                    if (cy < optMinY || cy > optMaxY) continue;
+                    String rawOptText = opt.text != null ? opt.text.trim() : "";
+                    String strippedText = rawOptText.replaceFirst("^(?i)[A-D1-4][\\s\\.\\)\\:\\-]+", "").trim();
+                    String cleaned = cleanNumText(strippedText);
+                    if (cleaned.length() > 0 && cleaned.matches("^\\d+$")) {
+                        optionNumbers.add(cleaned);
+                    }
                 }
-            }
 
-            if (detectedTarget == null && hasCaptchaContext) {
-                NodeItem bestQNode = null;
-                int maxArea = -1;
+                // 1. Check if an exact question node matches one of the option numbers
                 for (NodeItem item : allNodes) {
                     int cy = item.rect.centerY();
                     if (cy < qMinY || cy > qMaxY) continue;
-                    String cleaned = cleanNumText(item.text);
-                    if (numPattern.matcher(cleaned).matches()) {
-                        int area = item.rect.width() * item.rect.height();
-                        if (area > maxArea) {
-                            maxArea = area;
-                            bestQNode = item;
+                    String raw = cleanNumText(item.text);
+                    if (raw.length() > 0 && raw.matches("^\\d+$")) {
+                        if (optionNumbers.contains(raw)) {
+                            detectedTarget = "CAPTCHA:" + raw;
+                            targetAnsStr = raw;
+                            questionCenterY = cy;
+                            break;
                         }
                     }
                 }
-                if (bestQNode != null) {
-                    String targetNum = cleanNumText(bestQNode.text);
-                    detectedTarget = "CAPTCHA:" + targetNum;
-                    targetAnsStr = targetNum;
-                    questionCenterY = bestQNode.rect.centerY();
-                } else {
+
+                // 2. Check if individual segmented digit nodes in question area form an option number
+                if (detectedTarget == null) {
                     List<NodeItem> digitNodes = new ArrayList<>();
                     for (NodeItem item : allNodes) {
                         int cy = item.rect.centerY();
-                        if (cy >= qMinY && cy <= qMaxY) {
-                            String cleaned = cleanNumText(item.text);
-                            if (cleaned.length() == 1 && Character.isDigit(cleaned.charAt(0))) {
-                                digitNodes.add(item);
-                            }
+                        if (cy < qMinY || cy > qMaxY) continue;
+                        String cleaned = cleanNumText(item.text);
+                        if (cleaned.length() == 1 && Character.isDigit(cleaned.charAt(0))) {
+                            digitNodes.add(item);
                         }
                     }
-                    if (digitNodes.size() >= 3 && digitNodes.size() <= 6) {
+                    if (digitNodes.size() >= 2 && digitNodes.size() <= 8) {
                         Collections.sort(digitNodes, new Comparator<NodeItem>() {
                             @Override
                             public int compare(NodeItem a, NodeItem b) {
@@ -1833,17 +1884,46 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                         });
                         StringBuilder sb = new StringBuilder();
                         for (NodeItem dNode : digitNodes) sb.append(cleanNumText(dNode.text));
-                        detectedTarget = "CAPTCHA:" + sb.toString();
-                        targetAnsStr = sb.toString();
+                        String recombined = sb.toString();
+                        if (optionNumbers.isEmpty() || optionNumbers.contains(recombined)) {
+                            detectedTarget = "CAPTCHA:" + recombined;
+                            targetAnsStr = recombined;
+                            questionCenterY = digitNodes.get(0).rect.centerY();
+                        }
+                    }
+                }
+
+                // 3. If exact option match not found above, pick the largest number node in question area
+                if (detectedTarget == null) {
+                    NodeItem bestQNode = null;
+                    int maxArea = -1;
+                    for (NodeItem item : allNodes) {
+                        int cy = item.rect.centerY();
+                        if (cy < qMinY || cy > qMaxY) continue;
+                        String cleaned = cleanNumText(item.text);
+                        if (cleaned.length() > 0 && cleaned.matches("^\\d+$")) {
+                            int area = item.rect.width() * item.rect.height();
+                            if (area > maxArea) {
+                                maxArea = area;
+                                bestQNode = item;
+                            }
+                        }
+                    }
+                    if (bestQNode != null) {
+                        String targetNum = cleanNumText(bestQNode.text);
+                        detectedTarget = "CAPTCHA:" + targetNum;
+                        targetAnsStr = targetNum;
+                        questionCenterY = bestQNode.rect.centerY();
                     }
                 }
             }
 
+            // Fallback: Cross-screen duplicate number detection
             if (detectedTarget == null) {
                 Map<String, List<NodeItem>> numGroups = new HashMap<>();
                 for (NodeItem item : allNodes) {
                     int cy = item.rect.centerY();
-                    if (cy < qMinY || cy > (optMaxY + dp(40))) continue;
+                    if (cy < qMinY || cy > optMaxY) continue;
                     String cleaned = cleanNumText(item.text);
                     if (numPattern.matcher(cleaned).matches()) {
                         List<NodeItem> list = numGroups.get(cleaned);
@@ -1858,11 +1938,17 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     if (entry.getValue().size() >= 2) {
                         detectedTarget = "CAPTCHA:" + entry.getKey();
                         targetAnsStr = entry.getKey();
+                        int minY = Integer.MAX_VALUE;
+                        for (NodeItem n : entry.getValue()) {
+                            if (n.rect.centerY() < minY) minY = n.rect.centerY();
+                        }
+                        questionCenterY = minY;
                         break;
                     }
                 }
             }
 
+            // C) Find and tap the EXACT matching answer button
             if (detectedTarget != null && targetAnsStr != null) {
                 if (detectedTarget.equals(lastSolvedTarget)) {
                     if (now - lastSolveTime > 15000) {
@@ -1881,15 +1967,18 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 for (NodeItem opt : allNodes) {
                     if (isForbiddenElement(opt, screenW, screenH)) continue;
                     int cy = opt.rect.centerY();
-                    if (cy < (optMinY - dp(20)) || cy > (optMaxY + dp(30))) continue;
+                    if (cy < optMinY || cy > optMaxY) continue;
                     if (questionCenterY > 0 && cy <= questionCenterY) continue;
 
                     String rawOptText = opt.text != null ? opt.text.trim() : "";
                     String strippedText = rawOptText.replaceFirst("^(?i)[A-D1-4][\\s\\.\\)\\:\\-]+", "").trim();
                     String optText = cleanNumText(strippedText);
                     String optDesc = cleanNumText(opt.contentDesc != null ? opt.contentDesc.trim().replaceFirst("^(?i)[A-D1-4][\\s\\.\\)\\:\\-]+", "").trim() : "");
-                    if (optText.equals(targetAnsStr) || optDesc.equals(targetAnsStr) ||
-                        cleanNumText(rawOptText).equals(targetAnsStr) || cleanNumText(rawOptText).endsWith(targetAnsStr)) {
+                    String rawCleaned = cleanNumText(rawOptText);
+
+                    // STRICT EXACT MATCH ONLY!
+                    // Do NOT use endsWith which incorrectly matches "112" when target is "12"!
+                    if (optText.equals(targetAnsStr) || optDesc.equals(targetAnsStr) || rawCleaned.equals(targetAnsStr)) {
                         answerButton = opt;
                         break;
                     }
@@ -3143,6 +3232,15 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
             if (startOfferBtn == null) {
+                // NEVER tap center coordinates if this is actually a quiz question!
+                for (NodeItem n : allNodes) {
+                    String nt = n.text.toLowerCase().trim();
+                    if (nt.contains("what is") || nt.contains("use hint") || nt.equals("mega quiz") ||
+                        nt.equals("super quiz") || nt.equals("math") || nt.contains("select the correct") ||
+                        nt.contains("attempts left") || nt.contains("correct number")) {
+                        return false;
+                    }
+                }
                 Log.i(TAG, "Tapping center action button on milestone screen.");
                 tapCoordinates((int)(screenW * 0.50f), (int)(screenH * 0.39f));
                 offerState = OFFER_STATE_DETAIL_PAGE;
