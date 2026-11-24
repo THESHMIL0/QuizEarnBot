@@ -3,101 +3,660 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>QuizEarnBot v3.0 | The Ultimate Automated Quiz & Offer Auto-Pilot</title>
-  <meta name="description" content="Download QuizEarnBot v3.0 for Android. 100% precision math solver, number captcha solver, cyber floating HUD, and automated offer milestone farmer.">
+  <title>QuizEarnBot v3.0 | Automated Quiz Solver &amp; Offer Auto-Pilot</title>
+  <meta name="description" content="Download QuizEarnBot v3.0 for Android. 100% precision math &amp; captcha solver, cyber floating HUD, and automated 700/800 coin offer farmer.">
   <meta name="theme-color" content="#060913">
-  <!-- Open Graph -->
-  <meta property="og:title" content="QuizEarnBot v3.0 - Free Auto Solver & Gem Farmer">
-  <meta property="og:description" content="100% precision math and captcha solver with Cyberpunk Mod Menu HUD. Zero root needed.">
+  <meta property="og:title" content="QuizEarnBot v3.0 - Free Auto Solver &amp; Gem Farmer">
+  <meta property="og:description" content="100% precision math and captcha solver with Cyberpunk Mod Menu HUD. No root required.">
   <meta property="og:type" content="website">
 
-  <!-- Fonts & Icons -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            cyberDark: '#070a14',
-            cyberCard: '#0d1322',
-            cyberBorder: '#1e293b',
-            neonCyan: '#00E5FF',
-            neonLime: '#76FF03',
-            neonOrange: '#FF6D00',
-            neonPurple: '#B388FF'
-          },
-          fontFamily: {
-            orbitron: ['Orbitron', 'sans-serif'],
-            rajdhani: ['Rajdhani', 'sans-serif'],
-            inter: ['Inter', 'sans-serif']
-          }
-        }
-      }
-    }
-  </script>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700;900&family=Rajdhani:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
   <style>
+    :root {
+      --bg-dark: #060913;
+      --bg-header: rgba(7, 10, 20, 0.88);
+      --bg-card: #0d1322;
+      --bg-card-inner: #070c18;
+      --border: #1e293b;
+      --cyan: #00e5ff;
+      --lime: #76ff03;
+      --orange: #ff6d00;
+      --purple: #b388ff;
+      --text-main: #f8fafc;
+      --text-muted: #cbd5e1;
+      --text-dim: #94a3b8;
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
     body {
-      background-color: #060913;
-      color: #e2e8f0;
-      font-family: 'Inter', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background-color: var(--bg-dark);
+      background-image:
+        radial-gradient(circle at 50% 12%, rgba(0, 229, 255, 0.08), transparent 48%),
+        linear-gradient(rgba(0, 229, 255, 0.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 229, 255, 0.045) 1px, transparent 1px);
+      background-size: 100% 100%, 40px 40px, 40px 40px;
+      color: var(--text-main);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      line-height: 1.5;
       overflow-x: hidden;
     }
-    .neon-text-cyan {
-      text-shadow: 0 0 10px rgba(0, 229, 255, 0.7), 0 0 20px rgba(0, 229, 255, 0.4);
+
+    a {
+      color: inherit;
+      text-decoration: none;
     }
-    .neon-text-lime {
-      text-shadow: 0 0 10px rgba(118, 255, 3, 0.7), 0 0 20px rgba(118, 255, 3, 0.4);
+
+    svg {
+      display: block;
+      flex-shrink: 0;
     }
-    .neon-box-cyan {
-      box-shadow: 0 0 25px rgba(0, 229, 255, 0.25), inset 0 0 15px rgba(0, 229, 255, 0.1);
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.9em;
+      padding: 2px 6px;
+      border-radius: 5px;
+      background: rgba(0, 229, 255, 0.12);
+      border: 1px solid rgba(0, 229, 255, 0.25);
+      color: var(--cyan);
     }
-    .neon-box-lime {
-      box-shadow: 0 0 25px rgba(118, 255, 3, 0.25), inset 0 0 15px rgba(118, 255, 3, 0.1);
+
+    .font-display {
+      font-family: 'Orbitron', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     }
-    .grid-bg {
-      background-image: 
-        linear-gradient(rgba(0, 229, 255, 0.05) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(0, 229, 255, 0.05) 1px, transparent 1px);
-      background-size: 40px 40px;
+
+    .font-tech {
+      font-family: 'Rajdhani', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     }
-    @keyframes pulse-ring {
-      0% { transform: scale(0.95); opacity: 0.8; }
-      50% { transform: scale(1.05); opacity: 0.4; }
-      100% { transform: scale(0.95); opacity: 0.8; }
+
+    .container {
+      width: 100%;
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 0 18px;
     }
-    .animate-pulse-ring {
+
+    /* HEADER */
+    .navbar {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      background: var(--bg-header);
+      border-bottom: 1px solid rgba(30, 41, 59, 0.8);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+
+    .nav-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 18px;
+      gap: 12px;
+      max-width: 1120px;
+      margin: 0 auto;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .brand-icon-wrap {
+      position: relative;
+      width: 40px;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .brand-ring {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      border: 2px solid rgba(0, 229, 255, 0.45);
       animation: pulse-ring 3s infinite ease-in-out;
     }
+
+    .brand-title {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .brand-name {
+      font-size: 1.05rem;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      color: #ffffff;
+    }
+
+    .brand-name span {
+      color: var(--cyan);
+    }
+
+    .version-pill {
+      font-size: 0.72rem;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 6px;
+      background: rgba(0, 229, 255, 0.12);
+      border: 1px solid rgba(0, 229, 255, 0.35);
+      color: var(--cyan);
+      font-family: ui-monospace, monospace;
+    }
+
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    .btn-github-nav {
+      display: none;
+      align-items: center;
+      gap: 7px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      padding: 7px 12px;
+      border-radius: 8px;
+      border: 1px solid #334155;
+      transition: border-color 0.2s, color 0.2s;
+    }
+
+    .btn-github-nav:hover {
+      border-color: #64748b;
+      color: #ffffff;
+    }
+
+    .btn-dl-nav {
+      display: inline-flex;
+      align-items: center;
+      padding: 8px 14px;
+      border-radius: 8px;
+      background: var(--cyan);
+      color: #030712;
+      font-size: 0.75rem;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      box-shadow: 0 0 16px rgba(0, 229, 255, 0.35);
+      transition: transform 0.15s, opacity 0.15s;
+    }
+
+    .btn-dl-nav:hover {
+      opacity: 0.92;
+      transform: translateY(-1px);
+    }
+
+    /* HERO */
+    .hero {
+      padding: 46px 18px 42px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      max-width: 960px;
+      margin: 0 auto;
+    }
+
+    .bot-showcase {
+      position: relative;
+      width: 152px;
+      height: 152px;
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .bot-glow {
+      position: absolute;
+      inset: -16px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(0, 229, 255, 0.26) 0%, rgba(118, 255, 3, 0.14) 45%, transparent 72%);
+      filter: blur(14px);
+      pointer-events: none;
+    }
+
+    .bot-orbit {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      animation: rotate-slow 20s linear infinite;
+    }
+
+    .bot-core {
+      position: relative;
+      width: 112px;
+      height: 112px;
+      border-radius: 50%;
+      background: #050a16;
+      border: 2.5px solid var(--cyan);
+      box-shadow: 0 0 26px rgba(0, 229, 255, 0.35), inset 0 0 18px rgba(0, 229, 255, 0.14);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding-bottom: 4px;
+    }
+
+    .bot-tab {
+      margin-top: 2px;
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      color: var(--cyan);
+      background: rgba(15, 23, 42, 0.95);
+      border: 1px solid rgba(0, 229, 255, 0.45);
+      border-radius: 4px;
+      padding: 1px 8px;
+      line-height: 1.3;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 999px;
+      background: rgba(0, 229, 255, 0.1);
+      border: 1px solid rgba(0, 229, 255, 0.32);
+      margin-bottom: 18px;
+      font-size: 0.74rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      color: var(--cyan);
+      text-transform: uppercase;
+      font-family: ui-monospace, monospace;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--lime);
+      box-shadow: 0 0 8px var(--lime);
+      animation: blink-dot 1.6s infinite ease-in-out;
+    }
+
+    .hero-title {
+      font-size: clamp(1.85rem, 5.2vw, 3.35rem);
+      font-weight: 900;
+      line-height: 1.15;
+      letter-spacing: -0.01em;
+      color: #ffffff;
+      margin-bottom: 16px;
+    }
+
+    .hero-accent {
+      display: inline-block;
+      color: var(--cyan);
+      text-shadow: 0 0 18px rgba(0, 229, 255, 0.38);
+    }
+
+    @supports ((-webkit-background-clip: text) or (background-clip: text)) {
+      .hero-accent {
+        background: linear-gradient(90deg, #00e5ff 0%, #5eead4 50%, #76ff03 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+    }
+
+    .hero-subtitle {
+      max-width: 680px;
+      font-size: 1.05rem;
+      color: var(--text-muted);
+      margin-bottom: 30px;
+      line-height: 1.55;
+    }
+
+    .hero-subtitle strong.cyan { color: var(--cyan); }
+    .hero-subtitle strong.lime { color: var(--lime); }
+
+    .cta-row {
+      width: 100%;
+      max-width: 480px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .btn-primary-dl {
+      flex: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 16px 22px;
+      border-radius: 12px;
+      background: linear-gradient(90deg, #00e5ff, #2dd4bf);
+      color: #040814;
+      font-size: 0.9rem;
+      font-weight: 900;
+      letter-spacing: 0.06em;
+      box-shadow: 0 8px 26px rgba(0, 229, 255, 0.32);
+      transition: transform 0.16s, box-shadow 0.16s;
+    }
+
+    .btn-primary-dl:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 30px rgba(0, 229, 255, 0.48);
+    }
+
+    .btn-secondary-dl {
+      flex: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      padding: 15px 20px;
+      border-radius: 12px;
+      background: var(--bg-card);
+      border: 1px solid #293548;
+      color: #ffffff;
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      transition: border-color 0.2s, background-color 0.2s;
+    }
+
+    .btn-secondary-dl:hover {
+      border-color: rgba(118, 255, 3, 0.6);
+      background: #131c31;
+    }
+
+    .specs-row {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: center;
+      gap: 10px 14px;
+      font-size: 0.78rem;
+      font-family: ui-monospace, monospace;
+      color: var(--text-dim);
+    }
+
+    /* SECTIONS */
+    .section {
+      padding: 36px 0 46px;
+    }
+
+    .section-head {
+      text-align: center;
+      margin-bottom: 28px;
+    }
+
+    .section-head h2 {
+      font-size: clamp(1.35rem, 3.2vw, 1.85rem);
+      font-weight: 800;
+      color: #ffffff;
+      margin-bottom: 6px;
+      letter-spacing: 0.02em;
+    }
+
+    .section-head p {
+      color: var(--text-dim);
+      font-size: 0.98rem;
+    }
+
+    /* FEATURES GRID */
+    .features-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 18px;
+    }
+
+    .feature-card {
+      padding: 24px;
+      border-radius: 18px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      transition: border-color 0.2s, transform 0.2s;
+    }
+
+    .feature-card:hover {
+      transform: translateY(-2px);
+      border-color: rgba(0, 229, 255, 0.45);
+    }
+
+    .feature-card.lime:hover { border-color: rgba(118, 255, 3, 0.45); }
+    .feature-card.purple:hover { border-color: rgba(179, 136, 255, 0.45); }
+
+    .feature-icon {
+      width: 46px;
+      height: 46px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 16px;
+    }
+
+    .feature-icon.cyan {
+      background: rgba(0, 229, 255, 0.1);
+      border: 1px solid rgba(0, 229, 255, 0.3);
+      color: var(--cyan);
+    }
+
+    .feature-icon.lime {
+      background: rgba(118, 255, 3, 0.1);
+      border: 1px solid rgba(118, 255, 3, 0.3);
+      color: var(--lime);
+    }
+
+    .feature-icon.purple {
+      background: rgba(179, 136, 255, 0.1);
+      border: 1px solid rgba(179, 136, 255, 0.3);
+      color: var(--purple);
+    }
+
+    .feature-card h3 {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: #ffffff;
+      margin-bottom: 8px;
+    }
+
+    .feature-card p {
+      color: var(--text-muted);
+      font-size: 0.94rem;
+      line-height: 1.5;
+    }
+
+    /* GUIDE BOX */
+    .guide-wrap {
+      max-width: 860px;
+      margin: 0 auto;
+    }
+
+    .guide-card {
+      padding: 28px 22px;
+      border-radius: 22px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      box-shadow: 0 12px 35px rgba(0, 0, 0, 0.35);
+    }
+
+    .guide-title {
+      font-size: clamp(1.2rem, 3vw, 1.55rem);
+      font-weight: 800;
+      color: #ffffff;
+      text-align: center;
+      margin-bottom: 24px;
+    }
+
+    .steps-list {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .step-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+    }
+
+    .step-badge {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.85rem;
+      font-weight: 900;
+      color: #030712;
+      margin-top: 2px;
+    }
+
+    .step-badge.cyan { background: var(--cyan); }
+    .step-badge.lime { background: var(--lime); }
+    .step-badge.orange { background: var(--orange); }
+
+    .step-content h4 {
+      font-size: 1rem;
+      font-weight: 700;
+      color: #ffffff;
+      margin-bottom: 4px;
+    }
+
+    .step-content p {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+      line-height: 1.5;
+    }
+
+    .compat-box {
+      margin-top: 26px;
+      padding: 20px;
+      border-radius: 16px;
+      background: var(--bg-card-inner);
+      border: 1px solid rgba(0, 229, 255, 0.3);
+    }
+
+    .compat-title {
+      font-size: 0.86rem;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      color: var(--cyan);
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+
+    .compat-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      font-size: 0.93rem;
+      color: var(--text-muted);
+      line-height: 1.48;
+    }
+
+    .compat-list strong.lime { color: var(--lime); }
+    .compat-list strong.white { color: #ffffff; }
+    .compat-note { color: var(--text-dim); font-size: 0.86rem; padding-top: 4px; }
+
+    /* FOOTER */
+    .footer {
+      margin-top: auto;
+      border-top: 1px solid rgba(30, 41, 59, 0.85);
+      background: rgba(7, 10, 20, 0.94);
+      padding: 24px 18px;
+    }
+
+    .footer-inner {
+      max-width: 1100px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 0.8rem;
+      color: var(--text-dim);
+      text-align: center;
+    }
+
+    .footer-links {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-family: ui-monospace, monospace;
+    }
+
+    .footer-links a:hover { color: var(--cyan); }
+    .footer-links .dl-link { color: var(--cyan); font-weight: 700; }
+
+    /* BREAKPOINTS */
+    @media (min-width: 640px) {
+      .btn-github-nav { display: inline-flex; }
+      .cta-row { flex-direction: row; }
+      .guide-card { padding: 34px; }
+      .footer-inner { flex-direction: row; text-align: left; }
+    }
+
+    @media (min-width: 768px) {
+      .features-grid { grid-template-columns: repeat(3, 1fr); }
+    }
+
+    @keyframes pulse-ring {
+      0%, 100% { transform: scale(0.95); opacity: 0.82; }
+      50% { transform: scale(1.06); opacity: 0.4; }
+    }
+
     @keyframes rotate-slow {
       from { transform: rotate(0deg); }
       to { transform: rotate(360deg); }
     }
-    .animate-rotate {
-      animation: rotate-slow 20s linear infinite;
+
+    @keyframes blink-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.45; transform: scale(0.82); }
     }
   </style>
 </head>
-<body class="grid-bg min-h-screen flex flex-col">
+<body>
 
   <!-- NAVBAR -->
-  <header class="border-b border-cyberBorder/60 bg-cyberDark/80 backdrop-blur-md sticky top-0 z-50">
-    <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
-      <div class="flex items-center space-x-3">
-        <!-- SVG Cyber Bot Logo -->
-        <div class="relative w-10 h-10 flex items-center justify-center">
-          <div class="absolute inset-0 rounded-full border-2 border-neonCyan/50 animate-pulse-ring"></div>
-          <svg class="w-8 h-8 text-neonCyan" viewBox="0 0 100 100" fill="none">
-            <circle cx="50" cy="50" r="42" stroke="url(#navGrad)" stroke-width="4"/>
-            <path d="M30 40 L30 30 L40 30" stroke="#00E5FF" stroke-width="3" stroke-linecap="round"/>
-            <path d="M70 40 L70 30 L60 30" stroke="#76FF03" stroke-width="3" stroke-linecap="round"/>
-            <rect x="32" y="38" width="36" height="26" rx="6" fill="#0d1b2a" stroke="#00E5FF" stroke-width="2.5"/>
+  <header class="navbar">
+    <div class="nav-inner">
+      <div class="brand">
+        <div class="brand-icon-wrap">
+          <div class="brand-ring"></div>
+          <svg width="30" height="30" viewBox="0 0 100 100" fill="none" aria-hidden="true">
+            <circle cx="50" cy="50" r="42" stroke="url(#navGrad)" stroke-width="5"/>
+            <path d="M30 40 L30 28 L40 28" stroke="#00E5FF" stroke-width="4" stroke-linecap="round"/>
+            <path d="M70 40 L70 28 L60 28" stroke="#76FF03" stroke-width="4" stroke-linecap="round"/>
+            <rect x="31" y="37" width="38" height="27" rx="7" fill="#0d1b2a" stroke="#00E5FF" stroke-width="3"/>
             <circle cx="43" cy="50" r="4" fill="#76FF03"/>
             <circle cx="57" cy="50" r="4" fill="#76FF03"/>
-            <path d="M44 57 Q50 62 56 57" stroke="#76FF03" stroke-width="2.5" stroke-linecap="round"/>
+            <path d="M44 58 Q50 63 56 58" stroke="#76FF03" stroke-width="3" stroke-linecap="round"/>
             <defs>
               <linearGradient id="navGrad" x1="0" y1="0" x2="100" y2="100">
                 <stop offset="0%" stop-color="#00E5FF"/>
@@ -106,224 +665,198 @@
             </defs>
           </svg>
         </div>
-        <div>
-          <span class="font-orbitron font-bold text-lg tracking-wider text-white">QUIZEARN<span class="text-neonCyan">BOT</span></span>
-          <span class="ml-2 text-xs font-semibold px-2 py-0.5 rounded bg-neonCyan/10 border border-neonCyan/30 text-neonCyan font-mono">v3.0</span>
+        <div class="brand-title">
+          <span class="brand-name font-display">QUIZEARN<span>BOT</span></span>
+          <span class="version-pill">v3.0</span>
         </div>
       </div>
 
-      <div class="flex items-center space-x-3">
-        <a href="https://github.com/THESHMIL0/QuizEarnBot" target="_blank" class="hidden sm:inline-flex items-center space-x-2 text-xs font-rajdhani font-semibold text-slate-300 hover:text-white px-3 py-1.5 rounded-lg border border-slate-700 hover:border-slate-500 transition">
-          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
+      <div class="nav-actions">
+        <a href="https://github.com/THESHMIL0/QuizEarnBot" target="_blank" rel="noopener noreferrer" class="btn-github-nav font-tech">
+          <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
           <span>GitHub</span>
         </a>
-        <a href="#download" class="inline-flex items-center space-x-1.5 text-xs font-orbitron font-bold px-3.5 py-1.5 rounded-lg bg-neonCyan text-black hover:bg-neonCyan/90 shadow-md shadow-neonCyan/30 transition">
-          <span>DOWNLOAD</span>
-        </a>
+        <a href="#download" class="btn-dl-nav font-display">DOWNLOAD</a>
       </div>
     </div>
   </header>
 
   <!-- HERO SECTION -->
-  <section class="relative pt-12 pb-16 px-4 max-w-5xl mx-auto text-center flex-1 flex flex-col justify-center items-center">
-    <!-- Glowing Aura Behind Robot -->
-    <div class="relative mb-6">
-      <div class="absolute -inset-6 bg-gradient-to-r from-neonCyan/20 to-neonLime/20 blur-2xl rounded-full"></div>
-      
-      <!-- Holographic Cyber Ball Animation -->
-      <div class="relative w-36 h-36 mx-auto flex items-center justify-center">
-        <!-- Orbiting Segments -->
-        <svg class="absolute inset-0 w-full h-full animate-rotate" viewBox="0 0 100 100">
-          <circle cx="50" cy="50" r="46" stroke="#00E5FF" stroke-width="1.5" stroke-dasharray="6 14" opacity="0.6"/>
-          <circle cx="50" cy="50" r="41" stroke="#76FF03" stroke-width="2" stroke-dasharray="30 25 15 20" opacity="0.8"/>
-          <circle cx="91" cy="50" r="3" fill="#00E5FF"/>
-          <circle cx="21" cy="21" r="2.5" fill="#76FF03"/>
+  <section class="hero">
+    <div class="bot-showcase">
+      <div class="bot-glow"></div>
+      <svg class="bot-orbit" width="152" height="152" viewBox="0 0 100 100" fill="none" aria-hidden="true">
+        <circle cx="50" cy="50" r="46" stroke="#00E5FF" stroke-width="1.5" stroke-dasharray="6 12" opacity="0.65"/>
+        <circle cx="50" cy="50" r="41" stroke="#76FF03" stroke-width="2" stroke-dasharray="28 24 14 20" opacity="0.85"/>
+        <circle cx="91" cy="50" r="3" fill="#00E5FF"/>
+        <circle cx="21" cy="21" r="2.5" fill="#76FF03"/>
+      </svg>
+      <div class="bot-core">
+        <svg width="62" height="62" viewBox="0 0 100 100" fill="none" aria-hidden="true">
+          <path d="M25 32 L34 42" stroke="#00E5FF" stroke-width="3.5" stroke-linecap="round"/>
+          <circle cx="23" cy="30" r="3.5" fill="#00E5FF"/>
+          <path d="M75 32 L66 42" stroke="#76FF03" stroke-width="3.5" stroke-linecap="round"/>
+          <circle cx="77" cy="30" r="3.5" fill="#76FF03"/>
+          <path d="M30 45 C30 35, 70 35, 70 45 L74 65 C74 74, 26 74, 26 65 Z" fill="#131e33" stroke="#00E5FF" stroke-width="2.5"/>
+          <polygon points="50,38 54,43 50,48 46,43" fill="#00E5FF"/>
+          <rect x="33" y="49" width="34" height="15" rx="5" fill="#050a12" stroke="#76FF03" stroke-width="1.8"/>
+          <circle cx="42" cy="56" r="3.5" fill="#76FF03"/>
+          <circle cx="58" cy="56" r="3.5" fill="#76FF03"/>
+          <path d="M45 67 Q50 71 55 67" stroke="#76FF03" stroke-width="2.2" stroke-linecap="round"/>
         </svg>
-
-        <!-- Main Robot Head Center -->
-        <div class="w-28 h-28 rounded-full bg-slate-950/90 border-2 border-neonCyan neon-box-cyan flex flex-col items-center justify-center p-2">
-          <!-- Robot Face SVG -->
-          <svg class="w-16 h-16" viewBox="0 0 100 100" fill="none">
-            <!-- Antennas -->
-            <path d="M25 32 L34 42" stroke="#00E5FF" stroke-width="3" stroke-linecap="round"/>
-            <circle cx="23" cy="30" r="3.5" fill="#00E5FF"/>
-            <path d="M75 32 L66 42" stroke="#76FF03" stroke-width="3" stroke-linecap="round"/>
-            <circle cx="77" cy="30" r="3.5" fill="#76FF03"/>
-            <!-- Head Shell -->
-            <path d="M30 45 C30 35, 70 35, 70 45 L74 65 C74 74, 26 74, 26 65 Z" fill="#131e33" stroke="#00E5FF" stroke-width="2.5"/>
-            <!-- Forehead Sensor Gem -->
-            <polygon points="50,38 54,43 50,48 46,43" fill="#00E5FF"/>
-            <!-- Obsidian Visor -->
-            <rect x="33" y="49" width="34" height="15" rx="5" fill="#050a12" stroke="#76FF03" stroke-width="1.5"/>
-            <!-- Green Smiling Eyes -->
-            <circle cx="42" cy="56" r="3.5" fill="#76FF03"/>
-            <circle cx="58" cy="56" r="3.5" fill="#76FF03"/>
-            <!-- Happy Mouth -->
-            <path d="M45 66 Q50 70 55 66" stroke="#76FF03" stroke-width="2" stroke-linecap="round"/>
-          </svg>
-          <span class="text-[9px] font-orbitron font-extrabold text-neonCyan tracking-widest -mt-1 bg-slate-900/90 px-2 py-0.5 rounded border border-neonCyan/40">BOT</span>
-        </div>
+        <span class="bot-tab font-display">BOT</span>
       </div>
     </div>
 
-    <!-- Title Badge -->
-    <div class="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-neonCyan/10 border border-neonCyan/30 mb-4">
-      <span class="w-2 h-2 rounded-full bg-neonLime animate-ping"></span>
-      <span class="text-xs font-mono font-bold text-neonCyan tracking-wider uppercase">100% Precision Auto-Pilot • Anti-Ban</span>
+    <div class="status-pill">
+      <span class="status-dot"></span>
+      <span>100% Precision Auto-Pilot &bull; Anti-Ban</span>
     </div>
 
-    <!-- Main Heading -->
-    <h1 class="text-3xl sm:text-5xl md:text-6xl font-orbitron font-black tracking-tight text-white mb-4">
-      AUTO SOLVER & GEM FARMER <br class="hidden sm:inline">
-      <span class="text-transparent bg-clip-text bg-gradient-to-r from-neonCyan via-teal-300 to-neonLime neon-text-cyan">
-        FOR QUIZ & EARN
-      </span>
+    <h1 class="hero-title font-display">
+      AUTO SOLVER &amp; GEM FARMER<br>
+      <span class="hero-accent">FOR QUIZ &amp; EARN</span>
     </h1>
 
-    <p class="max-w-2xl text-slate-300 text-sm sm:text-base font-rajdhani font-medium leading-relaxed mb-8">
-      Never miss a question or waste hours tapping again. QuizEarnBot automatically solves math problems and captchas with 
-      <strong class="text-neonCyan">zero wrong answers</strong>, collects gems, skips ads, and completes 
-      <strong class="text-neonLime">700 & 800 Coin Super Offers</strong> seamlessly while you sleep.
+    <p class="hero-subtitle font-tech">
+      Never miss a question or waste hours tapping again. QuizEarnBot automatically solves math problems and captchas with
+      <strong class="cyan">zero wrong answers</strong>, collects gems, skips ads, and completes
+      <strong class="lime">700 &amp; 800 Coin Super Offers</strong> seamlessly while you sleep.
     </p>
 
-    <!-- DOWNLOAD CTAS -->
-    <div id="download" class="w-full max-w-md flex flex-col sm:flex-row gap-3 justify-center mb-4">
-      <a href="/QuizEarnBot.apk" download="QuizEarnBot.apk" class="flex-1 flex items-center justify-center space-x-3 px-6 py-4 rounded-xl bg-gradient-to-r from-neonCyan to-teal-400 text-slate-950 font-orbitron font-black text-sm tracking-wider shadow-lg shadow-neonCyan/30 hover:shadow-neonCyan/50 hover:scale-[1.02] active:scale-[0.98] transition">
-        <svg class="w-6 h-6 fill-current" viewBox="0 0 24 24"><path d="M17.523 15.3414c-.5511 0-.9993-.4486-.9993-.9997s.4482-.9993.9993-.9993c.551 0 .9993.4482.9993.9993.0001.5511-.4482.9997-.9993.9997m-11.046 0c-.5511 0-.9993-.4486-.9993-.9997s.4482-.9993.9993-.9993c.5511 0 .9993.4482.9993.9993 0 .5511-.4482.9997-.9993.9997m11.4045-6.02l1.996-3.4572c.113-.1958.0461-.4464-.1497-.5595-.1962-.1131-.4465-.0461-.5596.1496l-2.0223 3.503c-1.4886-.6808-3.1492-1.0718-4.9459-1.0718s-3.4573.391-4.9459 1.0718L5.2318 5.4547c-.1131-.1957-.3634-.2627-.5596-.1496-.1958.1131-.2627.3637-.1497.5595l1.996 3.4572C2.9238 11.2351.4238 15.1583 0 19.8222h24c-.4238-4.6639-2.9238-8.5871-6.5235-10.5008"/></svg>
+    <div id="download" class="cta-row">
+      <a href="/QuizEarnBot.apk" download="QuizEarnBot.apk" class="btn-primary-dl font-display">
+        <svg width="22" height="22" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M17.523 15.3414c-.5511 0-.9993-.4486-.9993-.9997s.4482-.9993.9993-.9993c.551 0 .9993.4482.9993.9993.0001.5511-.4482.9997-.9993.9997m-11.046 0c-.5511 0-.9993-.4486-.9993-.9997s.4482-.9993.9993-.9993c.5511 0 .9993.4482.9993.9993 0 .5511-.4482.9997-.9993.9997m11.4045-6.02l1.996-3.4572c.113-.1958.0461-.4464-.1497-.5595-.1962-.1131-.4465-.0461-.5596.1496l-2.0223 3.503c-1.4886-.6808-3.1492-1.0718-4.9459-1.0718s-3.4573.391-4.9459 1.0718L5.2318 5.4547c-.1131-.1957-.3634-.2627-.5596-.1496-.1958.1131-.2627.3637-.1497.5595l1.996 3.4572C2.9238 11.2351.4238 15.1583 0 19.8222h24c-.4238-4.6639-2.9238-8.5871-6.5235-10.5008"/></svg>
         <span>DOWNLOAD APK</span>
       </a>
 
-      <a href="https://github.com/THESHMIL0/QuizEarnBot/raw/main/QuizEarnBot.apk" target="_blank" class="flex-1 flex items-center justify-center space-x-2 px-6 py-4 rounded-xl bg-cyberCard border border-cyberBorder hover:border-neonLime/50 text-white font-orbitron font-bold text-xs tracking-wider hover:bg-slate-800/80 transition">
-        <svg class="w-5 h-5 text-neonLime" fill="currentColor" viewBox="0 0 24 24"><path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
+      <a href="https://github.com/THESHMIL0/QuizEarnBot/raw/main/QuizEarnBot.apk" target="_blank" rel="noopener noreferrer" class="btn-secondary-dl font-display">
+        <svg width="20" height="20" style="color: var(--lime);" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
         <span>GITHUB MIRROR</span>
       </a>
     </div>
 
-    <!-- Quick Specs -->
-    <div class="flex items-center space-x-4 text-xs font-mono text-slate-400">
-      <span>📦 v3.0 (Latest)</span>
-      <span>•</span>
-      <span>📱 Android 7.0+</span>
-      <span>•</span>
-      <span>🛡️ No Root Required</span>
+    <div class="specs-row">
+      <span>&#128230; v3.0 (Latest)</span>
+      <span>&bull;</span>
+      <span>&#128241; Android 7.0 &ndash; 15+</span>
+      <span>&bull;</span>
+      <span>&#128737;&#65039; No Root Required</span>
     </div>
   </section>
 
   <!-- FEATURES GRID -->
-  <section class="max-w-5xl mx-auto px-4 py-12">
-    <div class="text-center mb-10">
-      <h2 class="text-2xl sm:text-3xl font-orbitron font-bold text-white mb-2">POWERED BY NEXT-GEN AUTOMATION</h2>
-      <p class="text-slate-400 font-rajdhani text-sm sm:text-base">Built specifically for Quiz & Earn and CashMafia algorithms.</p>
-    </div>
-
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
-      <!-- Card 1 -->
-      <div class="p-6 rounded-2xl bg-cyberCard border border-cyberBorder/80 hover:border-neonCyan/50 transition">
-        <div class="w-12 h-12 rounded-xl bg-neonCyan/10 border border-neonCyan/30 flex items-center justify-center mb-4 text-neonCyan">
-          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
-        </div>
-        <h3 class="text-lg font-orbitron font-bold text-white mb-2">100% Precision Solver</h3>
-        <p class="text-slate-300 text-xs sm:text-sm font-rajdhani leading-relaxed">
-          Dynamic layout partitioning strictly separates question text from answer buttons. Solves additions, subtractions, multiplications, divisions, and multi-digit number captchas with <strong>zero wrong choices</strong>.
-        </p>
+  <section class="section">
+    <div class="container">
+      <div class="section-head">
+        <h2 class="font-display">POWERED BY NEXT-GEN AUTOMATION</h2>
+        <p class="font-tech">Built specifically for Quiz &amp; Earn and CashMafia algorithms.</p>
       </div>
 
-      <!-- Card 2 -->
-      <div class="p-6 rounded-2xl bg-cyberCard border border-cyberBorder/80 hover:border-neonLime/50 transition">
-        <div class="w-12 h-12 rounded-xl bg-neonLime/10 border border-neonLime/30 flex items-center justify-center mb-4 text-neonLime">
-          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon cyan">
+            <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
+          </div>
+          <h3 class="font-display">100% Precision Solver</h3>
+          <p class="font-tech">
+            Dynamic layout partitioning strictly separates question text from answer buttons. Solves addition, subtraction, multiplication, division, and multi-digit captchas with <strong>zero wrong choices</strong>.
+          </p>
         </div>
-        <h3 class="text-lg font-orbitron font-bold text-white mb-2">Super & Mega Offers</h3>
-        <p class="text-slate-300 text-xs sm:text-sm font-rajdhani leading-relaxed">
-          Automatically unlocks the 25-gem milestone, enters the <strong>700 Super Offer</strong> or <strong>800 Mega Offer</strong>, watches the required reward ad, downloads the target app, and claims your reward.
-        </p>
-      </div>
 
-      <!-- Card 3 -->
-      <div class="p-6 rounded-2xl bg-cyberCard border border-cyberBorder/80 hover:border-neonPurple/50 transition">
-        <div class="w-12 h-12 rounded-xl bg-neonPurple/10 border border-neonPurple/30 flex items-center justify-center mb-4 text-neonPurple">
-          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 10l-2 1m0 0l-2-1m2 1v2.5M20 7l-2 1m2-1l-2-1m2 1v2.5M14 4l-2-1-2 1M4 7l2-1M4 7l2 1M4 7v2.5M12 21l-2-1m2 1l2-1m-2 1v-2.5M6 18l-2-1v-2.5M18 18l2-1v-2.5"/></svg>
+        <div class="feature-card lime">
+          <div class="feature-icon lime">
+            <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          </div>
+          <h3 class="font-display">Super &amp; Mega Offers</h3>
+          <p class="font-tech">
+            Automatically unlocks the 25-gem milestone, enters the <strong>700 Super Offer</strong> or <strong>800 Mega Offer</strong>, watches the required reward ad, installs the app from Play Store, and claims your coins.
+          </p>
         </div>
-        <h3 class="text-lg font-orbitron font-bold text-white mb-2">Holographic Cyber HUD</h3>
-        <p class="text-slate-300 text-xs sm:text-sm font-rajdhani leading-relaxed">
-          Futuristic glowing minimize ball docks quietly to any screen edge. Tap to expand into a sci-fi chamfered mod menu with live direction selector and 1-tap Auto-Download toggle.
-        </p>
+
+        <div class="feature-card purple">
+          <div class="feature-icon purple">
+            <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 10l-2 1m0 0l-2-1m2 1v2.5M20 7l-2 1m2-1l-2-1m2 1v2.5M14 4l-2-1-2 1M4 7l2-1M4 7l2 1M4 7v2.5M12 21l-2-1m2 1l2-1m-2 1v-2.5M6 18l-2-1v-2.5M18 18l2-1v-2.5"/></svg>
+          </div>
+          <h3 class="font-display">Holographic Cyber HUD</h3>
+          <p class="font-tech">
+            Futuristic glowing minimize ball docks quietly to any screen edge. Tap to expand into a sci-fi chamfered mod menu with live direction selector and 1-tap Auto-Download switch.
+          </p>
+        </div>
       </div>
     </div>
   </section>
 
-  <!-- STEP BY STEP GUIDE -->
-  <section class="max-w-4xl mx-auto px-4 py-12">
-    <div class="p-8 rounded-3xl bg-cyberCard border border-cyberBorder">
-      <h2 class="text-2xl font-orbitron font-bold text-white mb-6 text-center">HOW TO INSTALL & START IN 60 SECONDS</h2>
-      
-      <div class="space-y-6">
-        <!-- Step 1 -->
-        <div class="flex items-start space-x-4">
-          <div class="w-8 h-8 rounded-full bg-neonCyan text-black font-orbitron font-extrabold flex items-center justify-center flex-shrink-0 text-sm">1</div>
-          <div>
-            <h4 class="font-orbitron font-bold text-white text-base">Download the APK file</h4>
-            <p class="text-slate-300 text-xs sm:text-sm font-rajdhani mt-1">
-              Tap the <strong>Download APK</strong> button on your phone. If Chrome or your browser asks to "Allow installation of unknown apps", click allow.
-            </p>
+  <!-- INSTALL GUIDE -->
+  <section class="section">
+    <div class="container guide-wrap">
+      <div class="guide-card">
+        <h2 class="guide-title font-display">HOW TO INSTALL &amp; START IN 60 SECONDS</h2>
+
+        <div class="steps-list">
+          <div class="step-item">
+            <div class="step-badge cyan font-display">1</div>
+            <div class="step-content">
+              <h4 class="font-display">Download the APK file</h4>
+              <p class="font-tech">
+                Tap <strong>Download APK</strong> above. When finished, open <code>QuizEarnBot.apk</code> and tap <strong>Install</strong> (allow <em>"Install unknown apps"</em> for your browser if asked). It appears on your phone as <strong>Quiz Math Assistant</strong>.
+              </p>
+            </div>
+          </div>
+
+          <div class="step-item">
+            <div class="step-badge lime font-display">2</div>
+            <div class="step-content">
+              <h4 class="font-display">Grant Permissions &amp; Launch</h4>
+              <p class="font-tech">
+                Open <strong>Quiz Math Assistant</strong>: grant <strong>Overlay Permission</strong>, turn ON <strong>Quiz Math Assistant</strong> in Accessibility Services, tap <strong>Disable Battery Optimization</strong>, and tap <strong>"LAUNCH FLOATING HUD"</strong>.
+              </p>
+            </div>
+          </div>
+
+          <div class="step-item">
+            <div class="step-badge orange font-display">3</div>
+            <div class="step-content">
+              <h4 class="font-display">Tap START on the Cyber Ball!</h4>
+              <p class="font-tech">
+                Keep Google Play Store in <strong>English</strong> and your screen unlocked. Open Quiz &amp; Earn or CashMafia, tap the floating ball &rarr; <strong>&#9654; START BOT</strong>, and watch coins roll in.
+              </p>
+            </div>
           </div>
         </div>
 
-        <!-- Step 2 -->
-        <div class="flex items-start space-x-4">
-          <div class="w-8 h-8 rounded-full bg-neonLime text-black font-orbitron font-extrabold flex items-center justify-center flex-shrink-0 text-sm">2</div>
-          <div>
-            <h4 class="font-orbitron font-bold text-white text-base">Grant Permissions &amp; Launch</h4>
-            <p class="text-slate-300 text-xs sm:text-sm font-rajdhani mt-1">
-              Open <strong>Quiz Math Assistant</strong> (installed from <code>QuizEarnBot.apk</code>): allow <strong>Display over other apps</strong>, turn ON <strong>Quiz Math Assistant</strong> in Accessibility, disable Battery Optimization, then tap <strong>"LAUNCH FLOATING HUD"</strong>.
+        <div class="compat-box">
+          <h3 class="compat-title font-display">Device &amp; Brand Setup Tips (All Phones)</h3>
+          <div class="compat-list font-tech">
+            <p>
+              <strong class="lime">&bull; Android 13 / 14 / 15 ("Restricted setting" fix):</strong> If Accessibility won't turn ON, tap <strong>"OPEN APP INFO (ANDROID 13&ndash;15 FIX)"</strong> inside the app &rarr; tap <strong>&#8942;</strong> (3 dots top-right) &rarr; <strong>Allow restricted settings</strong>, then re-enable Accessibility.
+            </p>
+            <p>
+              <strong class="white">&bull; Xiaomi / Redmi / POCO (MIUI / HyperOS):</strong> In App Info &rarr; <em>Other permissions</em>, allow <strong>Display pop-up windows while running in background</strong> + enable <strong>Autostart</strong> + Battery Saver: <em>No restrictions</em>.
+            </p>
+            <p>
+              <strong class="white">&bull; Samsung / Oppo / Realme / Vivo / OnePlus:</strong> Tap <strong>Disable Battery Optimization</strong> inside the app and allow background usage so Android never pauses 2-minute offers.
+            </p>
+            <p class="compat-note">
+              Works on Android 7.0 &ndash; 15+ phones &amp; PC emulators (No root required; Google Play Store needed for Auto-Download).
             </p>
           </div>
-        </div>
-
-        <!-- Step 3 -->
-        <div class="flex items-start space-x-4">
-          <div class="w-8 h-8 rounded-full bg-neonOrange text-black font-orbitron font-extrabold flex items-center justify-center flex-shrink-0 text-sm">3</div>
-          <div>
-            <h4 class="font-orbitron font-bold text-white text-base">Tap START on the Cyber Ball!</h4>
-            <p class="text-slate-300 text-xs sm:text-sm font-rajdhani mt-1">
-              Keep Play Store in <strong>English</strong> and screen unlocked. Open Quiz &amp; Earn or CashMafia, tap the floating ball &rarr; <strong>START BOT</strong>, and watch it solve automatically.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      <!-- ANDROID 13-15 & BRAND COMPATIBILITY BOX -->
-      <div class="mt-8 p-5 rounded-2xl bg-slate-950/80 border border-neonCyan/30">
-        <h3 class="font-orbitron font-bold text-sm text-neonCyan mb-3 uppercase tracking-wider">Device &amp; Brand Setup Tips (All Phones)</h3>
-        <div class="space-y-2.5 text-xs sm:text-sm font-rajdhani text-slate-300">
-          <p>
-            <strong class="text-neonLime">• Android 13 / 14 / 15 ("Restricted setting" fix):</strong> If Accessibility won't toggle ON, tap <strong>"OPEN APP INFO (ANDROID 13–15 FIX)"</strong> inside the app &rarr; tap <strong>&#8942;</strong> (3 dots top-right) &rarr; <strong>Allow restricted settings</strong>, then re-enable Accessibility.
-          </p>
-          <p>
-            <strong class="text-white">• Xiaomi / Redmi / POCO (MIUI / HyperOS):</strong> In App Info &rarr; <em>Other permissions</em>, allow <strong>Display pop-up windows while running in background</strong> + enable <strong>Autostart</strong> + Battery Saver: <em>No restrictions</em>.
-          </p>
-          <p>
-            <strong class="text-white">• Samsung / Oppo / Realme / Vivo / OnePlus:</strong> Tap <strong>Disable Battery Optimization</strong> inside the app so Android does not pause the bot during 2-minute offers.
-          </p>
-          <p class="text-slate-400">
-            Works on Android 7.0 – 15+ phones &amp; PC emulators (No root required; Google Play Store needed for Auto-Download).
-          </p>
         </div>
       </div>
     </div>
   </section>
 
   <!-- FOOTER -->
-  <footer class="border-t border-cyberBorder/60 bg-cyberDark/90 py-8 px-4 mt-auto">
-    <div class="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between text-xs text-slate-400 gap-4">
-      <div class="flex items-center space-x-2">
-        <span class="font-orbitron font-bold text-white">QUIZEARN<span class="text-neonCyan">BOT</span></span>
-        <span>• 100% Free & Open-Source</span>
+  <footer class="footer">
+    <div class="footer-inner">
+      <div>
+        <span class="font-display" style="color: #fff; font-weight: 800;">QUIZEARN<span style="color: var(--cyan);">BOT</span></span>
+        <span> &bull; 100% Free &amp; Open-Source</span>
       </div>
-      <div class="flex items-center space-x-4 font-mono">
-        <a href="https://github.com/THESHMIL0/QuizEarnBot" target="_blank" class="hover:text-neonCyan transition">GitHub Repo</a>
-        <span>•</span>
-        <a href="https://github.com/THESHMIL0/QuizEarnBot/raw/main/QuizEarnBot.apk" class="text-neonCyan hover:underline font-bold">Download Latest APK</a>
+      <div class="footer-links">
+        <a href="https://github.com/THESHMIL0/QuizEarnBot" target="_blank" rel="noopener noreferrer">GitHub Repo</a>
+        <span>&bull;</span>
+        <a href="/QuizEarnBot.apk" download="QuizEarnBot.apk" class="dl-link">Download APK</a>
       </div>
     </div>
   </footer>
