@@ -3052,21 +3052,6 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             }
         }
 
-        boolean hasAdUnavailableToast = false;
-        for (NodeItem item : allNodes) {
-            String t = item.text.trim().toLowerCase();
-            if (t.contains("ad is unavailable") || t.contains("please try again in a moment")) {
-                hasAdUnavailableToast = true;
-                break;
-            }
-        }
-        if (hasAdUnavailableToast) {
-            currentStatus = "Ad Unavailable. Retrying in 4s...";
-            lastTapTime = now + 4000;
-            lastProgressTime = now;
-            return true;
-        }
-
         for (NodeItem item : allNodes) {
             String t = item.text.trim().toLowerCase();
             String d = item.contentDesc.trim().toLowerCase();
@@ -3093,8 +3078,16 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         // If we already tapped Start Offer and are waiting for the ad to load:
         if (offerState == OFFER_STATE_AD_PLAYING) {
             long adWaitElapsed = now - offerStateStartTime;
-            if (adWaitElapsed > 8000) {
-                Log.w(TAG, "Ad failed to load 8s after tapping Start Offer. Restarting app.");
+            if (startOfferBtn != null && (now - lastTapTime > 3000)) {
+                Log.i(TAG, "Still on detail page with Start Offer visible. Retrying Start Offer tap (" + (adWaitElapsed / 1000) + "s)...");
+                currentStatus = "Retrying Start Offer (" + (adWaitElapsed / 1000) + "s)...";
+                tapNode(startOfferBtn);
+                lastTapTime = now + 3500;
+                lastProgressTime = now;
+                return true;
+            }
+            if (adWaitElapsed > 25000) {
+                Log.w(TAG, "Ad failed to load 25s after tapping Start Offer. Restarting app.");
                 currentStatus = "Ad not loaded -> Restarting App";
                 if (goBackBtn != null) tapNode(goBackBtn);
                 restartQuizApp();
