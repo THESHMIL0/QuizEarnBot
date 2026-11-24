@@ -8,6 +8,21 @@ QuizEarnBot_update.exe
 android/build/
 *.idsig
 
+# Temporary XML dumps & runtime screencaps
+*.xml
+*.bak
+*.png
+!logo.png
+!app.ico
+
+# Temporary scratch scripts
+check_*.ps1
+find_*.ps1
+parse_*.ps1
+test_*.ps1
+scratch_*.ps1
+take_*.ps1
+
 # Temporary & editor files
 .vscode/
 scratch/

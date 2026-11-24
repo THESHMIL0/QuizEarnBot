@@ -81,6 +81,11 @@ public class QuizEarnApp : Form
     private Label lblTodaySolved, lblGems, lblCaptcha, lblStats;
     private RichTextBox txtLog;
     private ComboBox cmbTargetApp;
+    private Button btnDirLeft, btnDirRight;
+    private DarkToggleSwitch chkAutoDownloadToggle;
+    private Label lblAutoDownloadStatus;
+    private int offerTargetMode = 1;
+    private volatile bool autoDownloadEnabled = true;
 
     // Booster & Auto-Claimer
     private volatile bool isBoosting = false;
@@ -375,7 +380,7 @@ public class QuizEarnApp : Form
         // Target App + Main Controls Stack
         Panel controlsBlock = new Panel();
         controlsBlock.Dock = DockStyle.Top;
-        controlsBlock.Height = 296;
+        controlsBlock.Height = 380;
         pnlHomeView.Controls.Add(controlsBlock);
         controlsBlock.BringToFront();
 
@@ -406,24 +411,113 @@ public class QuizEarnApp : Form
         };
         controlsBlock.Controls.Add(cmbTargetApp);
 
+        // BOT START BUTTON (Matches Mod Menu)
         btnToggle = new Button();
-        btnToggle.Text = "[ > ]  START BOT";
-        btnToggle.Font = new Font("Segoe UI", 11.5f, FontStyle.Bold);
-        btnToggle.ForeColor = Color.White;
-        btnToggle.BackColor = Color.FromArgb(14, 48, 34);
+        btnToggle.Text = "▶  START BOT";
+        btnToggle.Font = new Font("Segoe UI", 12f, FontStyle.Bold);
+        btnToggle.ForeColor = Color.Black;
+        btnToggle.BackColor = Color.FromArgb(118, 255, 3);
         btnToggle.FlatStyle = FlatStyle.Flat;
-        btnToggle.FlatAppearance.BorderColor = Color.FromArgb(24, 110, 74);
-        btnToggle.FlatAppearance.BorderSize = 1;
+        btnToggle.FlatAppearance.BorderSize = 0;
         btnToggle.Location = new Point(0, 36);
-        btnToggle.Size = new Size(518, 46);
+        btnToggle.Size = new Size(518, 42);
         btnToggle.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         btnToggle.Cursor = Cursors.Hand;
         btnToggle.Click += new EventHandler(BtnToggle_Click);
         controlsBlock.Controls.Add(btnToggle);
 
+        // DIRECTION SECTION (Matches Mod Menu)
+        Panel pnlDirRow = new Panel();
+        pnlDirRow.Location = new Point(0, 84);
+        pnlDirRow.Size = new Size(518, 34);
+        pnlDirRow.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+
+        Label lblDirHdr = new Label();
+        lblDirHdr.Text = "DIRECTION:";
+        lblDirHdr.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
+        lblDirHdr.ForeColor = Color.FromArgb(125, 211, 252);
+        lblDirHdr.Location = new Point(0, 7);
+        lblDirHdr.AutoSize = true;
+        pnlDirRow.Controls.Add(lblDirHdr);
+
+        btnDirLeft = new Button();
+        btnDirLeft.Text = "◀ LEFT (Super 700🪙)";
+        btnDirLeft.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
+        btnDirLeft.FlatStyle = FlatStyle.Flat;
+        btnDirLeft.Location = new Point(90, 2);
+        btnDirLeft.Size = new Size(205, 30);
+        btnDirLeft.Cursor = Cursors.Hand;
+        btnDirLeft.Click += delegate
+        {
+            offerTargetMode = 2;
+            UpdateDirectionButtonStyles();
+            SaveStatsToFile();
+            SyncOfferModeToDevice();
+            Log("[Offer] Direction set to: LEFT (Super Offer 700🪙)");
+        };
+        pnlDirRow.Controls.Add(btnDirLeft);
+
+        btnDirRight = new Button();
+        btnDirRight.Text = "RIGHT ▶ (Mega 800🪙)";
+        btnDirRight.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
+        btnDirRight.FlatStyle = FlatStyle.Flat;
+        btnDirRight.Location = new Point(303, 2);
+        btnDirRight.Size = new Size(215, 30);
+        btnDirRight.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        btnDirRight.Cursor = Cursors.Hand;
+        btnDirRight.Click += delegate
+        {
+            offerTargetMode = 1;
+            UpdateDirectionButtonStyles();
+            SaveStatsToFile();
+            SyncOfferModeToDevice();
+            Log("[Offer] Direction set to: RIGHT (Mega Offer 800🪙)");
+        };
+        pnlDirRow.Controls.Add(btnDirRight);
+        controlsBlock.Controls.Add(pnlDirRow);
+        UpdateDirectionButtonStyles();
+
+        // AUTO DOWNLOAD TOGGLE SECTION (Matches Mod Menu)
+        Panel pnlAutoRow = new Panel();
+        pnlAutoRow.Location = new Point(0, 122);
+        pnlAutoRow.Size = new Size(518, 30);
+        pnlAutoRow.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+
+        Label lblAutoHdr = new Label();
+        lblAutoHdr.Text = "AUTO DOWNLOAD:";
+        lblAutoHdr.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
+        lblAutoHdr.ForeColor = Color.FromArgb(203, 213, 225);
+        lblAutoHdr.Location = new Point(0, 5);
+        lblAutoHdr.AutoSize = true;
+        pnlAutoRow.Controls.Add(lblAutoHdr);
+
+        chkAutoDownloadToggle = new DarkToggleSwitch();
+        chkAutoDownloadToggle.Location = new Point(140, 4);
+        chkAutoDownloadToggle.Checked = autoDownloadEnabled;
+
+        lblAutoDownloadStatus = new Label();
+        lblAutoDownloadStatus.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
+        lblAutoDownloadStatus.Location = new Point(190, 5);
+        lblAutoDownloadStatus.AutoSize = true;
+        lblAutoDownloadStatus.Cursor = Cursors.Hand;
+        lblAutoDownloadStatus.Click += delegate { chkAutoDownloadToggle.Checked = !chkAutoDownloadToggle.Checked; };
+
+        UpdateAutoDownloadStyles();
+
+        chkAutoDownloadToggle.CheckedChanged += delegate
+        {
+            UpdateAutoDownloadStyles();
+            SaveStatsToFile();
+            SyncOfferModeToDevice();
+            Log(string.Format("[Auto Download] Toggle set to: {0}", autoDownloadEnabled ? "ON (Full Auto Download)" : "OFF (Gem Farming Only)"));
+        };
+        pnlAutoRow.Controls.Add(chkAutoDownloadToggle);
+        pnlAutoRow.Controls.Add(lblAutoDownloadStatus);
+        controlsBlock.Controls.Add(pnlAutoRow);
+
         TableLayoutPanel utilityRow = new TableLayoutPanel();
-        utilityRow.Location = new Point(0, 90);
-        utilityRow.Size = new Size(518, 36);
+        utilityRow.Location = new Point(0, 158);
+        utilityRow.Size = new Size(518, 34);
         utilityRow.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         utilityRow.ColumnCount = 3;
         utilityRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33f));
@@ -444,7 +538,7 @@ public class QuizEarnApp : Form
 
         // Offer Claimer + Booster Panel
         pnlBooster = new Panel();
-        pnlBooster.Location = new Point(0, 134);
+        pnlBooster.Location = new Point(0, 198);
         pnlBooster.Size = new Size(518, 86);
         pnlBooster.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         pnlBooster.BackColor = Color.FromArgb(8, 8, 10);
@@ -515,7 +609,7 @@ public class QuizEarnApp : Form
 
         // Live 4-Metric Bar
         TableLayoutPanel statsPanel = new TableLayoutPanel();
-        statsPanel.Location = new Point(0, 226);
+        statsPanel.Location = new Point(0, 290);
         statsPanel.Size = new Size(518, 64);
         statsPanel.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         statsPanel.BackColor = Color.FromArgb(8, 8, 10);
@@ -591,6 +685,12 @@ public class QuizEarnApp : Form
 
         LoadStatsFromFile();
         cmbTargetApp.SelectedIndex = (targetAppPackage == PKG_CASH_MAFIA) ? 1 : 0;
+        UpdateDirectionButtonStyles();
+        if (chkAutoDownloadToggle != null)
+        {
+            chkAutoDownloadToggle.Checked = autoDownloadEnabled;
+            UpdateAutoDownloadStyles();
+        }
         UpdateWatchdogButtonState();
         UpdateDashboard(lastCaptcha);
         UpdateDataDashboard();
@@ -924,6 +1024,9 @@ public class QuizEarnApp : Form
                 autoRecoverBlueStacks = ExtractBool(json, "autoRecoverBlueStacks", true);
                 autoMuteEnabled = ExtractBool(json, "autoMuteEnabled", true);
                 turboSpeedEnabled = ExtractBool(json, "turboSpeedEnabled", true);
+                autoDownloadEnabled = ExtractBool(json, "autoDownloadEnabled", true);
+                offerTargetMode = ExtractInt(json, "offerTargetMode", 1);
+                if (offerTargetMode != 1 && offerTargetMode != 2) offerTargetMode = 1;
 
                 Match mPkg = Regex.Match(json, @"""targetAppPackage"":\s*""([^""]+)""");
                 if (mPkg.Success && IsKnownQuizApp(mPkg.Groups[1].Value)) targetAppPackage = mPkg.Groups[1].Value;
@@ -973,12 +1076,12 @@ public class QuizEarnApp : Form
                 }
 
                 string json = string.Format(
-                    "{{\n  \"todayDate\": \"{0}\",\n  \"todaySolved\": {1},\n  \"totalSolved\": {2},\n  \"gemsEarned\": {3},\n  \"adsClosed\": {4},\n  \"todayCoinsClaimed\": {5},\n  \"totalCoinsClaimed\": {6},\n  \"today25GemsCount\": {7},\n  \"total25GemsCount\": {8},\n  \"todayOffersClaimed\": {9},\n  \"totalOffersClaimed\": {10},\n  \"autoCheckUpdates\": {11},\n  \"autoRecoverBlueStacks\": {12},\n  \"autoMuteEnabled\": {13},\n  \"turboSpeedEnabled\": {14},\n  \"targetAppPackage\": \"{15}\",\n  \"claimsHistory\": [{16}]\n}}",
+                    "{{\n  \"todayDate\": \"{0}\",\n  \"todaySolved\": {1},\n  \"totalSolved\": {2},\n  \"gemsEarned\": {3},\n  \"adsClosed\": {4},\n  \"todayCoinsClaimed\": {5},\n  \"totalCoinsClaimed\": {6},\n  \"today25GemsCount\": {7},\n  \"total25GemsCount\": {8},\n  \"todayOffersClaimed\": {9},\n  \"totalOffersClaimed\": {10},\n  \"autoCheckUpdates\": {11},\n  \"autoRecoverBlueStacks\": {12},\n  \"autoMuteEnabled\": {13},\n  \"turboSpeedEnabled\": {14},\n  \"targetAppPackage\": \"{15}\",\n  \"offerTargetMode\": {16},\n  \"autoDownloadEnabled\": {17},\n  \"claimsHistory\": [{18}]\n}}",
                     DateTime.Now.ToString("yyyy-MM-dd"), todaySolved, totalGems + todaySolved, gemsEarned, adsClosed,
                     todayCoinsClaimed, totalCoinsClaimed, today25GemsCount, total25GemsCount, todayOffersClaimed, totalOffersClaimed,
                     autoCheckUpdates.ToString().ToLower(), autoRecoverBlueStacks.ToString().ToLower(),
                     autoMuteEnabled.ToString().ToLower(), turboSpeedEnabled.ToString().ToLower(),
-                    GetTargetPackage(), histJson.ToString()
+                    GetTargetPackage(), offerTargetMode, autoDownloadEnabled.ToString().ToLower(), histJson.ToString()
                 );
 
                 File.WriteAllText(tmpPath, json, Encoding.UTF8);
@@ -987,6 +1090,72 @@ public class QuizEarnApp : Form
             }
             catch { }
         }
+    }
+
+    private void UpdateDirectionButtonStyles()
+    {
+        if (btnDirLeft == null || btnDirRight == null) return;
+        bool isRight = (offerTargetMode == 1);
+        if (isRight)
+        {
+            btnDirRight.BackColor = Color.FromArgb(8, 42, 58);
+            btnDirRight.ForeColor = Color.FromArgb(0, 229, 255);
+            btnDirRight.FlatAppearance.BorderColor = Color.FromArgb(0, 229, 255);
+            btnDirRight.FlatAppearance.BorderSize = 2;
+
+            btnDirLeft.BackColor = Color.FromArgb(11, 22, 34);
+            btnDirLeft.ForeColor = Color.FromArgb(71, 97, 120);
+            btnDirLeft.FlatAppearance.BorderColor = Color.FromArgb(27, 50, 72);
+            btnDirLeft.FlatAppearance.BorderSize = 1;
+        }
+        else
+        {
+            btnDirLeft.BackColor = Color.FromArgb(8, 42, 58);
+            btnDirLeft.ForeColor = Color.FromArgb(0, 229, 255);
+            btnDirLeft.FlatAppearance.BorderColor = Color.FromArgb(0, 229, 255);
+            btnDirLeft.FlatAppearance.BorderSize = 2;
+
+            btnDirRight.BackColor = Color.FromArgb(11, 22, 34);
+            btnDirRight.ForeColor = Color.FromArgb(71, 97, 120);
+            btnDirRight.FlatAppearance.BorderColor = Color.FromArgb(27, 50, 72);
+            btnDirRight.FlatAppearance.BorderSize = 1;
+        }
+    }
+
+    private void UpdateAutoDownloadStyles()
+    {
+        if (lblAutoDownloadStatus == null || chkAutoDownloadToggle == null) return;
+        autoDownloadEnabled = chkAutoDownloadToggle.Checked;
+        if (autoDownloadEnabled)
+        {
+            lblAutoDownloadStatus.Text = "ON 🟢";
+            lblAutoDownloadStatus.ForeColor = Color.FromArgb(118, 255, 3);
+        }
+        else
+        {
+            lblAutoDownloadStatus.Text = "🔴 OFF";
+            lblAutoDownloadStatus.ForeColor = Color.FromArgb(148, 163, 184);
+        }
+    }
+
+    private void SyncOfferModeToDevice()
+    {
+        try
+        {
+            string[] ports = new string[] { adbPort, "127.0.0.1:5557", "127.0.0.1:5556", "127.0.0.1:5585", "127.0.0.1:5595" };
+            HashSet<string> sent = new HashSet<string>();
+            foreach (string p in ports)
+            {
+                if (!string.IsNullOrEmpty(p) && sent.Add(p))
+                {
+                    RunAdbDevice(p, string.Format("shell am broadcast -a com.quizearn.assistant.SET_OFFER_MODE --ei mode {0}", offerTargetMode));
+                    RunAdbDevice(p, string.Format("shell am start-foreground-service -a com.quizearn.assistant.SET_OFFER_MODE --ei mode {0} -n com.quizearn.assistant/.FloatingOverlayService", offerTargetMode));
+                    RunAdbDevice(p, string.Format("shell am broadcast -a com.quizearn.assistant.SET_AUTO_DOWNLOAD --ez enabled {0}", autoDownloadEnabled ? "true" : "false"));
+                    RunAdbDevice(p, string.Format("shell am start-foreground-service -a com.quizearn.assistant.SET_AUTO_DOWNLOAD --ez enabled {0} -n com.quizearn.assistant/.FloatingOverlayService", autoDownloadEnabled ? "true" : "false"));
+                }
+            }
+        }
+        catch { }
     }
 
     private void AddClaimHistory(string text)
@@ -1079,15 +1248,9 @@ public class QuizEarnApp : Form
                 p.BeginOutputReadLine();
                 p.BeginErrorReadLine();
 
-                bool exited = p.WaitForExit(6000);
-                if (!exited)
+                if (!p.WaitForExit(7000))
                 {
                     try { p.Kill(); } catch { }
-                    try { p.WaitForExit(500); } catch { }
-                }
-                else
-                {
-                    p.WaitForExit();
                 }
 
                 string res = sb.ToString();
@@ -1158,6 +1321,10 @@ public class QuizEarnApp : Form
             ? string.Format("shell am start-foreground-service -a {0}.{1} {2}", PKG_BOT_ASSISTANT, action, OVERLAY_COMPONENT)
             : string.Format("shell am startservice -a {0}.{1} {2}", PKG_BOT_ASSISTANT, action, OVERLAY_COMPONENT);
         RunAdbDevice(deviceId, cmd);
+        if (action == "START")
+        {
+            RunAdbDevice(deviceId, string.Format("shell am broadcast -a com.quizearn.assistant.SET_OFFER_MODE --ei mode {0}", offerTargetMode));
+        }
     }
 
     private void EnsureAccessibilityEnabled(string deviceId, string currentServices)
@@ -1305,7 +1472,7 @@ public class QuizEarnApp : Form
                 if (!ports.Contains(ep)) ports.Add(ep);
             }
         }
-        foreach (int p in new int[] { 5555, 5556, 5565, 5575, 5585, 5595, 5605, 5615, 62001, 21503, 7555, 16384, 58526 })
+        foreach (int p in new int[] { 5555, 5556, 5557, 5565, 5575, 5585, 5595, 5605, 5615, 62001, 21503, 7555, 16384, 58526 })
         {
             string ep = "127.0.0.1:" + p;
             if (!ports.Contains(ep) && IsTcpPortOpen(p)) ports.Add(ep);
@@ -1918,8 +2085,17 @@ public class QuizEarnApp : Form
         try
         {
             RunAdb(string.Format("shell uiautomator dump --compressed {0}", remotePath));
-            string content = RunAdb("shell cat " + remotePath);
-            return (!string.IsNullOrEmpty(content) && content.Contains("<hierarchy")) ? content : "";
+            string localTmp = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cur_dump.xml");
+            try { if (File.Exists(localTmp)) File.Delete(localTmp); } catch { }
+            RunAdb(string.Format("pull {0} \"{1}\"", remotePath, localTmp));
+            if (File.Exists(localTmp))
+            {
+                string content = File.ReadAllText(localTmp, Encoding.UTF8);
+                if (!string.IsNullOrEmpty(content) && content.Contains("<hierarchy"))
+                    return content;
+            }
+            string fallback = RunAdb("shell cat " + remotePath);
+            return (!string.IsNullOrEmpty(fallback) && fallback.Contains("<hierarchy")) ? fallback : "";
         }
         catch { return ""; }
     }
@@ -2047,6 +2223,11 @@ public class QuizEarnApp : Form
 
     private void StartAutoOfferClaimer()
     {
+        if (!autoDownloadEnabled)
+        {
+            Log("[💎 Claimer] Auto Download is turned OFF by toggle switch. Skipping offer download.");
+            return;
+        }
         if (isAutoOffering)
         {
             Log("[💎 Claimer] Auto-Offer Claimer is already running!");
@@ -2237,13 +2418,15 @@ public class QuizEarnApp : Form
                 int tx2 = int.Parse(tm.Groups[4].Value);
                 int ty2 = int.Parse(tm.Groups[5].Value);
 
-                if (tx1 < 50 || tx1 > 220 || (ty2 - ty1) < 15 || (ty2 - ty1) > 100) continue;
+                if (tx1 < 100 || tx1 > 115 || (ty2 - ty1) < 20 || (ty2 - ty1) > 65 || (tx2 - tx1) > 550) continue;
 
-                if (cleanTitle == "Progress" || cleanTitle == "How to Complete" || cleanTitle.Contains("Important Guidelines") ||
+                if (cleanTitle.Length < 3 ||
+                    cleanTitle == "Progress" || cleanTitle == "How to Complete" || cleanTitle.Contains("Important Guidelines") ||
                     cleanTitle == "Load More" || cleanTitle == "Pending Offers" || cleanTitle.Contains("active pending") ||
-                    cleanTitle == "My Super Offers" || cleanTitle == "Refresh offers" || cleanTitle.Contains("Unlocks in") ||
-                    cleanTitle.StartsWith("Installed") || cleanTitle.Contains("ago") || cleanTitle.Contains("Use app for") ||
-                    cleanTitle.EndsWith("tasks"))
+                    cleanTitle.Contains("Pending Offers") || cleanTitle == "My Super Offers" || cleanTitle == "Refresh offers" ||
+                    cleanTitle.Contains("Unlocks in") || cleanTitle.StartsWith("After ") || cleanTitle.Contains("Bonus") ||
+                    cleanTitle.Contains("Proof") || cleanTitle.StartsWith("Installed") || cleanTitle.Contains("ago") ||
+                    cleanTitle.Contains("Use app for") || cleanTitle.EndsWith("tasks"))
                     continue;
 
                 if (ty1 < 100 || ty2 > 1540) continue;
@@ -2254,7 +2437,7 @@ public class QuizEarnApp : Form
                 }
 
                 int cardTop = Math.Max(0, ty1 - 30);
-                int cardBottom = ty1 + 200;
+                int cardBottom = ty1 + 220;
 
                 MatchCollection cardTexts = Regex.Matches(xml, @"<node [^>]*text=""([^""]+)""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
                 List<string> texts = new List<string>();
@@ -2271,6 +2454,9 @@ public class QuizEarnApp : Form
                 }
 
                 string cardContent = string.Join(" | ", texts);
+
+                if (!cardContent.Contains("Installed ") && !Regex.IsMatch(cardContent, @"Installed\s"))
+                    continue;
 
                 int tasksDone = -1;
                 int tasksTotal = -1;
@@ -2336,31 +2522,29 @@ public class QuizEarnApp : Form
         {
             if (string.IsNullOrEmpty(xml)) return false;
 
-            Match nodeMatch = Regex.Match(xml, @"<node\b[^>]*(?:text|content-desc)=""[^""]*Load More[^""]*""[^>]*>", RegexOptions.IgnoreCase);
+            Match nodeMatch = Regex.Match(xml, @"<node\b[^>]*(?:text|content-desc)=""[^""]*Load More[^""]*""[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""[^>]*>", RegexOptions.IgnoreCase);
+            if (!nodeMatch.Success)
+            {
+                nodeMatch = Regex.Match(xml, @"<node\b[^>]*bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""[^>]*(?:text|content-desc)=""[^""]*Load More[^""]*""[^>]*>", RegexOptions.IgnoreCase);
+            }
+
             if (nodeMatch.Success)
             {
-                string tag = nodeMatch.Value;
-                int tapX = 450;
-                int tapY = 1450;
+                int x1 = int.Parse(nodeMatch.Groups[1].Value);
+                int y1 = int.Parse(nodeMatch.Groups[2].Value);
+                int x2 = int.Parse(nodeMatch.Groups[3].Value);
+                int y2 = int.Parse(nodeMatch.Groups[4].Value);
 
-                Match bMatch = Regex.Match(tag, @"bounds=""\[(\d+),(\d+)\]\[(\d+),(\d+)\]""");
-                if (bMatch.Success)
+                // ONLY tap if button has real positive bounds AND is visible on screen!
+                if (x2 > x1 && y2 > y1 && (x2 - x1) > 50 && (y2 - y1) > 15 && y1 >= 200 && y2 <= 1550)
                 {
-                    int x1 = int.Parse(bMatch.Groups[1].Value);
-                    int y1 = int.Parse(bMatch.Groups[2].Value);
-                    int x2 = int.Parse(bMatch.Groups[3].Value);
-                    int y2 = int.Parse(bMatch.Groups[4].Value);
-                    if (x2 > x1 && y2 > y1 && (x2 - x1) > 50 && (y2 - y1) > 15)
-                    {
-                        tapX = (x1 + x2) / 2;
-                        tapY = (y1 + y2) / 2;
-                    }
+                    int tapX = (x1 + x2) / 2;
+                    int tapY = (y1 + y2) / 2;
+                    Log(string.Format("[💎 Claimer] Found visible 'Load More' button at ({0}, {1}). Tapping to reveal additional active offers...", tapX, tapY));
+                    AdbTap(tapX, tapY);
+                    Thread.Sleep(3000);
+                    return true;
                 }
-
-                Log(string.Format("[💎 Claimer] Found 'Load More' button at ({0}, {1}). Tapping to reveal additional active offers...", tapX, tapY));
-                AdbTap(tapX, tapY);
-                Thread.Sleep(3000);
-                return true;
             }
         }
         catch (Exception ex)
@@ -2777,19 +2961,15 @@ public class QuizEarnApp : Form
             Log("[💎 Claimer] Exiting offer details page back to offers list...");
             // Step 1: Tap UI back arrow at top-left (bounds [24,60][84,120], center (54, 90) on 900x1600)
             AdbTapRef(54, 90);
-            Thread.Sleep(1200);
+            Thread.Sleep(1500);
 
-            // Step 2: Fallback keyevent back
-            AdbKey(4);
-            Thread.Sleep(1000);
-
-            // Step 3: Check if still on details page
+            // Step 2: Fallback ONLY if still on details page
             string checkXml = DumpAndReadXml("/sdcard/check_exit.xml");
-            if (!string.IsNullOrEmpty(checkXml) && (checkXml.Contains("REWARDS") || checkXml.Contains("Remove Wrong App") || checkXml.Contains("Initial Install Reward")))
+            if (!string.IsNullOrEmpty(checkXml) && (checkXml.Contains("REWARDS") || checkXml.Contains("Remove Wrong App") || checkXml.Contains("Initial Install Reward") || checkXml.Contains("Total Potential Earnings")))
             {
-                Log("[💎 Claimer] Still on details page! Retrying tap at (54, 90)...");
-                AdbTapRef(54, 90);
-                Thread.Sleep(1500);
+                Log("[💎 Claimer] Still on details page! Retrying back keyevent...");
+                AdbKey(4);
+                Thread.Sleep(1200);
             }
         }
         catch { }
@@ -2856,7 +3036,11 @@ public class QuizEarnApp : Form
                     consecutiveEmptyDumps = 0;
 
                     // SCREEN A: Inside an offer app details page
-                    if (xml.Contains("REWARDS") || xml.Contains("Remove Wrong App") || xml.Contains("Usage Progress") || xml.Contains("Initial Install Reward"))
+                    bool isDetailPage = xml.Contains("REWARDS") || xml.Contains("BONUS REWARDS") || xml.Contains("Remove Wrong App") ||
+                                        xml.Contains("Usage Progress") || xml.Contains("Initial Install Reward") ||
+                                        xml.Contains("Total Potential Earnings") || xml.Contains("to start using it for");
+
+                    if (isDetailPage)
                     {
                         unrecognizedCount = 0;
                         Log("[💎 Claimer] Inside offer app details page. Processing milestones & bonus...");
@@ -2865,7 +3049,7 @@ public class QuizEarnApp : Form
                         Thread.Sleep(1500);
 
                         string verifyXml = DumpAndReadXml("/sdcard/verify_back.xml");
-                        if (!string.IsNullOrEmpty(verifyXml) && (verifyXml.Contains("REWARDS") || verifyXml.Contains("Remove Wrong App") || verifyXml.Contains("Initial Install Reward")))
+                        if (!string.IsNullOrEmpty(verifyXml) && (verifyXml.Contains("REWARDS") || verifyXml.Contains("Remove Wrong App") || verifyXml.Contains("Initial Install Reward") || verifyXml.Contains("Total Potential Earnings")))
                         {
                             Log("[💎 Claimer] Still on detail page. Calling NavigateBackFromOfferDetails()...");
                             NavigateBackFromOfferDetails();
@@ -2874,7 +3058,8 @@ public class QuizEarnApp : Form
                     }
 
                     // SCREEN B: On "My Super Offers" list
-                    if (xml.Contains("My Super Offers") || xml.Contains("Pending Offers") || xml.Contains("How to Complete") || xml.Contains("tasks"))
+                    bool isOffersList = !isDetailPage && (xml.Contains("My Super Offers") || xml.Contains("active pending offers") || (xml.Contains("Pending Offers") && xml.Contains("Watch Tutorial")));
+                    if (isOffersList)
                     {
                         unrecognizedCount = 0;
                         if (xml.Contains("Failed to load offers"))
@@ -2897,11 +3082,6 @@ public class QuizEarnApp : Form
 
                         Log("[💎 Claimer] On 'My Super Offers' list. Scanning for ready apps & bonus rewards...");
 
-                        if (CheckAndClickLoadMore(xml))
-                        {
-                            xml = DumpAndReadXml("/sdcard/offer_flow.xml");
-                        }
-
                         string clickedTitle;
                         bool foundApp = FindAndClickReadyOfferCard(xml, cycleCompletedApps, out clickedTitle);
                         if (foundApp)
@@ -2910,12 +3090,23 @@ public class QuizEarnApp : Form
                             Thread.Sleep(2500);
                             continue;
                         }
+
+                        if (CheckAndClickLoadMore(xml))
+                        {
+                            xml = DumpAndReadXml("/sdcard/offer_flow.xml");
+                            if (FindAndClickReadyOfferCard(xml, cycleCompletedApps, out clickedTitle))
+                            {
+                                lastOpenedTitle = clickedTitle;
+                                Thread.Sleep(2500);
+                                continue;
+                            }
+                        }
                         else
                         {
                             bool foundOnScroll = false;
-                            for (int scrollPass = 1; scrollPass <= 4; scrollPass++)
+                            for (int scrollPass = 1; scrollPass <= 10; scrollPass++)
                             {
-                                Log(string.Format("[💎 Claimer] Scrolling down to find more ready offers (page {0}/4)...", scrollPass));
+                                Log(string.Format("[💎 Claimer] Scrolling down to find more ready offers (page {0}/10)...", scrollPass));
                                 AdbSwipeRef(450, 1200, 450, 400, 350);
                                 Thread.Sleep(2000);
                                 string scrolledXml = DumpAndReadXml("/sdcard/offer_flow.xml");
@@ -2990,7 +3181,7 @@ public class QuizEarnApp : Form
                     if (xml.Contains("captchas for Guaranteed") || xml.Contains("My Offers") || (xml.Contains("Quiz") && xml.Contains("Super Offer")))
                     {
                         unrecognizedCount = 0;
-                        Log("[💎 Claimer] Found Quiz screen. Opening 'My Offers'...");
+                        Log("[💎 Claimer] Found Quiz screen. Opening 'My Super Offers' list...");
                         int tx, ty;
                         if (TryFindNodeBounds(xml, "My Offers", out tx, out ty))
                         {
@@ -3005,22 +3196,39 @@ public class QuizEarnApp : Form
                     }
 
                     // SCREEN D: On Home screen
-                    if (xml.Contains("SUPER OFFER") || (xml.Contains("Guaranteed") && xml.Contains("1,000")) || (xml.Contains("Go to Wallet") && xml.Contains("Tasks")))
+                    if (xml.Contains("SUPER OFFER") || xml.Contains("MEGA OFFER") || (xml.Contains("Guaranteed") && (xml.Contains("1,000") || xml.Contains("800") || xml.Contains("700"))) || (xml.Contains("Go to Wallet") && xml.Contains("Tasks")))
                     {
                         unrecognizedCount = 0;
-                        Log("[💎 Claimer] On Home screen. Tapping Super Offer card...");
-                        int scx, scy;
-                        if (TryFindNodeBounds(xml, "SUPER OFFER", out scx, out scy) ||
-                            TryFindNodeBounds(xml, "1,000", out scx, out scy) ||
-                            TryFindNodeBounds(xml, "Claim", out scx, out scy) ||
-                            TryFindNodeBounds(xml, "Collect", out scx, out scy) ||
-                            TryFindNodeBounds(xml, "Collect Coins", out scx, out scy))
+                        if (offerTargetMode == 1)
                         {
-                            AdbTap(scx, Math.Min(scy + 40, 640));
+                            Log("[💎 Claimer] On Home screen. Tapping RIGHT SIDE Mega Offer card (800🪙)...");
+                            int scx, scy;
+                            if (TryFindNodeBounds(xml, "800", out scx, out scy) || TryFindNodeBounds(xml, "MEGA OFFER", out scx, out scy))
+                            {
+                                AdbTap(scx, Math.Min(scy + 40, 640));
+                            }
+                            else
+                            {
+                                AdbTap((int)(devWidth * 0.72f), (int)(devHeight * 0.22f));
+                            }
                         }
                         else
                         {
-                            AdbTap(265, 570);
+                            Log("[💎 Claimer] On Home screen. Tapping LEFT SIDE Super Offer card (700🪙)...");
+                            int scx, scy;
+                            if (TryFindNodeBounds(xml, "SUPER OFFER", out scx, out scy) ||
+                                TryFindNodeBounds(xml, "1,000", out scx, out scy) ||
+                                TryFindNodeBounds(xml, "700", out scx, out scy) ||
+                                TryFindNodeBounds(xml, "Claim", out scx, out scy) ||
+                                TryFindNodeBounds(xml, "Collect", out scx, out scy) ||
+                                TryFindNodeBounds(xml, "Collect Coins", out scx, out scy))
+                            {
+                                AdbTap(scx, Math.Min(scy + 40, 640));
+                            }
+                            else
+                            {
+                                AdbTap((int)(devWidth * 0.28f), (int)(devHeight * 0.22f));
+                            }
                         }
                         Thread.Sleep(3000);
                         continue;
@@ -3487,7 +3695,11 @@ public class QuizEarnApp : Form
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         QuizEarnApp app = new QuizEarnApp();
-        if (args != null && args.Length > 0 && args[0].ToLower().Contains("auto"))
+        if (args != null && args.Length > 0 && args[0].ToLower().Contains("claim"))
+        {
+            app.Shown += delegate { app.StartAutoOfferClaimer(); };
+        }
+        else if (args != null && args.Length > 0 && args[0].ToLower().Contains("auto"))
         {
             app.Shown += delegate { app.StartBot(); };
         }

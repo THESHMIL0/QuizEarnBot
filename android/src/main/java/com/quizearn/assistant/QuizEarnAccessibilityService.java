@@ -3,8 +3,10 @@ package com.quizearn.assistant;
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.GestureDescription;
 import android.app.ActivityManager;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
@@ -82,8 +84,15 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     private static int verifyScrollAttempts = 0;
     private static volatile long superOfferHomeCooldownUntil = 0; // Block home-screen Super Offer tap after repeated verify failures
     private static volatile long lastFarmerOfferCheckTime = 0; // Gem Farmer 3-second check interval for 25💎 offer status
+    private static volatile boolean isPlayStoreOpenedForOffer = false;
 
-    public static volatile boolean isSuperOfferEnabled = false;
+    public static final int OFFER_MODE_AUTO = 0;   // Prefer Mega Offer (800🪙), fallback to Super Offer (700🪙)
+    public static final int OFFER_MODE_MEGA = 1;   // Mega Offer (800🪙) only
+    public static final int OFFER_MODE_SUPER = 2;  // Super Offer (700🪙) only
+    public static final int OFFER_MODE_OFF = 3;    // Gem Farmer / Disabled
+
+    public static volatile int offerTargetMode = OFFER_MODE_AUTO;
+    public static volatile boolean isSuperOfferEnabled = true;
     public static volatile String preferredQuizPackage = "com.quiz.earn.money.game";
     public static volatile String lastActiveQuizPackage = "";
 
@@ -101,9 +110,22 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         }
     }
 
+    public static void setOfferTargetMode(Context context, int mode) {
+        offerTargetMode = mode;
+        Log.i(TAG, "offerTargetMode (DIRECTION) updated to: " + (mode == OFFER_MODE_MEGA ? "RIGHT" : "LEFT") + " (" + mode + ")");
+        if (context != null) {
+            try {
+                SharedPreferences prefs = context.getSharedPreferences("QuizEarnPrefs", Context.MODE_PRIVATE);
+                prefs.edit().putInt("offer_target_mode", mode).apply();
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to persist offer_target_mode", e);
+            }
+        }
+    }
+
     public static void setSuperOfferEnabled(Context context, boolean enabled) {
         isSuperOfferEnabled = enabled;
-        Log.i(TAG, "isSuperOfferEnabled updated to: " + enabled);
+        Log.i(TAG, "isSuperOfferEnabled (AUTO DOWNLOAD) updated to: " + enabled);
         if (context != null) {
             try {
                 SharedPreferences prefs = context.getSharedPreferences("QuizEarnPrefs", Context.MODE_PRIVATE);
@@ -260,6 +282,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         offerStateStartTime = 0;        // CRITICAL: reset so 8s ad-stall timer never fires immediately after restart
         consecutiveVerifyFailures = 0;  // CRITICAL: reset so verify-failure loop breaks on restart
         isAppNotDetectedToast = false;
+        isPlayStoreOpenedForOffer = false;
         offerTargetPackage = "";
         appIsDuplicate = false;
         downloadedAppCrashCount = 0;
@@ -408,7 +431,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         isServiceActive = true;
         try {
             SharedPreferences prefs = getSharedPreferences("QuizEarnPrefs", Context.MODE_PRIVATE);
-            isSuperOfferEnabled = prefs.getBoolean("super_offer_enabled", false);
+            isSuperOfferEnabled = prefs.getBoolean("super_offer_enabled", true);
+            offerTargetMode = prefs.getInt("offer_target_mode", OFFER_MODE_MEGA);
             preferredQuizPackage = prefs.getString("preferred_quiz_pkg", "com.quiz.earn.money.game");
         } catch (Exception e) {
             Log.e(TAG, "Error loading preferences", e);
@@ -422,7 +446,69 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         if (isUserRunning) {
             startSolving();
         }
+        try {
+            IntentFilter filter = new IntentFilter();
+            filter.addAction("com.quizearn.assistant.SET_OFFER_MODE");
+            filter.addAction("com.quizearn.assistant.SET_AUTO_DOWNLOAD");
+            filter.addAction("com.quizearn.assistant.AUTO_OFFER_ON");
+            filter.addAction("com.quizearn.assistant.AUTO_OFFER_OFF");
+            filter.addAction("com.quizearn.assistant.START");
+            filter.addAction("com.quizearn.assistant.STOP");
+            if (Build.VERSION.SDK_INT >= 33) {
+                registerReceiver(commandReceiver, filter, Context.RECEIVER_EXPORTED);
+            } else {
+                registerReceiver(commandReceiver, filter);
+            }
+        } catch (Throwable t) {
+            Log.e(TAG, "Error registering commandReceiver", t);
+        }
     }
+
+    private final BroadcastReceiver commandReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (intent == null || intent.getAction() == null) return;
+            String action = intent.getAction();
+            if ("com.quizearn.assistant.SET_OFFER_MODE".equals(action)) {
+                int mode = intent.getIntExtra("mode", -1);
+                if (mode == -1 && intent.hasExtra("mode_str")) {
+                    String str = intent.getStringExtra("mode_str");
+                    if ("mega".equalsIgnoreCase(str) || "right".equalsIgnoreCase(str)) mode = OFFER_MODE_MEGA;
+                    else if ("super".equalsIgnoreCase(str) || "left".equalsIgnoreCase(str)) mode = OFFER_MODE_SUPER;
+                    else mode = OFFER_MODE_MEGA;
+                }
+                if (mode == OFFER_MODE_MEGA || mode == OFFER_MODE_SUPER) {
+                    setOfferTargetMode(context, mode);
+                    if (FloatingOverlayService.instance != null) {
+                        FloatingOverlayService.instance.updateDirectionButtons();
+                    }
+                }
+            } else if ("com.quizearn.assistant.SET_AUTO_DOWNLOAD".equals(action)) {
+                boolean enabled = intent.getBooleanExtra("enabled", isSuperOfferEnabled);
+                if (intent.hasExtra("enabled_int")) {
+                    enabled = (intent.getIntExtra("enabled_int", 1) == 1);
+                }
+                setSuperOfferEnabled(context, enabled);
+                if (FloatingOverlayService.instance != null) {
+                    FloatingOverlayService.instance.updateAutoDownloadSwitch();
+                }
+            } else if ("com.quizearn.assistant.AUTO_OFFER_ON".equals(action)) {
+                setSuperOfferEnabled(context, true);
+                if (FloatingOverlayService.instance != null) {
+                    FloatingOverlayService.instance.updateAutoDownloadSwitch();
+                }
+            } else if ("com.quizearn.assistant.AUTO_OFFER_OFF".equals(action)) {
+                setSuperOfferEnabled(context, false);
+                if (FloatingOverlayService.instance != null) {
+                    FloatingOverlayService.instance.updateAutoDownloadSwitch();
+                }
+            } else if ("com.quizearn.assistant.START".equals(action)) {
+                startSolving();
+            } else if ("com.quizearn.assistant.STOP".equals(action)) {
+                stopSolving();
+            }
+        }
+    };
 
     private static volatile String currentActivityName = "";
 
@@ -610,6 +696,25 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
+            // Auto-handle Google Sign-In / Account Chooser dialogs for newly installed offer apps
+            if (pkg.contains("google.android.gms") && !pkg.contains("gms.ads")) {
+                if (offerState == OFFER_STATE_APP_ACTIVE || offerState == OFFER_STATE_INSTALLING ||
+                    (offerTargetPackage != null && !offerTargetPackage.isEmpty())) {
+                    for (NodeItem item : allNodes) {
+                        String t = item.text.trim().toLowerCase();
+                        String d = item.contentDesc.trim().toLowerCase();
+                        if (t.contains("@gmail.com") || d.contains("@gmail.com") ||
+                            t.startsWith("continue as") || d.startsWith("continue as") ||
+                            (item.resId != null && (item.resId.contains("account_name") || item.resId.contains("account_picker")))) {
+                            tapNode(item);
+                            lastTapTime = now + 2000;
+                            currentStatus = "Auto-Logging in with Google...";
+                            return;
+                        }
+                    }
+                }
+            }
+
             if (crashDismissBtn != null) {
                 tapNode(crashDismissBtn);
                 lastTapTime = now + 800;
@@ -648,7 +753,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             boolean isSystemOrSettings = pkg.equals("com.android.systemui") ||
                 pkg.equals("com.android.settings") ||
                 pkg.contains("permissioncontroller") ||
-                pkg.contains("packageinstaller");
+                pkg.contains("packageinstaller") ||
+                (pkg.contains("google.android.gms") && !pkg.contains("gms.ads"));
             boolean isAdActivity = pkg.contains("gms.ads") || pkg.contains("admob") ||
                 pkg.contains("unity3d") || pkg.contains("applovin") ||
                 pkg.contains("ironsource") || pkg.contains("vungle") ||
@@ -681,7 +787,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 if (!isAppCrashStuck && !offerTargetPackage.isEmpty() && pkg.contains(offerTargetPackage)) {
                     externalAppBackCount = 0;
                     offerAppLaunchAttempts = 0;
-                    handleActiveAppUsage(now, screenW, screenH);
+                    handleActiveAppUsage(now, screenW, screenH, allNodes);
                     return;
                 } else if (isQuizApp) {
                     boolean isProgressScreen = false;
@@ -772,92 +878,46 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 externalAppBackCount = 0;
             }
 
-            // 1. Check active quiz elements
-            boolean hasActiveQuiz = false;
-            for (NodeItem item : allNodes) {
-                String t = item.text.trim().toLowerCase();
-                String d = item.contentDesc.trim().toLowerCase();
-                if (t.contains("select the correct number") || d.contains("select the correct number") ||
-                    t.contains("attempts left") || d.contains("attempts left")) {
-                    hasActiveQuiz = true;
-                    break;
-                }
-                int cy = item.rect.centerY();
-                if (cy >= (int)(screenH * 0.10f) && cy <= (int)(screenH * 0.42f)) {
-                    String raw = item.text.trim();
-                    String rawLower = raw.toLowerCase();
-                    boolean isGemOrProgressText = raw.contains("/25") || raw.contains("/ 25") ||
-                        raw.contains("/50") || rawLower.contains("gem") ||
-                        rawLower.contains("unlock") || rawLower.contains("super offer") ||
-                        rawLower.contains("attempt") || rawLower.contains("left");
-                    if (!isGemOrProgressText &&
-                        (mathPattern.matcher(raw).find() || numPattern.matcher(cleanNumText(raw)).matches())) {
-                        hasActiveQuiz = true;
-                        break;
-                    }
-                }
-                if (cy >= (int)(screenH * 0.26f) && cy <= (int)(screenH * 0.68f)) {
-                    String raw = cleanNumText(item.text.trim());
-                    if (numPattern.matcher(raw).matches()) {
-                        hasActiveQuiz = true;
-                        break;
-                    }
-                }
-            }
-
-            // 2. Pre-scan Gem Collection Screen (takes precedence over accidental numeric/ratio matches)
-            boolean hasCollectGem = false;
-            for (NodeItem item : allNodes) {
-                String combined = (item.text.trim().toLowerCase() + " " + item.contentDesc.trim().toLowerCase()).trim();
-                if (combined.contains("collect gem") || combined.contains("collect reward") ||
-                    combined.contains("claim gem") || combined.contains("watch an ad") ||
-                    combined.contains("congratulations") || combined.contains("+1 gem") ||
-                    combined.contains("gems to unlock")) {
-                    hasCollectGem = true;
-                    break;
-                }
-            }
-            if (hasCollectGem) {
-                hasActiveQuiz = false;
-            }
-
-            if (hasActiveQuiz) {
-                if (liveGems >= 25 || is25GemsOnScreen) {
-                    Log.i(TAG, "Quiz active! Resetting 25 gems to 0 and continuing quiz cycle.");
-                    liveGems = 0;
-                    is25GemsOnScreen = false;
-                    hasAlerted25Gems = false;
-                    offerState = OFFER_STATE_IDLE;
-                }
-            }
-
+            // 1. Check Home Screen FIRST
             boolean hasHomeScreen = false;
             for (NodeItem item : allNodes) {
                 String t = item.text.trim().toLowerCase();
                 String d = item.contentDesc.trim().toLowerCase();
                 if (t.contains("hi, ") || d.contains("hi, ") ||
                     t.contains("refer & earn") || t.contains("task partners") ||
-                    t.contains("weekly leaderboard") || t.contains("daily win")) {
+                    t.contains("weekly leaderboard") || t.contains("daily win") ||
+                    t.contains("go to wallet")) {
                     hasHomeScreen = true;
                     break;
                 }
             }
 
-            // 3. Super Offer Milestone Screen Detection (only valid when NOT on home screen)
+            // 2. Check Super/Mega Offer Milestone Screen Detection (when NOT on home screen)
             boolean hasSuperOfferMilestone = false;
-            if (!hasActiveQuiz && !hasCollectGem && !hasHomeScreen) {
+            if (!hasHomeScreen) {
                 for (NodeItem item : allNodes) {
                     String t = item.text.trim().toLowerCase();
                     String d = item.contentDesc.trim().toLowerCase();
-                    if (t.contains("unlock super offer") || t.contains("gems to unlock") || t.contains("watch an ad to collect")) {
+                    if (t.contains("unlock super offer") || t.contains("unlock mega offer") ||
+                        t.contains("gems to unlock") || t.contains("watch an ad to collect")) {
                         continue;
                     }
-                    if (t.contains("start offer") || d.contains("start offer") ||
+                    if (t.contains("mega offer unlocked") || d.contains("mega offer unlocked") ||
+                        t.contains("super offer unlocked") || d.contains("super offer unlocked") ||
+                        t.contains("offer unlocked") || d.contains("offer unlocked") ||
+                        t.contains("go to mega offer") || d.contains("go to mega offer") ||
+                        t.contains("go to super offer") || d.contains("go to super offer") ||
+                        t.contains("complete the mega offer") || d.contains("complete the mega offer") ||
+                        t.contains("complete the super offer") || d.contains("complete the super offer") ||
+                        t.contains("start offer") || d.contains("start offer") ||
                         t.contains("gems collected") || d.contains("gems collected") ||
                         t.contains("how to complete") || d.contains("how to complete") ||
                         (t.contains("super offer") && !t.contains("gems to unlock")) ||
                         (d.contains("super offer") && !d.contains("gems to unlock")) ||
+                        (t.contains("mega offer") && !t.contains("gems to unlock")) ||
+                        (d.contains("mega offer") && !d.contains("gems to unlock")) ||
                         t.contains("guaranteed 1,000 coins") || t.contains("guaranteed 1000 coins") ||
+                        t.contains("guaranteed 800 coins") || t.contains("guaranteed 700 coins") ||
                         t.contains("app usage progress") || d.contains("app usage progress") ||
                         t.contains("watch a video ad") || d.contains("watch a video ad") ||
                         t.contains("install the app") || d.contains("install the app") ||
@@ -873,6 +933,69 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                         hasSuperOfferMilestone = true;
                         break;
                     }
+                }
+            }
+
+            // 3. Pre-scan Gem Collection Screen (takes precedence over accidental numeric/ratio matches)
+            boolean hasCollectGem = false;
+            if (!hasHomeScreen && !hasSuperOfferMilestone) {
+                for (NodeItem item : allNodes) {
+                    String combined = (item.text.trim().toLowerCase() + " " + item.contentDesc.trim().toLowerCase()).trim();
+                    if (combined.contains("collect gem") || combined.contains("collect reward") ||
+                        combined.contains("claim gem") || combined.contains("watch an ad") ||
+                        combined.contains("congratulations") || combined.contains("+1 gem") ||
+                        combined.contains("+1 mega gem") || combined.contains("+1 super gem") ||
+                        combined.contains("mega gem") || combined.contains("super gem") ||
+                        combined.contains("gems to unlock") || combined.contains("gems to mega offer")) {
+                        hasCollectGem = true;
+                        break;
+                    }
+                }
+            }
+
+            // 4. Check active quiz elements (ONLY if not Home, not Milestone, and not Collect Gem)
+            boolean hasActiveQuiz = false;
+            if (!hasHomeScreen && !hasSuperOfferMilestone && !hasCollectGem) {
+                for (NodeItem item : allNodes) {
+                    String t = item.text.trim().toLowerCase();
+                    String d = item.contentDesc.trim().toLowerCase();
+                    if (t.contains("select the correct number") || d.contains("select the correct number") ||
+                        t.contains("attempts left") || d.contains("attempts left")) {
+                        hasActiveQuiz = true;
+                        break;
+                    }
+                    int cy = item.rect.centerY();
+                    if (cy >= (int)(screenH * 0.10f) && cy <= (int)(screenH * 0.42f)) {
+                        String raw = item.text.trim();
+                        String rawLower = raw.toLowerCase();
+                        boolean isGemOrProgressText = raw.contains("/25") || raw.contains("/ 25") ||
+                            raw.contains("/50") || rawLower.contains("gem") ||
+                            rawLower.contains("unlock") || rawLower.contains("super offer") ||
+                            rawLower.contains("mega offer") ||
+                            rawLower.contains("attempt") || rawLower.contains("left");
+                        if (!isGemOrProgressText &&
+                            (mathPattern.matcher(raw).find() || numPattern.matcher(cleanNumText(raw)).matches())) {
+                            hasActiveQuiz = true;
+                            break;
+                        }
+                    }
+                    if (cy >= (int)(screenH * 0.26f) && cy <= (int)(screenH * 0.68f)) {
+                        String raw = cleanNumText(item.text.trim());
+                        if (numPattern.matcher(raw).matches()) {
+                            hasActiveQuiz = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (hasActiveQuiz) {
+                if (liveGems >= 25 || is25GemsOnScreen) {
+                    Log.i(TAG, "Quiz active! Resetting 25 gems to 0 and continuing quiz cycle.");
+                    liveGems = 0;
+                    is25GemsOnScreen = false;
+                    hasAlerted25Gems = false;
+                    offerState = OFFER_STATE_IDLE;
                 }
             }
 
@@ -1228,6 +1351,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             // Home Screen Handling
             boolean isHomeScreen = hasHomeScreen;
             NodeItem homeSuperOfferClaimBtn = null;
+            NodeItem homeMegaOfferClaimBtn = null;
             NodeItem startQuizBtn = null;
             NodeItem rewardPopupBtn = null;
 
@@ -1246,8 +1370,13 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                         rewardPopupBtn = item;
                     }
                 }
-                if (t.equals("claim") || t.equals("claim >") || d.equals("claim") || t.startsWith("claim")) {
-                    if (item.rect.centerX() < screenW / 2) homeSuperOfferClaimBtn = item;
+                if (t.equals("claim") || t.equals("claim >") || t.equals("claim now") || t.equals("claim now >") ||
+                    d.equals("claim") || d.equals("claim now") || t.startsWith("claim")) {
+                    if (item.rect.centerX() < screenW / 2) {
+                        homeSuperOfferClaimBtn = item;
+                    } else {
+                        homeMegaOfferClaimBtn = item;
+                    }
                 }
                 if (t.equals("start quiz") || t.equals("start math quiz") || t.contains("start quiz") ||
                     t.equals("play quiz") || d.contains("start quiz") || d.contains("start math")) {
@@ -1257,10 +1386,46 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             if (homeSuperOfferClaimBtn == null) {
                 for (NodeItem item : allNodes) {
                     String t = item.text.trim().toLowerCase();
-                    if ((t.equals("1,000") || t.equals("1000") || t.equals("super offer")) &&
+                    if ((t.equals("1,000") || t.equals("1000") || t.equals("700") || t.equals("super offer")) &&
                         item.rect.centerX() < screenW / 2 && item.rect.centerY() < screenH * 0.70f) {
                         homeSuperOfferClaimBtn = item;
                         break;
+                    }
+                }
+            }
+            if (homeMegaOfferClaimBtn == null) {
+                for (NodeItem item : allNodes) {
+                    String t = item.text.trim().toLowerCase();
+                    if ((t.equals("800") || t.equals("mega offer")) &&
+                        item.rect.centerX() > screenW / 2 && item.rect.centerY() < screenH * 0.70f) {
+                        homeMegaOfferClaimBtn = item;
+                        break;
+                    }
+                }
+            }
+
+            NodeItem targetOfferClaimBtn = null;
+            String targetOfferName = "Super Offer (Left)";
+            if (offerTargetMode == OFFER_MODE_MEGA) {
+                // TOGGLE ON: STRICTLY RIGHT SIDE OFFER (Mega Offer 800🪙 - Math Quiz)
+                targetOfferClaimBtn = homeMegaOfferClaimBtn;
+                targetOfferName = "Mega Offer (Right Side - 800 Coins)";
+            } else {
+                // TOGGLE OFF: STRICTLY LEFT SIDE OFFER (Super Offer 700🪙 - Captcha)
+                targetOfferClaimBtn = homeSuperOfferClaimBtn;
+                targetOfferName = "Super Offer (Left Side - 700 Coins)";
+            }
+
+            if (targetOfferClaimBtn == null) {
+                for (NodeItem item : allNodes) {
+                    if (item.rect.centerY() > screenH * 0.12f && item.rect.centerY() < screenH * 0.40f) {
+                        if (offerTargetMode == OFFER_MODE_MEGA && item.rect.centerX() > screenW / 2) {
+                            targetOfferClaimBtn = item;
+                            break;
+                        } else if (offerTargetMode != OFFER_MODE_MEGA && item.rect.centerX() < screenW / 2) {
+                            targetOfferClaimBtn = item;
+                            break;
+                        }
                     }
                 }
             }
@@ -1287,26 +1452,42 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
                 if (SystemClock.uptimeMillis() < superOfferHomeCooldownUntil) {
                     long remainingSec = Math.max(1, (superOfferHomeCooldownUntil - SystemClock.uptimeMillis()) / 1000);
-                    currentStatus = "Super Offer cooling down (" + remainingSec + "s)...";
+                    currentStatus = "Offer cooling down (" + remainingSec + "s)...";
                     lastProgressTime = now; // prevent stall restart during cooldown
                     return;
                 }
-                if (homeSuperOfferClaimBtn != null && (liveGems >= 25 || is25GemsOnScreen)) {
+                if (liveGems >= 25 || is25GemsOnScreen) {
                     if (isSuperOfferEnabled) {
-                        tapNode(homeSuperOfferClaimBtn);
+                        if (targetOfferClaimBtn != null) {
+                            tapNode(targetOfferClaimBtn);
+                        } else {
+                            if (offerTargetMode == OFFER_MODE_MEGA) {
+                                tapCoordinates((int)(screenW * 0.72f), (int)(screenH * 0.35f));
+                            } else {
+                                tapCoordinates((int)(screenW * 0.28f), (int)(screenH * 0.35f));
+                            }
+                        }
                         lastTapTime = now + 1500;
                         lastProgressTime = now;
-                        currentStatus = "Entering Super Offer...";
+                        currentStatus = "Entering " + targetOfferName + "...";
                         return;
                     } else {
                         // Gem Farmer mode (Player 3 & 4):
-                        // Tap on 1,000 / Super Offer card every 3 seconds to check if offer completed
+                        // Tap on offer card every 3 seconds to check if offer completed
                         long nowUptime = SystemClock.uptimeMillis();
                         if (nowUptime - lastFarmerOfferCheckTime >= 3000) {
                             lastFarmerOfferCheckTime = nowUptime;
                             currentStatus = "Checking 25💎 Offer status...";
-                            Log.i(TAG, "[GemFarmer] Tapping 1,000 / Super Offer card on Home to check if offer completed.");
-                            tapNode(homeSuperOfferClaimBtn);
+                            Log.i(TAG, "[GemFarmer] Tapping offer card on Home to check if offer completed.");
+                            if (targetOfferClaimBtn != null) {
+                                tapNode(targetOfferClaimBtn);
+                            } else {
+                                if (offerTargetMode == OFFER_MODE_MEGA) {
+                                    tapCoordinates((int)(screenW * 0.72f), (int)(screenH * 0.35f));
+                                } else {
+                                    tapCoordinates((int)(screenW * 0.28f), (int)(screenH * 0.35f));
+                                }
+                            }
                             lastTapTime = now + 1500;
                             lastProgressTime = now;
                             return;
@@ -1324,12 +1505,23 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     lastProgressTime = now;
                     currentStatus = "Starting Quiz Cycle...";
                     return;
-                } else if (homeSuperOfferClaimBtn != null && liveGems < 25
+                } else if (targetOfferClaimBtn != null && liveGems < 25
                         && SystemClock.uptimeMillis() >= superOfferHomeCooldownUntil) {
-                    tapNode(homeSuperOfferClaimBtn);
+                    tapNode(targetOfferClaimBtn);
                     lastTapTime = now + 1500;
                     lastProgressTime = now;
-                    currentStatus = "Starting Quiz Cycle...";
+                    currentStatus = "Starting " + targetOfferName + "...";
+                    return;
+                } else if (liveGems < 25 && SystemClock.uptimeMillis() >= superOfferHomeCooldownUntil) {
+                    if (offerTargetMode == OFFER_MODE_MEGA) {
+                        tapCoordinates((int)(screenW * 0.72f), (int)(screenH * 0.35f));
+                        currentStatus = "Starting Right Offer (Mega 800🪙)...";
+                    } else {
+                        tapCoordinates((int)(screenW * 0.28f), (int)(screenH * 0.35f));
+                        currentStatus = "Starting Left Offer (Super 700🪙)...";
+                    }
+                    lastTapTime = now + 1500;
+                    lastProgressTime = now;
                     return;
                 }
                 return;
@@ -1409,13 +1601,20 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     }
 
                     if (combined.contains("congratulations") || combined.contains("+1 gem") ||
-                        combined.contains("watch an ad to collect") || combined.contains("gems to unlock super offer")) {
+                        combined.contains("+1 mega gem") || combined.contains("+1 super gem") ||
+                        combined.contains("mega gem") || combined.contains("super gem") ||
+                        combined.contains("watch an ad to collect") ||
+                        combined.contains("gems to unlock super offer") ||
+                        combined.contains("gems to unlock mega offer") ||
+                        combined.contains("gems to mega offer")) {
                         isGemCollectionScreen = true;
                     }
 
                     boolean isExplicitCollectBtn = !t.contains("watch an ad") && !d.contains("watch an ad") &&
                         (t.contains("collect gem") || t.contains("collect gems") || t.contains("collect reward") ||
-                         t.contains("claim gem") || d.contains("collect gem") || d.contains("collect reward"));
+                         t.contains("claim gem") || d.contains("collect gem") || d.contains("collect reward") ||
+                         t.contains("collect & continue") || t.contains("collect gem & continue") ||
+                         d.contains("collect gem & continue"));
                     if (isExplicitCollectBtn && item.rect.width() > dp(24) && item.rect.height() > dp(18)) {
                         if (!item.isEnabled) {
                             isButtonLoading = true;
@@ -1441,25 +1640,17 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     if (collectGemScreenStartTime == 0) collectGemScreenStartTime = now;
                     long elapsedOnCollect = now - collectGemScreenStartTime;
 
-                    long stallTimeoutMs = isButtonLoading ? 20000L : 15000L;
-                    if (collectGemTapCount >= 3 || elapsedOnCollect > stallTimeoutMs) {
+                    long stallTimeoutMs = isButtonLoading ? 15000L : 10000L;
+                    if (collectGemTapCount >= 2 || elapsedOnCollect > stallTimeoutMs) {
                         collectGemScreenStartTime = 0;
                         collectGemTapCount = 0;
                         adStartTime = 0;
                         lastProgressTime = now;
                         adReloadCooldownUntil = SystemClock.uptimeMillis() + 8000;
-                        if (collectGemRestartCount >= 1) {
-                            currentStatus = "Ad stalled -> Backing to Home";
-                            collectGemRestartCount = 0;
-                            if (collectGemBackBtn != null) tapNode(collectGemBackBtn);
-                            else performGlobalAction(GLOBAL_ACTION_BACK);
-                            lastTapTime = now + 2000;
-                        } else {
-                            currentStatus = "Ad not loaded -> Restarting App";
-                            collectGemRestartCount++;
-                            restartQuizApp();
-                            lastTapTime = now + 3500;
-                        }
+                        currentStatus = "Ad not loaded -> Restarting App";
+                        collectGemRestartCount++;
+                        restartQuizApp();
+                        lastTapTime = now + 3500;
                         return;
                     }
                     if (hasCollectGemButton && collectGemNode != null) {
@@ -1664,9 +1855,12 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     if (cy < (optMinY - dp(20)) || cy > (optMaxY + dp(30))) continue;
                     if (questionCenterY > 0 && cy <= questionCenterY) continue;
 
-                    String optText = cleanNumText(opt.text);
-                    String optDesc = cleanNumText(opt.contentDesc);
-                    if (optText.equals(targetAnsStr) || optDesc.equals(targetAnsStr)) {
+                    String rawOptText = opt.text != null ? opt.text.trim() : "";
+                    String strippedText = rawOptText.replaceFirst("^(?i)[A-D1-4][\\s\\.\\)\\:\\-]+", "").trim();
+                    String optText = cleanNumText(strippedText);
+                    String optDesc = cleanNumText(opt.contentDesc != null ? opt.contentDesc.trim().replaceFirst("^(?i)[A-D1-4][\\s\\.\\)\\:\\-]+", "").trim() : "");
+                    if (optText.equals(targetAnsStr) || optDesc.equals(targetAnsStr) ||
+                        cleanNumText(rawOptText).equals(targetAnsStr) || cleanNumText(rawOptText).endsWith(targetAnsStr)) {
                         answerButton = opt;
                         break;
                     }
@@ -2148,6 +2342,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             playStoreOpenSeenTime = 0;
             Log.i(TAG, "Entered Google Play Store for Super Offer app.");
         }
+        isPlayStoreOpenedForOffer = true;
 
         lastProgressTime = now;
 
@@ -2236,8 +2431,9 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 if (t.contains("installing") || d.contains("installing") ||
                     t.contains("verifying") || d.contains("verifying") ||
                     t.contains("downloading") || d.contains("downloading") ||
-                    t.contains("waiting for download") || t.equals("pending") ||
-                    t.equals("cancel") || d.equals("cancel") || isPercentProgress) {
+                    t.contains("waiting") || d.contains("waiting") ||
+                    t.contains("pending") || d.contains("pending") ||
+                    t.contains("cancel") || d.contains("cancel") || isPercentProgress) {
                     isPlayStoreActiveInstall = true;
                     activeStatusText = !t.isEmpty() ? item.text.trim() : item.contentDesc.trim();
                 }
@@ -2343,7 +2539,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     currentStatus = "Finalizing Install...";
                     return;
                 }
-                boolean pkgConfirmedInOs = (newPkg != null && !newPkg.isEmpty());
+                boolean pkgConfirmedInOs = (newPkg != null && !newPkg.isEmpty() && isPackageInstalled(newPkg)) ||
+                    (!offerTargetPackage.isEmpty() && isPackageInstalled(offerTargetPackage));
                 long sinceOpenMs = now - playStoreOpenSeenTime;
                 // Wait up to 6s after Open appears if PackageManager has not yet registered the new package
                 if (!pkgConfirmedInOs && sinceOpenMs < 6000) {
@@ -2368,12 +2565,40 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         }
     }
 
-    private void handleActiveAppUsage(long now, int screenW, int screenH) {
+    private void handleActiveAppUsage(long now, int screenW, int screenH, List<NodeItem> allNodes) {
         if (appUsageStartTime == 0) appUsageStartTime = now;
         long elapsedSec = (now - appUsageStartTime) / 1000;
         currentStatus = "Active Usage (" + elapsedSec + "s / 125s)";
 
-        if (now - lastUsageGestureTime > 15000) {
+        // Dismiss onboarding dialogs / accept buttons / login buttons
+        if (allNodes != null && now - lastTapTime > 1500) {
+            for (NodeItem item : allNodes) {
+                String t = item.text.trim().toLowerCase();
+                String d = item.contentDesc.trim().toLowerCase();
+                String id = item.resId != null ? item.resId.toLowerCase() : "";
+                if ((t.contains("sign in with google") || t.contains("log in with google") ||
+                     t.contains("continue with google") || d.contains("sign in with google") ||
+                     d.contains("continue with google") || id.contains("google_login") || id.contains("btn_google")) &&
+                    (item.clickable || item.className.contains("Button") || item.className.contains("View"))) {
+                    tapNode(item);
+                    lastTapTime = now + 2500;
+                    currentStatus = "Tapping Google Sign-In...";
+                    return;
+                }
+                if ((t.equals("get started") || t.equals("continue") || t.equals("next") ||
+                     t.equals("accept") || t.equals("agree") || t.equals("skip") ||
+                     t.equals("start") || t.equals("explore") || t.equals("ok") ||
+                     t.equals("maybe later") || t.equals("not now") ||
+                     d.equals("get started") || d.equals("continue") || d.equals("skip")) &&
+                     (item.clickable || item.className.contains("Button"))) {
+                    tapNode(item);
+                    lastTapTime = now + 2000;
+                    return;
+                }
+            }
+        }
+
+        if (now - lastUsageGestureTime > 12000) {
             swipeCoordinates(screenW / 2, (int)(screenH * 0.65f), screenW / 2, (int)(screenH * 0.35f), 250);
             lastUsageGestureTime = now;
         }
@@ -2383,6 +2608,18 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             offerStateStartTime = now;
             bringQuizAppToFront();
             lastTapTime = now + 2500;
+        }
+    }
+
+    private boolean isPackageInstalled(String packageName) {
+        if (packageName == null || packageName.trim().isEmpty()) return false;
+        try {
+            getPackageManager().getPackageInfo(packageName.trim(), 0);
+            return true;
+        } catch (PackageManager.NameNotFoundException e) {
+            return false;
+        } catch (Exception e) {
+            return false;
         }
     }
 
@@ -2474,7 +2711,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         }
         if (now - lastTapTime < 250) return false;
 
-        int safeBottomCutoffY = (int)(screenH * 0.875f);
+        int safeBottomCutoffY = (int)(screenH * 0.915f);
 
         for (NodeItem item : allNodes) {
             String t = item.text.trim().toLowerCase();
@@ -2508,6 +2745,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 if ((pt.equals("claim") || pt.equals("collect") || pt.equals("collect coins") ||
                      pt.equals("claim now") || pt.equals("claim reward") || pt.equals("collect reward") ||
                      pt.startsWith("claim ") || pt.startsWith("collect ")) &&
+                    (item.clickable || item.className.contains("Button")) &&
                     item.rect.centerY() < safeBottomCutoffY) {
                     if (!pt.contains("watch an ad") && !pt.contains("collect gem")) {
                         pageClaimBtn = item;
@@ -2580,15 +2818,26 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
         // Universal Claim / Collect reward check across all screens
         NodeItem claimBtn = null;
+        boolean isSuperOfferIntroModal = false;
         for (NodeItem item : allNodes) {
-            String t = item.text.trim().toLowerCase();
-            if ((t.equals("claim") || t.equals("collect") || t.equals("collect coins") ||
-                 t.equals("claim now") || t.equals("claim reward") || t.equals("collect reward") ||
-                 t.startsWith("claim ") || t.startsWith("collect ")) &&
-                item.rect.centerY() < safeBottomCutoffY) {
-                if (!t.contains("watch an ad") && !t.contains("collect gem")) {
-                    claimBtn = item;
-                    break;
+            String t = item.text.toLowerCase();
+            if (t.contains("gems collected") || t.contains("watch a video ad") || t.contains("start offer")) {
+                isSuperOfferIntroModal = true;
+                break;
+            }
+        }
+        if (!isSuperOfferIntroModal) {
+            for (NodeItem item : allNodes) {
+                String t = item.text.trim().toLowerCase();
+                if ((t.equals("claim") || t.equals("collect") || t.equals("collect coins") ||
+                     t.equals("claim now") || t.equals("claim reward") || t.equals("collect reward") ||
+                     t.startsWith("claim ") || t.startsWith("collect ")) &&
+                    (item.clickable || item.className.contains("Button")) &&
+                    item.rect.centerY() < safeBottomCutoffY) {
+                    if (!t.contains("watch an ad") && !t.contains("collect gem")) {
+                        claimBtn = item;
+                        break;
+                    }
                 }
             }
         }
@@ -2775,19 +3024,55 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             if (t.equals("go back") || d.equals("go back") || t.contains("go back")) {
                 goBackBtn = item;
             }
-            if ((t.equals("start offer") || d.equals("start offer") || ((t.contains("start offer") || d.contains("start offer")) && !t.contains("restart") && !d.contains("restart")))) {
+            if ((t.equals("start offer") || d.equals("start offer") ||
+                t.contains("go to mega offer") || d.contains("go to mega offer") ||
+                t.contains("go to super offer") || d.contains("go to super offer") ||
+                t.contains("go to offer") || d.contains("go to offer") ||
+                (t.contains("go to") && item.rect.centerY() > (int)(screenH * 0.30f)) ||
+                ((t.contains("start offer") || d.contains("start offer")) && !t.contains("restart") && !d.contains("restart")))) {
                 startOfferBtn = item;
             }
         }
 
+        for (NodeItem item : allNodes) {
+            String t = item.text.trim().toLowerCase();
+            if (t.equals("try again") || t.contains("try again")) {
+                Log.i(TAG, "Tapping 'Try Again' on network/error dialog.");
+                tapNode(item);
+                lastTapTime = now + 2000;
+                lastProgressTime = now;
+                currentStatus = "Tapping Try Again...";
+                return true;
+            }
+        }
+
         String newlyInstalledPkg = null;
-        if (!offerTargetPackage.isEmpty() && isPackageInstalledRecently(offerTargetPackage, currentOfferStartTime > 0 ? currentOfferStartTime : offerStateStartTime)) {
+        if (!offerTargetPackage.isEmpty() && isPackageInstalled(offerTargetPackage) && isPackageInstalledRecently(offerTargetPackage, currentOfferStartTime > 0 ? currentOfferStartTime : offerStateStartTime)) {
             newlyInstalledPkg = offerTargetPackage;
         } else {
             newlyInstalledPkg = detectNewlyInstalledPackage(baselinePackages);
             if ((newlyInstalledPkg == null || newlyInstalledPkg.isEmpty()) && currentOfferStartTime > 0) {
                 newlyInstalledPkg = findMostRecentInstalledPackage(currentOfferStartTime - 10000L);
             }
+        }
+
+        // If we already tapped Start Offer and are waiting for the ad to load:
+        if (offerState == OFFER_STATE_AD_PLAYING) {
+            long adWaitElapsed = now - offerStateStartTime;
+            if (adWaitElapsed > 8000) {
+                Log.w(TAG, "Ad failed to load 8s after tapping Start Offer. Restarting app.");
+                currentStatus = "Ad not loaded -> Restarting App";
+                if (goBackBtn != null) tapNode(goBackBtn);
+                restartQuizApp();
+                offerState = OFFER_STATE_IDLE;
+                offerTargetPackage = "";
+                offerStateStartTime = 0;
+                isPlayStoreOpenedForOffer = false;
+                lastTapTime = now + 3500;
+                return true;
+            }
+            currentStatus = "Loading Offer Ad (" + (adWaitElapsed / 1000) + "s)...";
+            return true;
         }
 
         if (startOfferBtn != null) {
@@ -2813,6 +3098,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     }
                 });
                 offerTargetPackage = "";
+                isPlayStoreOpenedForOffer = false;
                 currentOfferStartTime = System.currentTimeMillis();
                 waitingForInstallStartTime = 0;
                 verifyAttempts = 0;
@@ -2829,44 +3115,95 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         }
 
         if (verifyBtn != null) {
-            // If no app was installed, don't keep tapping verify into an endless failure loop!
-            boolean hasInstalledApp = (newlyInstalledPkg != null && !newlyInstalledPkg.isEmpty()) || !offerTargetPackage.isEmpty();
-            if (!hasInstalledApp) {
-                if (restartOfferBtn != null && restartOfferBtn.rect.centerY() < safeBottomCutoffY) {
-                    currentStatus = "No App Installed -> Restarting Offer...";
-                    tapNode(restartOfferBtn);
-                    offerTargetPackage = "";
-                    offerState = OFFER_STATE_DETAIL_PAGE;
-                    lastTapTime = now + 2500;
-                    lastProgressTime = now;
-                    return true;
-                }
-                if (consecutiveVerifyFailures >= 1) {
-                    currentStatus = "No App Installed -> Backing out...";
-                    if (goBackBtn != null) tapNode(goBackBtn);
-                    else performGlobalAction(GLOBAL_ACTION_BACK);
-                    offerTargetPackage = "";
-                    offerState = OFFER_STATE_IDLE;
-                    lastTapTime = now + 2500;
-                    lastProgressTime = now;
-                    return true;
+            String confirmedInstalledPkg = null;
+            if (newlyInstalledPkg != null && !newlyInstalledPkg.isEmpty() && isPackageInstalled(newlyInstalledPkg)) {
+                confirmedInstalledPkg = newlyInstalledPkg;
+            } else if (!offerTargetPackage.isEmpty() && isPackageInstalled(offerTargetPackage)) {
+                confirmedInstalledPkg = offerTargetPackage;
+            } else {
+                String detectedNow = detectNewlyInstalledPackage(baselinePackages);
+                if (detectedNow != null && !detectedNow.isEmpty() && isPackageInstalled(detectedNow)) {
+                    confirmedInstalledPkg = detectedNow;
+                } else if (currentOfferStartTime > 0) {
+                    String recent = findMostRecentInstalledPackage(currentOfferStartTime - 10000L);
+                    if (recent != null && !recent.isEmpty() && isPackageInstalled(recent)) {
+                        confirmedInstalledPkg = recent;
+                    }
                 }
             }
+            boolean hasInstalledApp = (confirmedInstalledPkg != null && !confirmedInstalledPkg.isEmpty());
+
+            if (!hasInstalledApp) {
+                // If Play Store was NEVER opened for this offer, the ad failed to load or skipped
+                if (!isPlayStoreOpenedForOffer) {
+                    if (waitingForInstallStartTime == 0) waitingForInstallStartTime = now;
+                    long waitNoStoreSec = (now - waitingForInstallStartTime) / 1000;
+                    if (waitNoStoreSec < 5) {
+                        currentStatus = "Waiting for ad/store (" + waitNoStoreSec + "s)...";
+                        lastTapTime = now + 1500;
+                        return true;
+                    }
+                    Log.w(TAG, "Verify screen visible but Play Store was never opened. Backing out to Home.");
+                    currentStatus = "No Ad/Install -> Backing out...";
+                    waitingForInstallStartTime = 0;
+                    if (restartOfferBtn != null && restartOfferBtn.rect.centerY() < safeBottomCutoffY) {
+                        tapNode(restartOfferBtn);
+                        offerState = OFFER_STATE_DETAIL_PAGE;
+                        lastTapTime = now + 2500;
+                        return true;
+                    }
+                    if (goBackBtn != null) {
+                        tapNode(goBackBtn);
+                    } else {
+                        performGlobalAction(GLOBAL_ACTION_BACK);
+                    }
+                    offerState = OFFER_STATE_IDLE;
+                    offerTargetPackage = "";
+                    lastTapTime = now + 2500;
+                    return true;
+                }
+
+                // If no app is installed yet, but Play Store WAS opened, wait for install:
+                if (waitingForInstallStartTime == 0) {
+                    waitingForInstallStartTime = now;
+                }
+                long waitElapsedSec = (now - waitingForInstallStartTime) / 1000;
+
+                // Wait up to 90 seconds for download & installation to finish in background
+                if (waitElapsedSec < 90) {
+                    currentStatus = "Waiting for install (" + waitElapsedSec + "s/90s)...";
+                    lastTapTime = now + 2000;
+                    lastProgressTime = now;
+                    return true;
+                }
+
+                // If 90 seconds elapsed and still no app installed:
+                Log.w(TAG, "Timed out waiting for app installation (90s). Restarting app.");
+                waitingForInstallStartTime = 0;
+                currentStatus = "Install timed out -> Restarting App";
+                restartQuizApp();
+                offerTargetPackage = "";
+                offerState = OFFER_STATE_IDLE;
+                isPlayStoreOpenedForOffer = false;
+                lastTapTime = now + 3500;
+                lastProgressTime = now;
+                return true;
+            }
+
+            // An app IS confirmed installed!
+            offerTargetPackage = confirmedInstalledPkg;
+            waitingForInstallStartTime = 0;
 
             // If we are not currently in the middle of verifying, tap "Verify Installation"
             if (offerState != OFFER_STATE_VERIFYING && (now - lastTapTime > 1200)) {
-                if (newlyInstalledPkg != null && !newlyInstalledPkg.isEmpty()) {
-                    offerTargetPackage = newlyInstalledPkg;
-                }
-                currentStatus = "Tapping Verify Installation...";
-                Log.i(TAG, "Tapping Verify Installation button directly.");
+                currentStatus = "App Installed! Verifying...";
+                Log.i(TAG, "Confirmed installed app: " + offerTargetPackage + ". Tapping Verify Installation button directly.");
                 tapNode(verifyBtn);
                 offerState = OFFER_STATE_VERIFYING;
                 offerStateStartTime = now;
                 lastTapTime = now + 2500;
                 lastProgressTime = now;
                 isAppNotDetectedToast = false;
-                waitingForInstallStartTime = 0;
                 verifyScrollAttempts = 0;
                 return true;
             }
@@ -2874,7 +3211,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             // We are verifying: wait for Quiz & Earn to respond or display error
             long verifyingElapsed = now - offerStateStartTime;
             boolean verificationFailed = isAppNotDetected || isAppNotDetectedToast || appIsDuplicate;
-            if (verifyingElapsed > 7500) {
+            if (verifyingElapsed > 12000) {
                 verificationFailed = true;
             }
 
@@ -3030,32 +3367,30 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             }
         }
 
-        // Ad stall guard: only fire when ACTUALLY inside an ad (offerStateStartTime must be set,
-        // and we must NOT be on the detail page with Verify/GoBack buttons visible — that is NOT an ad)
-        if (offerState == OFFER_STATE_AD_PLAYING && offerStateStartTime > 0
-                && (now - offerStateStartTime > 8000)
-                && startOfferBtn == null && verifyBtn == null && goBackBtn == null) {
-            currentStatus = "Ad stalled -> Restarting App";
+        // Ad stall guard: if we are in OFFER_STATE_AD_PLAYING, and 8 seconds have passed without an ad activity opening
+        if (offerState == OFFER_STATE_AD_PLAYING && offerStateStartTime > 0 && (now - offerStateStartTime > 8000)) {
+            Log.w(TAG, "Ad failed to load 8s after Start Offer. Cleanly restarting Quiz app.");
+            currentStatus = "Ad not loaded -> Restarting App";
             restartQuizApp();
             offerState = OFFER_STATE_IDLE;
             offerTargetPackage = "";
-            lastTapTime = now + 4000;
+            offerStateStartTime = 0;
+            isPlayStoreOpenedForOffer = false;
+            lastTapTime = now + 3500;
             return true;
-        }
-        // If offerState is AD_PLAYING but we can see the detail page (Verify/GoBack) → fix state
-        if (offerState == OFFER_STATE_AD_PLAYING && (verifyBtn != null || goBackBtn != null || startOfferBtn != null)) {
-            offerState = OFFER_STATE_DETAIL_PAGE;
-            offerStateStartTime = now; // reset timer
         }
 
         if (hasLoadingButton) {
             if (offerStateStartTime == 0) offerStateStartTime = now;
             long elapsedLoading = now - offerStateStartTime;
-            if (elapsedLoading > 12000) {
-                currentStatus = "Ad stalled -> Restarting App";
+            if (elapsedLoading > 8000) {
+                Log.w(TAG, "Ad loading button stuck for > 8s. Restarting app.");
+                currentStatus = "Ad not loaded -> Restarting App";
                 restartQuizApp();
                 offerState = OFFER_STATE_IDLE;
                 offerTargetPackage = "";
+                offerStateStartTime = 0;
+                isPlayStoreOpenedForOffer = false;
                 lastTapTime = now + 3500;
                 return true;
             }
@@ -3122,6 +3457,9 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     @Override
     public void onDestroy() {
         super.onDestroy();
+        try {
+            unregisterReceiver(commandReceiver);
+        } catch (Throwable ignored) {}
         isRunning = false;
         loopHandler.removeCallbacks(solveLoopRunnable);
         instance = null;
