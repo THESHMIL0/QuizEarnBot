@@ -1,9 +1,12 @@
 # Quiz & Earn Auto-Bot (v3.0) 🤖💎
 
-[![Download APK](https://img.shields.io/badge/Download-QuizEarnBot.apk-00E5FF?style=for-the-badge&logo=android&logoColor=black)](https://github.com/THESHMIL0/QuizEarnBot/raw/main/QuizEarnBot.apk)
-[![Latest Release](https://img.shields.io/badge/Release-v3.0-76FF03?style=for-the-badge&logo=github)](https://github.com/THESHMIL0/QuizEarnBot/releases)
+[![Website](https://img.shields.io/badge/Website-quizearnbot.pages.dev-00E5FF?style=for-the-badge&logo=cloudflare&logoColor=white)](https://quizearnbot.pages.dev)
+[![Download APK](https://img.shields.io/badge/Download-QuizEarnBot.apk-76FF03?style=for-the-badge&logo=android&logoColor=black)](https://quizearnbot.pages.dev/QuizEarnBot.apk)
+[![Latest Release](https://img.shields.io/badge/Release-v3.0-FF6D00?style=for-the-badge&logo=github)](https://github.com/THESHMIL0/QuizEarnBot/releases)
 
 Automated background solver, multi-instance gem farmer, and offer milestone auto-installer for **Quiz & Earn** (`com.quiz.earn.money.game`) and **CashMafia** (`com.rayole.cashmafia2`).
+
+🌐 **Official Download Website**: [https://quizearnbot.pages.dev](https://quizearnbot.pages.dev)
 
 ---
 
