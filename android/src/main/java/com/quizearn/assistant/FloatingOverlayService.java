@@ -237,7 +237,7 @@ public class FloatingOverlayService extends Service {
     }
 
     private void buildBallView() {
-        int ballSize = dp(68);
+        int ballSize = dp(82);
         ballView = new LinearLayout(this);
         ballView.setOrientation(LinearLayout.VERTICAL);
         ballView.setGravity(Gravity.CENTER);
@@ -627,8 +627,8 @@ public class FloatingOverlayService extends Service {
         DisplayMetrics dm = getResources().getDisplayMetrics();
         int screenW = dm.widthPixels;
         int screenH = dm.heightPixels;
-        int viewW = isExpanded ? getMenuWidthPx() : dp(68);
-        int viewH = isExpanded ? Math.max(dp(260), floatView.getHeight()) : dp(68);
+        int viewW = isExpanded ? getMenuWidthPx() : dp(82);
+        int viewH = isExpanded ? Math.max(dp(260), floatView.getHeight()) : dp(82);
 
         int minX = dp(4);
         int maxX = Math.max(minX, screenW - viewW - dp(4));
@@ -727,7 +727,7 @@ public class FloatingOverlayService extends Service {
 
             scanPaint.setColor(Color.parseColor("#092434"));
             scanPaint.setStrokeWidth(dp(1));
-            scanPaint.setAlpha(45);
+            scanPaint.setAlpha(40);
 
             borderPaint.setColor(Color.parseColor("#00E5FF"));
             borderPaint.setStyle(Paint.Style.STROKE);
@@ -749,12 +749,12 @@ public class FloatingOverlayService extends Service {
             int h = getHeight();
             if (w <= 0 || h <= 0) return;
 
-            float p = dp(4); // padding for outer sci-fi brackets
+            float p = dp(6.5f); // Generous padding so floating outer brackets never get clipped
             float right = w - p;
             float bottom = h - p;
-            float cham = dp(13); // 45-degree corner bevel
-            float notchW = dp(38);
-            float notchD = dp(3.2f);
+            float cham = dp(14f); // 45-degree corner bevel
+            float notchW = dp(36f);
+            float notchD = dp(3.5f);
             float midX = w / 2f;
             float midY = h / 2f;
 
@@ -805,7 +805,7 @@ public class FloatingOverlayService extends Service {
             // Subtle Scanlines
             canvas.save();
             canvas.clipPath(clipPath);
-            float step = dp(4.5f);
+            float step = dp(4.0f);
             for (float y = 0; y < h; y += step) {
                 canvas.drawLine(0, y, w, y, scanPaint);
             }
@@ -817,41 +817,46 @@ public class FloatingOverlayService extends Service {
             // 2. Corner Outer Brackets (Exact Match to Reference HUD)
             bracketPaint.setStrokeWidth(dp(2.4f));
 
+            // Floating gap distance from the main border
+            float gap = dp(3.5f);
+
             // Top-Left Bracket: wraps around 45° chamfer
             Path brTL = new Path();
-            brTL.moveTo(p + cham + dp(8), 1);
-            brTL.lineTo(p + cham - dp(1), 1);
-            brTL.lineTo(1, p + cham - dp(1));
-            brTL.lineTo(1, p + cham + dp(8));
+            brTL.moveTo(p + cham + dp(8), p - gap);
+            brTL.lineTo(p + cham, p - gap);
+            brTL.lineTo(p - gap, p + cham);
+            brTL.lineTo(p - gap, p + cham + dp(8));
             canvas.drawPath(brTL, bracketPaint);
 
             // Top-Right Bracket
             Path brTR = new Path();
-            brTR.moveTo(right - cham - dp(8), 1);
-            brTR.lineTo(right - cham + dp(1), 1);
-            brTR.lineTo(w - 1, p + cham - dp(1));
-            brTR.lineTo(w - 1, p + cham + dp(8));
+            brTR.moveTo(right - cham - dp(8), p - gap);
+            brTR.lineTo(right - cham, p - gap);
+            brTR.lineTo(right + gap, p + cham);
+            brTR.lineTo(right + gap, p + cham + dp(8));
             canvas.drawPath(brTR, bracketPaint);
 
             // Bottom-Left Bracket
             Path brBL = new Path();
-            brBL.moveTo(1, bottom - cham - dp(8));
-            brBL.lineTo(1, bottom - cham + dp(1));
-            brBL.lineTo(p + cham - dp(1), h - 1);
-            brBL.lineTo(p + cham + dp(8), h - 1);
+            brBL.moveTo(p - gap, bottom - cham - dp(8));
+            brBL.lineTo(p - gap, bottom - cham);
+            brBL.lineTo(p + cham, bottom + gap);
+            brBL.lineTo(p + cham + dp(8), bottom + gap);
             canvas.drawPath(brBL, bracketPaint);
 
             // Bottom-Right Bracket
             Path brBR = new Path();
-            brBR.moveTo(w - 1, bottom - cham - dp(8));
-            brBR.lineTo(w - 1, bottom - cham + dp(1));
-            brBR.lineTo(right - cham + dp(1), h - 1);
-            brBR.lineTo(right - cham - dp(8), h - 1);
+            brBR.moveTo(right + gap, bottom - cham - dp(8));
+            brBR.lineTo(right + gap, bottom - cham);
+            brBR.lineTo(right - cham, bottom + gap);
+            brBR.lineTo(right - cham - dp(8), bottom + gap);
             canvas.drawPath(brBR, bracketPaint);
 
-            // Left & Right Center Edge Accent Lines
-            canvas.drawLine(1, midY - dp(8), 1, midY + dp(8), bracketPaint);
-            canvas.drawLine(w - 1, midY - dp(8), w - 1, midY + dp(8), bracketPaint);
+            // Edge Center Accent Lines
+            canvas.drawLine(p - gap, midY - dp(8), p - gap, midY + dp(8), bracketPaint);
+            canvas.drawLine(right + gap, midY - dp(8), right + gap, midY + dp(8), bracketPaint);
+            canvas.drawLine(midX - dp(14), p - gap, midX + dp(14), p - gap, bracketPaint);
+            canvas.drawLine(midX - dp(14), bottom + gap, midX + dp(14), bottom + gap, bracketPaint);
 
             super.onDraw(canvas);
         }
@@ -880,8 +885,8 @@ public class FloatingOverlayService extends Service {
             float u = w / 16f;
 
             // Antenna ears
-            canvas.drawRect(3 * u, 1 * u, 5 * u, 4 * u, paint);
-            canvas.drawRect(11 * u, 1 * u, 13 * u, 4 * u, paint);
+            canvas.drawRect(3.5f * u, 1 * u, 5.5f * u, 4 * u, paint);
+            canvas.drawRect(10.5f * u, 1 * u, 12.5f * u, 4 * u, paint);
 
             // Side cheek bolts
             canvas.drawRect(1 * u, 6 * u, 3 * u, 10 * u, paint);
@@ -891,11 +896,11 @@ public class FloatingOverlayService extends Service {
             canvas.drawRect(3 * u, 4 * u, 13 * u, 13 * u, paint);
 
             // Eye cutouts
-            canvas.drawRect(5 * u, 6.5f * u, 7 * u, 8.5f * u, darkPaint);
-            canvas.drawRect(9 * u, 6.5f * u, 11 * u, 8.5f * u, darkPaint);
+            canvas.drawRect(5 * u, 6.5f * u, 7.5f * u, 9f * u, darkPaint);
+            canvas.drawRect(8.5f * u, 6.5f * u, 11f * u, 9f * u, darkPaint);
 
             // Mouth slot
-            canvas.drawRect(5 * u, 10.5f * u, 11 * u, 11.5f * u, darkPaint);
+            canvas.drawRect(5.5f * u, 10.5f * u, 10.5f * u, 11.5f * u, darkPaint);
         }
     }
 
@@ -963,7 +968,7 @@ public class FloatingOverlayService extends Service {
 
             // Outer Cyber Bracket Rim
             borderPaint.setStyle(Paint.Style.STROKE);
-            borderPaint.setStrokeWidth(dp(1.6f));
+            borderPaint.setStrokeWidth(dp(1.8f));
             if (isChecked) {
                 borderPaint.setColor(Color.parseColor("#00E5FF")); // Cyan outer rim
             } else {
@@ -971,14 +976,40 @@ public class FloatingOverlayService extends Service {
             }
             canvas.drawRoundRect(trackRect, cr, cr, borderPaint);
 
+            // Outer decorative cyber bracket steps around the capsule
+            Paint outerStepPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            outerStepPaint.setStyle(Paint.Style.STROKE);
+            outerStepPaint.setStrokeWidth(dp(1.5f));
+            outerStepPaint.setColor(isChecked ? Color.parseColor("#00E5FF") : Color.parseColor("#1E3A4D"));
+
+            // Left cyber bracket wing
+            Path leftWing = new Path();
+            leftWing.moveTo(trackLeft + dp(10), trackTop - dp(2));
+            leftWing.lineTo(trackLeft - dp(1.5f), trackTop - dp(2));
+            leftWing.lineTo(trackLeft - dp(3.5f), trackTop + dp(4));
+            leftWing.lineTo(trackLeft - dp(3.5f), trackTop + trackH - dp(4));
+            leftWing.lineTo(trackLeft - dp(1.5f), trackTop + trackH + dp(2));
+            leftWing.lineTo(trackLeft + dp(10), trackTop + trackH + dp(2));
+            canvas.drawPath(leftWing, outerStepPaint);
+
+            // Right cyber bracket wing
+            Path rightWing = new Path();
+            rightWing.moveTo(trackLeft + trackW - dp(10), trackTop - dp(2));
+            rightWing.lineTo(trackLeft + trackW + dp(1.5f), trackTop - dp(2));
+            rightWing.lineTo(trackLeft + trackW + dp(3.5f), trackTop + dp(4));
+            rightWing.lineTo(trackLeft + trackW + dp(3.5f), trackTop + trackH - dp(4));
+            rightWing.lineTo(trackLeft + trackW + dp(1.5f), trackTop + trackH + dp(2));
+            rightWing.lineTo(trackLeft + trackW - dp(10), trackTop + trackH + dp(2));
+            canvas.drawPath(rightWing, outerStepPaint);
+
             // 3. Knob & State Text
             float centerY = trackTop + trackH / 2f;
-            float knobRadius = dp(6.8f);
+            float knobRadius = dp(7.0f);
 
             if (isChecked) {
                 // Text "ON" on the left
                 textPaint.setColor(Color.parseColor("#76FF03")); // Neon Lime Green
-                textPaint.setTextSize(dp(11f));
+                textPaint.setTextSize(dp(11.5f));
                 textPaint.setTypeface(Typeface.DEFAULT_BOLD);
                 textPaint.setTextAlign(Paint.Align.CENTER);
                 canvas.drawText("ON", trackLeft + dp(18f), centerY + dp(4f), textPaint);
@@ -988,8 +1019,8 @@ public class FloatingOverlayService extends Service {
 
                 // Halo glow
                 glowPaint.setColor(Color.parseColor("#76FF03"));
-                glowPaint.setAlpha(60);
-                canvas.drawCircle(knobX, centerY, knobRadius + dp(2.5f), glowPaint);
+                glowPaint.setAlpha(70);
+                canvas.drawCircle(knobX, centerY, knobRadius + dp(3.5f), glowPaint);
 
                 // Solid core
                 thumbPaint.setColor(Color.parseColor("#76FF03"));
@@ -997,7 +1028,7 @@ public class FloatingOverlayService extends Service {
 
                 // Center bright spot
                 thumbPaint.setColor(Color.parseColor("#DCFF66"));
-                canvas.drawCircle(knobX, centerY, dp(2.2f), thumbPaint);
+                canvas.drawCircle(knobX, centerY, dp(2.4f), thumbPaint);
             } else {
                 // Text "OFF" on the right
                 textPaint.setColor(Color.parseColor("#64748B")); // Muted Gray
@@ -1013,12 +1044,12 @@ public class FloatingOverlayService extends Service {
             }
 
             // 4. Bottom Accent Cyan Line with notch
-            float lineY = trackTop + trackH + dp(3.5f);
+            float lineY = trackTop + trackH + dp(4.5f);
             Paint linePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
             linePaint.setColor(Color.parseColor("#00E5FF"));
             linePaint.setStrokeWidth(dp(1.2f));
             canvas.drawLine(w * 0.35f, lineY, w * 0.65f, lineY, linePaint);
-            canvas.drawCircle(w * 0.52f, lineY, dp(1.5f), linePaint);
+            canvas.drawCircle(w * 0.5f, lineY, dp(1.6f), linePaint);
         }
     }
 
@@ -1305,22 +1336,22 @@ public class FloatingOverlayService extends Service {
             canvas.drawPath(chPath, chevronPaint);
 
             // 5. BOTTOM INSET TAB WITH "BOT" TEXT
-            float tabW = dp(26f);
-            float tabH = dp(10.0f);
-            float tabTop = cy + discR - dp(10.2f);
+            float tabW = dp(28f);
+            float tabH = dp(11.0f);
+            float tabTop = cy + discR - dp(11.0f);
             RectF tabRect = new RectF(cx - tabW / 2f, tabTop, cx + tabW / 2f, tabTop + tabH);
             float tabR = dp(4.0f);
             canvas.drawRoundRect(tabRect, tabR, tabR, tabPaint);
             canvas.drawRoundRect(tabRect, tabR, tabR, tabStrokePaint);
 
             // Crisp "BOT" text
-            tabTextPaint.setTextSize(dp(7.5f));
-            canvas.drawText("BOT", cx, tabTop + dp(7.2f), tabTextPaint);
+            tabTextPaint.setTextSize(dp(8.0f));
+            canvas.drawText("BOT", cx, tabTop + dp(8.0f), tabTextPaint);
 
             // 6. VECTOR SCI-FI ROBOT HEAD (Centered Perfectly Above Bottom Tab)
             float hx = cx;
-            float hy = cy - dp(2.2f);
-            float u = dp(2.85f); // scaled to fill nicely like reference photo
+            float hy = cy - dp(2.5f);
+            float u = dp(3.1f); // scaled to fill nicely like reference photo
 
             // Antennas
             antennaPaint.setStrokeWidth(dp(1.8f));
