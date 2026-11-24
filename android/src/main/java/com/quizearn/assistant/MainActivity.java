@@ -83,14 +83,14 @@ public class MainActivity extends Activity {
         ));
 
         TextView title = new TextView(this);
-        title.setText("Quiz Math Assistant v2");
+        title.setText("QuizEarnBot v3.0");
         title.setTextColor(Color.WHITE);
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f);
         title.setTypeface(null, Typeface.BOLD);
         title.setGravity(Gravity.CENTER);
 
         TextView subtitle = new TextView(this);
-        subtitle.setText("Universal Android 7–15 & BlueStacks 5 • Floating HUD");
+        subtitle.setText("Universal Android 7–15+ (All Brands) & Emulators");
         subtitle.setTextColor(Color.parseColor("#10B981"));
         subtitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f);
         subtitle.setPadding(0, dp(4), 0, dp(20));
@@ -118,7 +118,7 @@ public class MainActivity extends Activity {
         // 2. Accessibility Service Card
         LinearLayout cardAccess = createCard(
             "2. ACCESSIBILITY SERVICE",
-            "Allows the assistant to solve captchas, handle ads, and automate Play Store installs."
+            "Find 'Quiz Math Assistant' in Accessibility and turn it ON. On Android 13–15, if 'Restricted setting' blocks it: tap Open App Info below -> ⋮ (top right) -> Allow restricted settings."
         );
         txtAccessStatus = createStatusBadge("Checking...");
         btnAccess = createActionButton("ENABLE ACCESSIBILITY", new View.OnClickListener() {
@@ -127,8 +127,21 @@ public class MainActivity extends Activity {
                 openAccessibilitySettingsSafely();
             }
         });
+        Button btnAppInfoFix = createActionButton("OPEN APP INFO (ANDROID 13–15 FIX)", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                openAppInfoSafely();
+            }
+        });
+        LinearLayout.LayoutParams appInfoLp = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+        appInfoLp.setMargins(0, dp(8), 0, 0);
+        btnAppInfoFix.setLayoutParams(appInfoLp);
+
         cardAccess.addView(txtAccessStatus);
         cardAccess.addView(btnAccess);
+        cardAccess.addView(btnAppInfoFix);
         contentCol.addView(cardAccess);
 
         // 3. Super Offer Automation & Target Selector Card
@@ -188,8 +201,8 @@ public class MainActivity extends Activity {
 
         // 4. Battery Optimization Exemption (Crucial for OEM phones & Android 8+)
         LinearLayout cardBattery = createCard(
-            "4. BACKGROUND STABILITY (RECOMMENDED)",
-            "Prevents Android / MIUI / Samsung battery savers from killing the bot during 2-minute offers."
+            "4. BACKGROUND STABILITY & BRAND TIPS",
+            "All phones: Disable battery optimization.\n• Xiaomi/Redmi/POCO: App Info -> Other permissions -> allow 'Display pop-up windows while running in background' + Autostart.\n• Oppo/Realme/Vivo/Samsung: Allow background usage & turn off Deep Sleep."
         );
         txtBatteryStatus = createStatusBadge("Checking...");
         btnBattery = createActionButton("DISABLE BATTERY OPTIMIZATION", new View.OnClickListener() {
@@ -230,7 +243,7 @@ public class MainActivity extends Activity {
         contentCol.addView(launchContainer);
 
         TextView infoText = new TextView(this);
-        infoText.setText("Quick Guide:\n1. Grant Overlay & Accessibility permissions above.\n2. Exempt Battery Optimization on real phones so Android won't stop the service.\n3. Tap 'Launch Floating HUD' and tap START on the bubble.");
+        infoText.setText("Quick Guide:\n1. Grant Overlay permission.\n2. Enable 'Quiz Math Assistant' in Accessibility (use 'Open App Info -> ⋮ -> Allow restricted settings' first on Android 13–15).\n3. Exempt Battery Optimization (and Autostart/Background pop-ups on Xiaomi/Vivo/Oppo).\n4. Keep Play Store in English & screen unlocked, then tap 'Launch Floating HUD'.");
         infoText.setTextColor(Color.parseColor("#9CA3AF"));
         infoText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f);
         infoText.setLineSpacing(dp(4), 1f);
@@ -254,6 +267,15 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void openAppInfoSafely() {
+        try {
+            Intent details = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()));
+            startActivity(details);
+        } catch (Exception e) {
+            Toast.makeText(this, "Open Android Settings > Apps > Quiz Math Assistant.", Toast.LENGTH_LONG).show();
+        }
+    }
+
     private void openOverlaySettingsSafely() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
         try {
@@ -263,12 +285,7 @@ public class MainActivity extends Activity {
             try {
                 startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION));
             } catch (Exception e2) {
-                try {
-                    Intent details = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()));
-                    startActivity(details);
-                } catch (Exception e3) {
-                    Toast.makeText(this, "Enable 'Display over other apps' in Android Settings.", Toast.LENGTH_LONG).show();
-                }
+                openAppInfoSafely();
             }
         }
     }

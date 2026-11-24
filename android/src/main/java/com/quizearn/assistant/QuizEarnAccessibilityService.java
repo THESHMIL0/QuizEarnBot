@@ -26,6 +26,8 @@ import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.util.DisplayMetrics;
 import android.util.Log;
+import android.view.WindowManager;
+import android.view.WindowMetrics;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
@@ -172,6 +174,61 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     private int dp(int value) {
         float density = getResources().getDisplayMetrics().density;
         return Math.round(value * Math.max(0.75f, density));
+    }
+
+    /** Returns full physical display dimensions [width, height] matching screen node/gesture coordinates across OEM nav/cutout bars. */
+    @SuppressWarnings("deprecation")
+    private int[] getRealScreenSize() {
+        try {
+            WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+            if (wm != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    WindowMetrics metrics = wm.getMaximumWindowMetrics();
+                    if (metrics != null) {
+                        Rect bounds = metrics.getBounds();
+                        if (bounds.width() > 0 && bounds.height() > 0) {
+                            return new int[]{bounds.width(), bounds.height()};
+                        }
+                    }
+                } else {
+                    DisplayMetrics realDm = new DisplayMetrics();
+                    wm.getDefaultDisplay().getRealMetrics(realDm);
+                    if (realDm.widthPixels > 0 && realDm.heightPixels > 0) {
+                        return new int[]{realDm.widthPixels, realDm.heightPixels};
+                    }
+                }
+            }
+        } catch (Throwable ignored) {}
+        DisplayMetrics dm = getResources().getDisplayMetrics();
+        return new int[]{dm.widthPixels, dm.heightPixels};
+    }
+
+    private boolean isOemSecurityOrPermissionPkg(String pkg) {
+        if (pkg == null) return false;
+        return pkg.contains("permissioncontroller") ||
+               pkg.contains("packageinstaller") ||
+               pkg.contains("lbe.security.miui") ||
+               pkg.contains("miui.securitycenter") ||
+               pkg.contains("coloros.safecenter") ||
+               pkg.contains("oplus.safecenter") ||
+               pkg.contains("vivo.permissionmanager") ||
+               pkg.contains("iqoo.secure");
+    }
+
+    private boolean isNonOfferSystemPackage(String pkgName) {
+        if (pkgName == null || pkgName.isEmpty()) return true;
+        return isQuizAppPackage(pkgName) ||
+               pkgName.equals("com.quizearn.assistant") ||
+               pkgName.startsWith("com.android.") ||
+               pkgName.startsWith("com.google.android.") ||
+               pkgName.startsWith("com.bluestacks.") ||
+               pkgName.startsWith("com.miui.") ||
+               pkgName.startsWith("com.coloros.") ||
+               pkgName.startsWith("com.oplus.") ||
+               pkgName.startsWith("com.vivo.") ||
+               pkgName.startsWith("com.iqoo.") ||
+               pkgName.startsWith("com.sec.android.") ||
+               pkgName.contains("location.provider");
     }
 
     private final Runnable solveLoopRunnable = new Runnable() {
@@ -634,9 +691,9 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             pkg = getQuizAppPackage(this);
         }
 
-        DisplayMetrics dm = getResources().getDisplayMetrics();
-        int screenW = dm.widthPixels;
-        int screenH = dm.heightPixels;
+        int[] realSize = getRealScreenSize();
+        int screenW = realSize[0];
+        int screenH = realSize[1];
 
         try {
             if (allNodes.isEmpty()) {
@@ -684,8 +741,9 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
-            // Auto-grant runtime permissions for newly installed offer apps
-            if (pkg.contains("permissioncontroller") || pkg.contains("packageinstaller")) {
+            // Auto-grant runtime permissions for newly installed offer apps (Stock Android + Xiaomi/Vivo/Oppo/Realme)
+            if (pkg.contains("permissioncontroller") || pkg.contains("packageinstaller") ||
+                pkg.contains("lbe.security.miui") || pkg.contains("vivo.permissionmanager")) {
                 for (NodeItem item : allNodes) {
                     String t = item.text.trim().toLowerCase();
                     String d = item.contentDesc.trim().toLowerCase();
@@ -754,8 +812,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             boolean isAssistantApp = pkg.equals("com.quizearn.assistant");
             boolean isSystemOrSettings = pkg.equals("com.android.systemui") ||
                 pkg.equals("com.android.settings") ||
-                pkg.contains("permissioncontroller") ||
-                pkg.contains("packageinstaller") ||
+                isOemSecurityOrPermissionPkg(pkg) ||
                 (pkg.contains("google.android.gms") && !pkg.contains("gms.ads"));
             boolean isAdActivity = pkg.contains("gms.ads") || pkg.contains("admob") ||
                 pkg.contains("unity3d") || pkg.contains("applovin") ||
@@ -2424,15 +2481,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             PackageManager pm = getPackageManager();
             List<PackageInfo> installed = pm.getInstalledPackages(0);
             for (PackageInfo pi : installed) {
-                if (!baseline.contains(pi.packageName)) {
-                    if (!pi.packageName.startsWith("com.google.android.") &&
-                        !pi.packageName.startsWith("com.android.") &&
-                        !pi.packageName.startsWith("com.bluestacks.") &&
-                        !pi.packageName.contains("location.provider") &&
-                        !isQuizAppPackage(pi.packageName) &&
-                        !pi.packageName.equals("com.quizearn.assistant")) {
-                        return pi.packageName;
-                    }
+                if (!baseline.contains(pi.packageName) && !isNonOfferSystemPackage(pi.packageName)) {
+                    return pi.packageName;
                 }
             }
         } catch (Exception ignored) {}
@@ -2760,11 +2810,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             long newestTime = 0;
             String newestPkg = null;
             for (PackageInfo p : pkgs) {
-                if (isQuizAppPackage(p.packageName) ||
-                    p.packageName.equals("com.quizearn.assistant") ||
-                    p.packageName.startsWith("com.android.") ||
-                    p.packageName.startsWith("com.google.android.") ||
-                    p.packageName.startsWith("com.bluestacks.")) {
+                if (isNonOfferSystemPackage(p.packageName)) {
                     continue;
                 }
                 if (pm.getLaunchIntentForPackage(p.packageName) == null) continue;

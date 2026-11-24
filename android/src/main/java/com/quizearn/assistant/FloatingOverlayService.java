@@ -34,6 +34,7 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
+import android.view.WindowMetrics;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -214,6 +215,9 @@ public class FloatingOverlayService extends Service {
             WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.RGBA_8888
         );
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            params.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+        }
 
         params.gravity = Gravity.TOP | Gravity.START;
         params.x = dp(16);
@@ -313,7 +317,6 @@ public class FloatingOverlayService extends Service {
         }
         tvTitle.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
 
-        btnMinimize = new Button(this);
         btnMinimize = new Button(this);
         btnMinimize.setText("—");
         btnMinimize.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f);
@@ -617,16 +620,41 @@ public class FloatingOverlayService extends Service {
         }
     }
 
-    private int getMenuWidthPx() {
+    @SuppressWarnings("deprecation")
+    private int[] getRealScreenSize() {
+        try {
+            if (windowManager != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    WindowMetrics metrics = windowManager.getMaximumWindowMetrics();
+                    if (metrics != null) {
+                        android.graphics.Rect b = metrics.getBounds();
+                        if (b.width() > 0 && b.height() > 0) {
+                            return new int[]{b.width(), b.height()};
+                        }
+                    }
+                } else {
+                    DisplayMetrics realDm = new DisplayMetrics();
+                    windowManager.getDefaultDisplay().getRealMetrics(realDm);
+                    if (realDm.widthPixels > 0 && realDm.heightPixels > 0) {
+                        return new int[]{realDm.widthPixels, realDm.heightPixels};
+                    }
+                }
+            }
+        } catch (Throwable ignored) {}
         DisplayMetrics dm = getResources().getDisplayMetrics();
-        return Math.min(dp(350), Math.max(dp(290), (int) (dm.widthPixels * 0.90f)));
+        return new int[]{dm.widthPixels, dm.heightPixels};
+    }
+
+    private int getMenuWidthPx() {
+        int screenW = getRealScreenSize()[0];
+        return Math.min(dp(350), Math.max(dp(290), (int) (screenW * 0.90f)));
     }
 
     private void clampPositionToScreen() {
         if (params == null || floatView == null || windowManager == null) return;
-        DisplayMetrics dm = getResources().getDisplayMetrics();
-        int screenW = dm.widthPixels;
-        int screenH = dm.heightPixels;
+        int[] realSize = getRealScreenSize();
+        int screenW = realSize[0];
+        int screenH = realSize[1];
         int viewW = isExpanded ? getMenuWidthPx() : dp(82);
         int viewH = isExpanded ? Math.max(dp(260), floatView.getHeight()) : dp(82);
 

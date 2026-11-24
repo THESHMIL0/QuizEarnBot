@@ -13,20 +13,22 @@ Automated background solver, multi-instance gem farmer, and offer milestone auto
 ## 📱 Quick Install on Android Phone (For Friends)
 
 ### Step 1: Download
-- Click here to download the latest APK: **[👉 Download QuizEarnBot.apk](https://github.com/THESHMIL0/QuizEarnBot/raw/main/QuizEarnBot.apk)**
-- Open your browser's Downloads and tap **QuizEarnBot.apk**.
+- Click here to download the latest APK: **[👉 Download QuizEarnBot.apk](https://quizearnbot.pages.dev/QuizEarnBot.apk)** (or **[GitHub Mirror](https://github.com/THESHMIL0/QuizEarnBot/raw/main/QuizEarnBot.apk)**)
+- Open your browser's Downloads and tap **QuizEarnBot.apk** (installs as **Quiz Math Assistant**).
 - If prompted, allow **"Install unknown apps"** for your browser.
 
 ### Step 2: Grant Permissions
-1. Open the **QuizEarnBot** app.
-2. Tap **"START BOT"** (or enable permissions when asked):
-   - **Display over other apps** (Allow overlay permission so the Cyber Ball appears).
-   - **Accessibility Service** -> Find **Quiz & Earn Assistant** (or QuizEarnBot) and turn it **ON**.
-   - *(Optional)* Disable Battery Optimization for uninterrupted 24/7 background farming.
+1. Open **Quiz Math Assistant**.
+2. Tap **1. GRANT OVERLAY PERMISSION** (allows the Cyber Ball on top of other apps).
+3. Tap **2. ENABLE ACCESSIBILITY** -> Find **Quiz Math Assistant** and turn it **ON**.
+   - **Android 13 / 14 / 15 ("Restricted setting" fix):** Tap **OPEN APP INFO (ANDROID 13–15 FIX)** inside the app -> tap **`⋮`** (3 dots top-right) -> **Allow restricted settings**, then enable Accessibility.
+4. Tap **DISABLE BATTERY OPTIMIZATION**, then tap **LAUNCH FLOATING HUD**.
+   - **Xiaomi / Redmi / POCO (MIUI / HyperOS):** Also enable **Autostart** and **Display pop-up windows while running in background** in App Info -> *Other permissions*.
+   - **Samsung / Oppo / Realme / Vivo / OnePlus:** Ensure background battery usage is set to **Unrestricted / Allow background activity**.
 
 ### Step 3: Start Earning!
-1. The glowing **Cyber Robot Ball** will appear on the side of your screen.
-2. Open your **Quiz & Earn** or **CashMafia** app.
+1. The glowing **Cyber Robot Ball** will appear on the side of your screen (keep Play Store in **English** and screen unlocked).
+2. Open **Quiz & Earn** or **CashMafia** and tap the ball -> **`▶ START BOT`**.
 3. Tap the floating ball anytime to open the **Cyber HUD Menu**:
    - `◀ LEFT` / `RIGHT ▶`: Choose whether to farm the **Super Offer (700 Coins)** or **Mega Offer (800 Coins)**.
    - **Auto-Download**: 
