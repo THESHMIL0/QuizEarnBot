@@ -667,10 +667,26 @@ public class FloatingOverlayService extends Service {
         params.y = Math.max(minY, Math.min(maxY, params.y));
     }
 
+    private boolean lastUiStateValid = false;
+    private boolean lastUiRunning = false;
+    private int lastUiGems = -2;
+    private int lastUiDir = -1;
+    private boolean lastUiAuto = false;
+
     private void updateUiState() {
         boolean running = QuizEarnAccessibilityService.isRunning;
         int gems = QuizEarnAccessibilityService.liveGems;
-        String gemDisplay = (gems >= 0) ? (gems + "/25") : "0/25";
+        int dir = QuizEarnAccessibilityService.offerTargetMode;
+        boolean auto = QuizEarnAccessibilityService.isSuperOfferEnabled;
+
+        if (lastUiStateValid && running == lastUiRunning && gems == lastUiGems && dir == lastUiDir && auto == lastUiAuto) {
+            return;
+        }
+        lastUiStateValid = true;
+        lastUiRunning = running;
+        lastUiGems = gems;
+        lastUiDir = dir;
+        lastUiAuto = auto;
 
         if (cyberBallView != null) {
             cyberBallView.setState(running, gems);

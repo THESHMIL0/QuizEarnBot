@@ -154,9 +154,11 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     private int externalAppBackCount = 0;
 
     private long collectGemScreenStartTime = 0;
+    private long lastCollectGemTapTime = 0;
     private int collectGemTapCount = 0;
     private int collectGemRestartCount = 0;
     private long lastSeenCollectionScreenTime = 0;
+    private long lastPkgScanTime = 0;
     private long questionWaitingStartTime = 0;
     private String lastWaitingQuestion = "";
     private long emptyNodesStartTime = 0;
@@ -284,6 +286,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             svc.lastProgressTime = System.currentTimeMillis();
             svc.adStartTime = 0;
             svc.collectGemScreenStartTime = 0;
+            svc.lastCollectGemTapTime = 0;
             svc.collectGemTapCount = 0;
             svc.collectGemRestartCount = 0;
             svc.lastSeenCollectionScreenTime = 0;
@@ -370,6 +373,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     instance.lastProgressTime = System.currentTimeMillis();
                     instance.adStartTime = 0;
                     instance.collectGemScreenStartTime = 0;
+                    instance.lastCollectGemTapTime = 0;
                     instance.collectGemTapCount = 0;
                     instance.lastSeenCollectionScreenTime = 0;
                     instance.questionWaitingStartTime = 0;
@@ -470,6 +474,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             instance.lastSolvedTarget = "";
             instance.lastSolveTime = 0;
             instance.collectGemScreenStartTime = 0;
+            instance.lastCollectGemTapTime = 0;
             instance.collectGemTapCount = 0;
             instance.collectGemRestartCount = 0;
             instance.lastSeenCollectionScreenTime = 0;
@@ -756,13 +761,18 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
 
-            // Auto-handle Google Sign-In / Account Chooser dialogs for newly installed offer apps
+            // Auto-handle Google Sign-In / Account Chooser / Phone Number Picker dialogs for newly installed offer apps
             if (pkg.contains("google.android.gms") && !pkg.contains("gms.ads")) {
                 if (offerState == OFFER_STATE_APP_ACTIVE || offerState == OFFER_STATE_INSTALLING ||
                     (offerTargetPackage != null && !offerTargetPackage.isEmpty())) {
+                    NodeItem dismissPickerBtn = null;
+                    boolean hasPhonePicker = false;
                     for (NodeItem item : allNodes) {
                         String t = item.text.trim().toLowerCase();
                         String d = item.contentDesc.trim().toLowerCase();
+                        if (t.contains("choose a phone number") || t.contains("phone number")) {
+                            hasPhonePicker = true;
+                        }
                         if (t.contains("@gmail.com") || d.contains("@gmail.com") ||
                             t.startsWith("continue as") || d.startsWith("continue as") ||
                             (item.resId != null && (item.resId.contains("account_name") || item.resId.contains("account_picker")))) {
@@ -771,6 +781,17 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                             currentStatus = "Auto-Logging in with Google...";
                             return;
                         }
+                        if (t.equals("none of the above") || t.equals("cancel") || t.equals("no thanks") ||
+                            d.equals("close") || d.equals("cancel")) {
+                            dismissPickerBtn = item;
+                        }
+                    }
+                    if (hasPhonePicker || dismissPickerBtn != null) {
+                        if (dismissPickerBtn != null) tapNode(dismissPickerBtn);
+                        else performGlobalAction(GLOBAL_ACTION_BACK);
+                        lastTapTime = now + 1500;
+                        currentStatus = "Dismissed Google Prompt";
+                        return;
                     }
                 }
             }
@@ -1294,6 +1315,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             if (isAd) {
                 lastProgressTime = now;
                 collectGemScreenStartTime = 0;
+                lastCollectGemTapTime = 0;
                 collectGemTapCount = 0;
                 collectGemRestartCount = 0;
                 questionWaitingStartTime = 0;
@@ -1751,13 +1773,14 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     if (collectGemScreenStartTime == 0) collectGemScreenStartTime = now;
                     long elapsedOnCollect = now - collectGemScreenStartTime;
 
-                    long stallTimeoutMs = isButtonLoading ? 15000L : 10000L;
-                    if (collectGemTapCount >= 2 || elapsedOnCollect > stallTimeoutMs) {
+                    long stallTimeoutMs = isButtonLoading ? 16000L : 13000L;
+                    if ((collectGemTapCount >= 3 && (now - lastCollectGemTapTime >= 2200)) || elapsedOnCollect > stallTimeoutMs) {
                         collectGemScreenStartTime = 0;
+                        lastCollectGemTapTime = 0;
                         collectGemTapCount = 0;
                         adStartTime = 0;
                         lastProgressTime = now;
-                        adReloadCooldownUntil = SystemClock.uptimeMillis() + 8000;
+                        adReloadCooldownUntil = SystemClock.uptimeMillis() + 6000;
                         currentStatus = "Ad not loaded -> Restarting App";
                         collectGemRestartCount++;
                         restartQuizApp();
@@ -1765,15 +1788,16 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                         return;
                     }
                     if (hasCollectGemButton && collectGemNode != null) {
-                        if (collectGemTapCount > 0 && (now - lastTapTime < 1800)) return;
+                        if (collectGemTapCount > 0 && (now - lastCollectGemTapTime < 2400)) return;
                         collectGemTapCount++;
+                        lastCollectGemTapTime = now;
                         lastProgressTime = now;
                         if (liveGems >= 24) {
                             isCollecting25thGem = true;
                             finalAdStarted = false;
                         }
                         tapNode(collectGemNode);
-                        lastTapTime = now + 1500;
+                        lastTapTime = now + 1200;
                         lastSolvedTarget = "";
                         lastSolveTime = 0;
                         currentStatus = "Collecting Gem (" + collectGemTapCount + "/3)...";
@@ -1785,6 +1809,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     }
                 } else if (now - lastSeenCollectionScreenTime > 2500) {
                     collectGemScreenStartTime = 0;
+                    lastCollectGemTapTime = 0;
                     collectGemTapCount = 0;
                     collectGemRestartCount = 0;
                 }
@@ -2418,7 +2443,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         if (id.contains("close-or-skip-button") || id.contains("close_button") || id.contains("btn_close") ||
             id.contains("iv_close") || id.contains("close_ad") || id.contains("ad_close") ||
             id.contains("btn_back") || id.contains("al_close") || id.contains("unity_close") ||
-            id.contains("vungle_close") || id.contains("closebutton") || id.contains("close-button")) {
+            id.contains("vungle_close") || id.contains("closebutton") || id.contains("close-button") ||
+            id.contains("mbridge_iv_close") || id.contains("ia_tv_close") || id.contains("closebtn")) {
             return true;
         }
         return t.equals("\u2715") || t.equals("\u2716") || t.equals("\u2A2F") ||
@@ -2613,8 +2639,15 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             isPlayStoreActiveInstall = false;
         }
 
-        String newPkg = detectNewlyInstalledPackage(baselinePackages);
-        if (newPkg != null && !newPkg.isEmpty()) offerTargetPackage = newPkg;
+        String newPkg = offerTargetPackage;
+        if ((now - lastPkgScanTime > 1500) || openButton != null) {
+            lastPkgScanTime = now;
+            String scanned = detectNewlyInstalledPackage(baselinePackages);
+            if (scanned != null && !scanned.isEmpty()) {
+                newPkg = scanned;
+                offerTargetPackage = scanned;
+            }
+        }
 
         if (offerState == OFFER_STATE_PLAYSTORE && (now - offerStateStartTime < 2500)) {
             currentStatus = "Play Store: Loading...";
