@@ -36,6 +36,7 @@ public class MainActivity extends Activity {
     private Button btnAccess;
     private Button btnBattery;
     private Button btnLaunch;
+    private Button btnStopOverlay;
     private Button btnTargetApp;
 
     private static final String[] TARGET_PACKAGES = new String[]{
@@ -240,6 +241,26 @@ public class MainActivity extends Activity {
         launchContainer.setOrientation(LinearLayout.VERTICAL);
         launchContainer.setPadding(0, dp(8), 0, dp(16));
         launchContainer.addView(btnLaunch);
+
+        btnStopOverlay = createActionButton("STOP BOT & CLOSE FLOATING HUD", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                stopFloatingService();
+            }
+        });
+        GradientDrawable stopBg = new GradientDrawable();
+        stopBg.setColor(Color.parseColor("#3F0D12"));
+        stopBg.setStroke(dp(1), Color.parseColor("#EF4444"));
+        stopBg.setCornerRadius(dp(12));
+        btnStopOverlay.setBackground(stopBg);
+        btnStopOverlay.setTextColor(Color.parseColor("#FCA5A5"));
+        LinearLayout.LayoutParams stopLp = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+        stopLp.setMargins(0, dp(10), 0, 0);
+        btnStopOverlay.setLayoutParams(stopLp);
+        launchContainer.addView(btnStopOverlay);
+
         contentCol.addView(launchContainer);
 
         TextView infoText = new TextView(this);
@@ -393,6 +414,22 @@ public class MainActivity extends Activity {
 
         btnLaunch.setEnabled(hasOverlay && hasAccess);
         btnLaunch.setAlpha((hasOverlay && hasAccess) ? 1.0f : 0.5f);
+
+        boolean hudActive = (FloatingOverlayService.instance != null) || QuizEarnAccessibilityService.isRunning;
+        if (btnStopOverlay != null) {
+            btnStopOverlay.setEnabled(hudActive);
+            btnStopOverlay.setAlpha(hudActive ? 1.0f : 0.45f);
+            btnStopOverlay.setText(hudActive ? "STOP BOT & CLOSE FLOATING HUD" : "FLOATING HUD CLOSED");
+        }
+    }
+
+    private void stopFloatingService() {
+        QuizEarnAccessibilityService.stopSolving();
+        try {
+            stopService(new Intent(this, FloatingOverlayService.class));
+        } catch (Exception ignored) {}
+        refreshPermissions();
+        Toast.makeText(this, "Bot stopped & Floating HUD closed.", Toast.LENGTH_SHORT).show();
     }
 
     private void startFloatingService() {

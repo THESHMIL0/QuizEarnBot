@@ -95,6 +95,9 @@ public class FloatingOverlayService extends Service {
             } else if ("com.quizearn.assistant.STOP".equals(act)) {
                 QuizEarnAccessibilityService.stopSolving();
                 updateUiState();
+            } else if ("com.quizearn.assistant.CLOSE".equals(act)) {
+                closeOverlayAndStop();
+                return START_NOT_STICKY;
             } else if ("com.quizearn.assistant.SET_OFFER_MODE".equals(act)) {
                 int mode = intent.getIntExtra("mode", -1);
                 if (mode == -1 && intent.hasExtra("mode_str")) {
@@ -132,7 +135,28 @@ public class FloatingOverlayService extends Service {
     @Override
     public void onTaskRemoved(Intent rootIntent) {
         super.onTaskRemoved(rootIntent);
-        Log.i(TAG, "Task removed: keeping Accessibility state safe while overlay persists.");
+        Log.i(TAG, "Task removed from Recents: closing Floating HUD and stopping bot.");
+        closeOverlayAndStop();
+    }
+
+    private void closeOverlayAndStop() {
+        QuizEarnAccessibilityService.stopSolving();
+        uiHandler.removeCallbacks(refreshRunnable);
+        if (floatView != null && windowManager != null) {
+            try {
+                windowManager.removeView(floatView);
+            } catch (Exception ignored) {}
+            floatView = null;
+        }
+        instance = null;
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE);
+            } else {
+                stopForeground(true);
+            }
+        } catch (Exception ignored) {}
+        stopSelf();
     }
 
     @Override
@@ -175,6 +199,13 @@ public class FloatingOverlayService extends Service {
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0
         );
 
+        Intent closeIntent = new Intent(this, FloatingOverlayService.class);
+        closeIntent.setAction("com.quizearn.assistant.CLOSE");
+        PendingIntent closePendingIntent = PendingIntent.getService(
+            this, 1, closeIntent,
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0
+        );
+
         Notification.Builder builder;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             builder = new Notification.Builder(this, channelId);
@@ -183,9 +214,14 @@ public class FloatingOverlayService extends Service {
         }
 
         builder.setSmallIcon(android.R.drawable.ic_menu_compass)
-               .setContentTitle("Quiz Earn Assistant")
-               .setContentText("BOT MOD MENU is active.")
-               .setContentIntent(pendingIntent);
+               .setContentTitle("Quiz Math Assistant")
+               .setContentText("Floating HUD active. Tap ✕ on menu or Close below to exit.")
+               .setContentIntent(pendingIntent)
+               .addAction(new Notification.Action.Builder(
+                   android.R.drawable.ic_menu_close_clear_cancel,
+                   "Close HUD",
+                   closePendingIntent
+               ).build());
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(1001, builder.build(), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
@@ -345,7 +381,7 @@ public class FloatingOverlayService extends Service {
         btnClose.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                collapseMenu();
+                closeOverlayAndStop();
             }
         });
 
@@ -736,12 +772,14 @@ public class FloatingOverlayService extends Service {
     @Override
     public void onDestroy() {
         super.onDestroy();
+        QuizEarnAccessibilityService.stopSolving();
         instance = null;
         uiHandler.removeCallbacks(refreshRunnable);
         if (floatView != null && windowManager != null) {
             try {
                 windowManager.removeView(floatView);
             } catch (Exception ignored) {}
+            floatView = null;
         }
     }
 
