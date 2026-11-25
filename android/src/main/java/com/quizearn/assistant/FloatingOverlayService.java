@@ -801,6 +801,14 @@ public class FloatingOverlayService extends Service {
         private final Paint borderPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint bracketPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final float density;
+        private final Path clipPath = new Path();
+        private final Path brTL = new Path();
+        private final Path brTR = new Path();
+        private final Path brBL = new Path();
+        private final Path brBR = new Path();
+        private int cachedW = -1;
+        private int cachedH = -1;
+        private float cachedP, cachedRight, cachedBottom, cachedMidX, cachedMidY, cachedGap, cachedStep;
 
         public CyberWindowLayout(Context context) {
             super(context);
@@ -826,10 +834,15 @@ public class FloatingOverlayService extends Service {
         }
 
         @Override
-        protected void onDraw(Canvas canvas) {
-            int w = getWidth();
-            int h = getHeight();
-            if (w <= 0 || h <= 0) return;
+        protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+            super.onSizeChanged(w, h, oldw, oldh);
+            updateGeometry(w, h);
+        }
+
+        private void updateGeometry(int w, int h) {
+            if (w <= 0 || h <= 0 || (w == cachedW && h == cachedH)) return;
+            cachedW = w;
+            cachedH = h;
 
             float p = dp(6.5f); // Generous padding so floating outer brackets never get clipped
             float right = w - p;
@@ -839,35 +852,37 @@ public class FloatingOverlayService extends Service {
             float notchD = dp(3.5f);
             float midX = w / 2f;
             float midY = h / 2f;
+            float gap = dp(3.5f);
+
+            cachedP = p;
+            cachedRight = right;
+            cachedBottom = bottom;
+            cachedMidX = midX;
+            cachedMidY = midY;
+            cachedGap = gap;
+            cachedStep = dp(4.0f);
 
             // 1. Chamfered Outer Path (Main Shell)
-            Path clipPath = new Path();
+            clipPath.reset();
             clipPath.moveTo(p + cham, p);
-            // Top notch
             clipPath.lineTo(midX - notchW, p);
             clipPath.lineTo(midX - notchW + dp(4), p + notchD);
             clipPath.lineTo(midX + notchW - dp(4), p + notchD);
             clipPath.lineTo(midX + notchW, p);
             clipPath.lineTo(right - cham, p);
-            // Top-Right Chamfer
             clipPath.lineTo(right, p + cham);
-            // Right edge notch
             clipPath.lineTo(right, midY - dp(10));
             clipPath.lineTo(right - dp(2.5f), midY - dp(6));
             clipPath.lineTo(right - dp(2.5f), midY + dp(6));
             clipPath.lineTo(right, midY + dp(10));
             clipPath.lineTo(right, bottom - cham);
-            // Bottom-Right Chamfer
             clipPath.lineTo(right - cham, bottom);
-            // Bottom notch
             clipPath.lineTo(midX + notchW, bottom);
             clipPath.lineTo(midX + notchW - dp(4), bottom - notchD);
             clipPath.lineTo(midX - notchW + dp(4), bottom - notchD);
             clipPath.lineTo(midX - notchW, bottom);
             clipPath.lineTo(p + cham, bottom);
-            // Bottom-Left Chamfer
             clipPath.lineTo(p, bottom - cham);
-            // Left edge notch
             clipPath.lineTo(p, midY + dp(10));
             clipPath.lineTo(p + dp(2.5f), midY + dp(6));
             clipPath.lineTo(p + dp(2.5f), midY - dp(6));
@@ -875,19 +890,53 @@ public class FloatingOverlayService extends Service {
             clipPath.lineTo(p, p + cham);
             clipPath.close();
 
-            // Background Deep Cyber Gradient (#06141D -> #091F2B)
             bgPaint.setShader(new LinearGradient(
                 0, 0, 0, h,
                 Color.parseColor("#06141D"),
                 Color.parseColor("#091F2B"),
                 Shader.TileMode.CLAMP
             ));
+
+            brTL.reset();
+            brTL.moveTo(p + cham + dp(8), p - gap);
+            brTL.lineTo(p + cham, p - gap);
+            brTL.lineTo(p - gap, p + cham);
+            brTL.lineTo(p - gap, p + cham + dp(8));
+
+            brTR.reset();
+            brTR.moveTo(right - cham - dp(8), p - gap);
+            brTR.lineTo(right - cham, p - gap);
+            brTR.lineTo(right + gap, p + cham);
+            brTR.lineTo(right + gap, p + cham + dp(8));
+
+            brBL.reset();
+            brBL.moveTo(p - gap, bottom - cham - dp(8));
+            brBL.lineTo(p - gap, bottom - cham);
+            brBL.lineTo(p + cham, bottom + gap);
+            brBL.lineTo(p + cham + dp(8), bottom + gap);
+
+            brBR.reset();
+            brBR.moveTo(right + gap, bottom - cham - dp(8));
+            brBR.lineTo(right + gap, bottom - cham);
+            brBR.lineTo(right - cham, bottom + gap);
+            brBR.lineTo(right - cham - dp(8), bottom + gap);
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            int w = getWidth();
+            int h = getHeight();
+            if (w <= 0 || h <= 0) return;
+            if (w != cachedW || h != cachedH) {
+                updateGeometry(w, h);
+            }
+
             canvas.drawPath(clipPath, bgPaint);
 
             // Subtle Scanlines
             canvas.save();
             canvas.clipPath(clipPath);
-            float step = dp(4.0f);
+            float step = cachedStep;
             for (float y = 0; y < h; y += step) {
                 canvas.drawLine(0, y, w, y, scanPaint);
             }
@@ -897,44 +946,18 @@ public class FloatingOverlayService extends Service {
             canvas.drawPath(clipPath, borderPaint);
 
             // 2. Corner Outer Brackets (Exact Match to Reference HUD)
-            bracketPaint.setStrokeWidth(dp(2.4f));
-
-            // Floating gap distance from the main border
-            float gap = dp(3.5f);
-
-            // Top-Left Bracket: wraps around 45° chamfer
-            Path brTL = new Path();
-            brTL.moveTo(p + cham + dp(8), p - gap);
-            brTL.lineTo(p + cham, p - gap);
-            brTL.lineTo(p - gap, p + cham);
-            brTL.lineTo(p - gap, p + cham + dp(8));
             canvas.drawPath(brTL, bracketPaint);
-
-            // Top-Right Bracket
-            Path brTR = new Path();
-            brTR.moveTo(right - cham - dp(8), p - gap);
-            brTR.lineTo(right - cham, p - gap);
-            brTR.lineTo(right + gap, p + cham);
-            brTR.lineTo(right + gap, p + cham + dp(8));
             canvas.drawPath(brTR, bracketPaint);
-
-            // Bottom-Left Bracket
-            Path brBL = new Path();
-            brBL.moveTo(p - gap, bottom - cham - dp(8));
-            brBL.lineTo(p - gap, bottom - cham);
-            brBL.lineTo(p + cham, bottom + gap);
-            brBL.lineTo(p + cham + dp(8), bottom + gap);
             canvas.drawPath(brBL, bracketPaint);
-
-            // Bottom-Right Bracket
-            Path brBR = new Path();
-            brBR.moveTo(right + gap, bottom - cham - dp(8));
-            brBR.lineTo(right + gap, bottom - cham);
-            brBR.lineTo(right - cham, bottom + gap);
-            brBR.lineTo(right - cham - dp(8), bottom + gap);
             canvas.drawPath(brBR, bracketPaint);
 
             // Edge Center Accent Lines
+            float p = cachedP;
+            float right = cachedRight;
+            float bottom = cachedBottom;
+            float midX = cachedMidX;
+            float midY = cachedMidY;
+            float gap = cachedGap;
             canvas.drawLine(p - gap, midY - dp(8), p - gap, midY + dp(8), bracketPaint);
             canvas.drawLine(right + gap, midY - dp(8), right + gap, midY + dp(8), bracketPaint);
             canvas.drawLine(midX - dp(14), p - gap, midX + dp(14), p - gap, bracketPaint);
@@ -999,14 +1022,39 @@ public class FloatingOverlayService extends Service {
         private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint trackPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint borderPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint outerStepPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint thumbPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint glowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint linePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final float density;
+        private final RectF trackRect = new RectF();
+        private final Path leftWing = new Path();
+        private final Path rightWing = new Path();
+        private int cachedW = -1;
+        private int cachedH = -1;
+        private float cachedTrackLeft, cachedTrackTop, cachedTrackW, cachedTrackH, cachedCr, cachedCenterY, cachedKnobRadius, cachedLineY;
 
         public CyberSwitchView(Context context) {
             super(context);
             density = context.getResources().getDisplayMetrics().density;
             setClickable(true);
+
+            textPaint.setTypeface(Typeface.DEFAULT_BOLD);
+            textPaint.setTextAlign(Paint.Align.CENTER);
+
+            trackPaint.setColor(Color.parseColor("#020B10"));
+
+            borderPaint.setStyle(Paint.Style.STROKE);
+            borderPaint.setStrokeWidth(dp(1.8f));
+
+            outerStepPaint.setStyle(Paint.Style.STROKE);
+            outerStepPaint.setStrokeWidth(dp(1.5f));
+
+            glowPaint.setColor(Color.parseColor("#76FF03"));
+            glowPaint.setAlpha(70);
+
+            linePaint.setColor(Color.parseColor("#00E5FF"));
+            linePaint.setStrokeWidth(dp(1.2f));
         }
 
         private float dp(float v) {
@@ -1014,6 +1062,7 @@ public class FloatingOverlayService extends Service {
         }
 
         public void setChecked(boolean checked) {
+            if (this.isChecked == checked) return;
             this.isChecked = checked;
             invalidate();
         }
@@ -1023,85 +1072,90 @@ public class FloatingOverlayService extends Service {
         }
 
         @Override
-        protected void onDraw(Canvas canvas) {
-            super.onDraw(canvas);
-            int w = getWidth();
-            int h = getHeight();
-            if (w <= 0 || h <= 0) return;
+        protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+            super.onSizeChanged(w, h, oldw, oldh);
+            updateGeometry(w, h);
+        }
 
-            // 1. Top label: "ON / OFF"
-            textPaint.setColor(Color.parseColor("#5E8296"));
-            textPaint.setTextSize(dp(7.5f));
-            textPaint.setTypeface(Typeface.DEFAULT_BOLD);
-            textPaint.setTextAlign(Paint.Align.CENTER);
-            canvas.drawText("ON / OFF", w / 2f, dp(7f), textPaint);
+        private void updateGeometry(int w, int h) {
+            if (w <= 0 || h <= 0 || (w == cachedW && h == cachedH)) return;
+            cachedW = w;
+            cachedH = h;
 
-            // 2. Switch Outer Frame & Track Area
             float trackTop = dp(9.5f);
             float trackH = dp(20f);
             float trackW = w - dp(8f);
             float trackLeft = dp(4f);
-            RectF trackRect = new RectF(trackLeft, trackTop, trackLeft + trackW, trackTop + trackH);
-            float cr = trackH / 2f;
+            cachedTrackTop = trackTop;
+            cachedTrackH = trackH;
+            cachedTrackW = trackW;
+            cachedTrackLeft = trackLeft;
+            cachedCr = trackH / 2f;
+            cachedCenterY = trackTop + trackH / 2f;
+            cachedKnobRadius = dp(7.0f);
+            cachedLineY = trackTop + trackH + dp(4.5f);
 
-            // Inner dark track
-            trackPaint.setColor(Color.parseColor("#020B10"));
-            canvas.drawRoundRect(trackRect, cr, cr, trackPaint);
+            trackRect.set(trackLeft, trackTop, trackLeft + trackW, trackTop + trackH);
 
-            // Outer Cyber Bracket Rim
-            borderPaint.setStyle(Paint.Style.STROKE);
-            borderPaint.setStrokeWidth(dp(1.8f));
-            if (isChecked) {
-                borderPaint.setColor(Color.parseColor("#00E5FF")); // Cyan outer rim
-            } else {
-                borderPaint.setColor(Color.parseColor("#1E3A4D")); // Muted rim
-            }
-            canvas.drawRoundRect(trackRect, cr, cr, borderPaint);
-
-            // Outer decorative cyber bracket steps around the capsule
-            Paint outerStepPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-            outerStepPaint.setStyle(Paint.Style.STROKE);
-            outerStepPaint.setStrokeWidth(dp(1.5f));
-            outerStepPaint.setColor(isChecked ? Color.parseColor("#00E5FF") : Color.parseColor("#1E3A4D"));
-
-            // Left cyber bracket wing
-            Path leftWing = new Path();
+            leftWing.reset();
             leftWing.moveTo(trackLeft + dp(10), trackTop - dp(2));
             leftWing.lineTo(trackLeft - dp(1.5f), trackTop - dp(2));
             leftWing.lineTo(trackLeft - dp(3.5f), trackTop + dp(4));
             leftWing.lineTo(trackLeft - dp(3.5f), trackTop + trackH - dp(4));
             leftWing.lineTo(trackLeft - dp(1.5f), trackTop + trackH + dp(2));
             leftWing.lineTo(trackLeft + dp(10), trackTop + trackH + dp(2));
-            canvas.drawPath(leftWing, outerStepPaint);
 
-            // Right cyber bracket wing
-            Path rightWing = new Path();
+            rightWing.reset();
             rightWing.moveTo(trackLeft + trackW - dp(10), trackTop - dp(2));
             rightWing.lineTo(trackLeft + trackW + dp(1.5f), trackTop - dp(2));
             rightWing.lineTo(trackLeft + trackW + dp(3.5f), trackTop + dp(4));
             rightWing.lineTo(trackLeft + trackW + dp(3.5f), trackTop + trackH - dp(4));
             rightWing.lineTo(trackLeft + trackW + dp(1.5f), trackTop + trackH + dp(2));
             rightWing.lineTo(trackLeft + trackW - dp(10), trackTop + trackH + dp(2));
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            int w = getWidth();
+            int h = getHeight();
+            if (w <= 0 || h <= 0) return;
+            if (w != cachedW || h != cachedH) {
+                updateGeometry(w, h);
+            }
+
+            // 1. Top label: "ON / OFF"
+            textPaint.setColor(Color.parseColor("#5E8296"));
+            textPaint.setTextSize(dp(7.5f));
+            canvas.drawText("ON / OFF", w / 2f, dp(7f), textPaint);
+
+            // 2. Inner dark track
+            canvas.drawRoundRect(trackRect, cachedCr, cachedCr, trackPaint);
+
+            // Outer Cyber Bracket Rim
+            int rimColor = isChecked ? Color.parseColor("#00E5FF") : Color.parseColor("#1E3A4D");
+            borderPaint.setColor(rimColor);
+            canvas.drawRoundRect(trackRect, cachedCr, cachedCr, borderPaint);
+
+            // Outer decorative cyber bracket steps around the capsule
+            outerStepPaint.setColor(rimColor);
+            canvas.drawPath(leftWing, outerStepPaint);
             canvas.drawPath(rightWing, outerStepPaint);
 
             // 3. Knob & State Text
-            float centerY = trackTop + trackH / 2f;
-            float knobRadius = dp(7.0f);
+            float centerY = cachedCenterY;
+            float knobRadius = cachedKnobRadius;
 
             if (isChecked) {
                 // Text "ON" on the left
                 textPaint.setColor(Color.parseColor("#76FF03")); // Neon Lime Green
                 textPaint.setTextSize(dp(11.5f));
-                textPaint.setTypeface(Typeface.DEFAULT_BOLD);
-                textPaint.setTextAlign(Paint.Align.CENTER);
-                canvas.drawText("ON", trackLeft + dp(18f), centerY + dp(4f), textPaint);
+                canvas.drawText("ON", cachedTrackLeft + dp(18f), centerY + dp(4f), textPaint);
 
                 // Glowing Knob on the right
-                float knobX = trackLeft + trackW - dp(12f);
+                float knobX = cachedTrackLeft + cachedTrackW - dp(12f);
 
                 // Halo glow
-                glowPaint.setColor(Color.parseColor("#76FF03"));
-                glowPaint.setAlpha(70);
                 canvas.drawCircle(knobX, centerY, knobRadius + dp(3.5f), glowPaint);
 
                 // Solid core
@@ -1115,23 +1169,17 @@ public class FloatingOverlayService extends Service {
                 // Text "OFF" on the right
                 textPaint.setColor(Color.parseColor("#64748B")); // Muted Gray
                 textPaint.setTextSize(dp(10.5f));
-                textPaint.setTypeface(Typeface.DEFAULT_BOLD);
-                textPaint.setTextAlign(Paint.Align.CENTER);
-                canvas.drawText("OFF", trackLeft + trackW - dp(18f), centerY + dp(3.8f), textPaint);
+                canvas.drawText("OFF", cachedTrackLeft + cachedTrackW - dp(18f), centerY + dp(3.8f), textPaint);
 
                 // Dark/dimmed Knob on the left
-                float knobX = trackLeft + dp(12f);
+                float knobX = cachedTrackLeft + dp(12f);
                 thumbPaint.setColor(Color.parseColor("#475569"));
                 canvas.drawCircle(knobX, centerY, knobRadius, thumbPaint);
             }
 
             // 4. Bottom Accent Cyan Line with notch
-            float lineY = trackTop + trackH + dp(4.5f);
-            Paint linePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-            linePaint.setColor(Color.parseColor("#00E5FF"));
-            linePaint.setStrokeWidth(dp(1.2f));
-            canvas.drawLine(w * 0.35f, lineY, w * 0.65f, lineY, linePaint);
-            canvas.drawCircle(w * 0.5f, lineY, dp(1.6f), linePaint);
+            canvas.drawLine(w * 0.35f, cachedLineY, w * 0.65f, cachedLineY, linePaint);
+            canvas.drawCircle(w * 0.5f, cachedLineY, dp(1.6f), linePaint);
         }
     }
 
@@ -1181,6 +1229,28 @@ public class FloatingOverlayService extends Service {
         private final Paint eyePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint pupilPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint mouthPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint glowAuraPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+        private final RectF radarRect = new RectF();
+        private final RectF bezelRect = new RectF();
+        private final RectF tabRect = new RectF();
+        private final RectF leftEarRect = new RectF();
+        private final RectF rightEarRect = new RectF();
+        private final RectF gemGlowRect = new RectF();
+        private final RectF gemCoreRect = new RectF();
+        private final Path bezelPath = new Path();
+        private final Path chPath = new Path();
+        private final Path domePath = new Path();
+        private final Path visorPath = new Path();
+        private final Path mouthPath = new Path();
+
+        private int cachedW = -1;
+        private int cachedH = -1;
+        private float cx, cy, outerR, rAura, discR;
+        private float dot1X, dot1Y, dot2X, dot2Y;
+        private float tickX1, tickY1, tickX2, tickY2;
+        private float tabTop, tabR;
+        private float hx, hy, u, gemY, eyeY, eyeLX, eyeRX;
 
         public CyberBallView(Context context) {
             super(context);
@@ -1194,6 +1264,7 @@ public class FloatingOverlayService extends Service {
         }
 
         public void setState(boolean running, int gems) {
+            if (this.isRunning == running && this.gems == gems) return;
             this.isRunning = running;
             this.gems = gems;
             invalidate();
@@ -1296,83 +1367,64 @@ public class FloatingOverlayService extends Service {
         }
 
         @Override
-        protected void onDraw(Canvas canvas) {
-            super.onDraw(canvas);
-            int w = getWidth();
-            int h = getHeight();
-            if (w <= 0 || h <= 0) return;
-            try {
-                drawCyberBall(canvas, w, h);
-            } catch (Throwable t) {
-                Log.e(TAG, "Error drawing CyberBall: " + t.getMessage(), t);
-            }
+        protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+            super.onSizeChanged(w, h, oldw, oldh);
+            updateGeometry(w, h);
         }
 
-        private void drawCyberBall(Canvas canvas, int w, int h) {
-            float cx = w / 2f;
-            float cy = h / 2f;
-            float outerR = Math.min(w, h) / 2f - dp(1.5f);
+        private void updateGeometry(int w, int h) {
+            if (w <= 0 || h <= 0 || (w == cachedW && h == cachedH)) return;
+            cachedW = w;
+            cachedH = h;
 
-            // 1. OUTER HOLOGRAPHIC RADAR AURA & RINGS
-            // Soft cyan radial background glow
-            Paint glowAura = new Paint(Paint.ANTI_ALIAS_FLAG);
-            glowAura.setShader(new RadialGradient(
+            cx = w / 2f;
+            cy = h / 2f;
+            outerR = Math.min(w, h) / 2f - dp(1.5f);
+
+            glowAuraPaint.setShader(new RadialGradient(
                 cx, cy, outerR,
                 new int[]{Color.parseColor("#3300E5FF"), Color.parseColor("#1500E5FF"), Color.TRANSPARENT},
                 new float[]{0.60f, 0.85f, 1.0f},
                 Shader.TileMode.CLAMP
             ));
-            canvas.drawCircle(cx, cy, outerR, glowAura);
 
-            // Outermost faint radar circle
-            float rAura = outerR * 0.95f;
-            canvas.drawCircle(cx, cy, rAura, outerAuraPaint);
-
-            // Segmented secondary radar circle
+            rAura = outerR * 0.95f;
             float rRadar = outerR * 0.86f;
-            RectF radarRect = new RectF(cx - rRadar, cy - rRadar, cx + rRadar, cy + rRadar);
-            canvas.drawArc(radarRect, 195, 68, false, radarRingPaint);
-            canvas.drawArc(radarRect, 105, 65, false, radarRingPaint);
-            canvas.drawArc(radarRect, 328, 65, false, radarRingPaint);
+            radarRect.set(cx - rRadar, cy - rRadar, cx + rRadar, cy + rRadar);
 
-            // Radar nodes (cyan glowing dots)
-            float dot1X = cx + rRadar * (float) Math.cos(Math.toRadians(210));
-            float dot1Y = cy + rRadar * (float) Math.sin(Math.toRadians(210));
-            canvas.drawCircle(dot1X, dot1Y, dp(1.5f), radarDotPaint);
+            double rad210 = Math.toRadians(210);
+            float cos210 = (float) Math.cos(rad210);
+            float sin210 = (float) Math.sin(rad210);
+            dot1X = cx + rRadar * cos210;
+            dot1Y = cy + rRadar * sin210;
 
-            float dot2X = cx + rRadar * (float) Math.cos(Math.toRadians(350));
-            float dot2Y = cy + rRadar * (float) Math.sin(Math.toRadians(350));
-            canvas.drawCircle(dot2X, dot2Y, dp(1.5f), radarDotPaint);
+            double rad350 = Math.toRadians(350);
+            dot2X = cx + rRadar * (float) Math.cos(rad350);
+            dot2Y = cy + rRadar * (float) Math.sin(rad350);
 
-            // Radar radial tick marks
-            canvas.drawLine(
-                cx + (rRadar - dp(2.2f)) * (float) Math.cos(Math.toRadians(210)),
-                cy + (rRadar - dp(2.2f)) * (float) Math.sin(Math.toRadians(210)),
-                cx + (rRadar + dp(2.2f)) * (float) Math.cos(Math.toRadians(210)),
-                cy + (rRadar + dp(2.2f)) * (float) Math.sin(Math.toRadians(210)),
-                radarRingPaint
-            );
+            float tickOff = dp(2.2f);
+            tickX1 = cx + (rRadar - tickOff) * cos210;
+            tickY1 = cy + (rRadar - tickOff) * sin210;
+            tickX2 = cx + (rRadar + tickOff) * cos210;
+            tickY2 = cy + (rRadar + tickOff) * sin210;
 
-            // 2. MAIN DISC BASE (Deep dark navy/cyan radial gradient)
-            float discR = outerR * 0.74f;
+            discR = outerR * 0.74f;
             bgPaint.setShader(new RadialGradient(
                 cx, cy, discR,
                 new int[]{Color.parseColor("#0C2332"), Color.parseColor("#06131D"), Color.parseColor("#02090F")},
                 new float[]{0.0f, 0.65f, 1.0f},
                 Shader.TileMode.CLAMP
             ));
-            canvas.drawCircle(cx, cy, discR, bgPaint);
 
-            // 3. GLOWING NEON GRADIENT BEZEL (Electric Cyan -> Neon Lime Green)
             SweepGradient sweep = new SweepGradient(
                 cx, cy,
                 new int[]{
-                    Color.parseColor("#76FF03"), // 0 deg (right)
-                    Color.parseColor("#38F281"), // bottom transition
-                    Color.parseColor("#00E5FF"), // 180 deg (left)
-                    Color.parseColor("#00E5FF"), // left upper
-                    Color.parseColor("#38F281"), // top transition
-                    Color.parseColor("#76FF03")  // 360 deg
+                    Color.parseColor("#76FF03"),
+                    Color.parseColor("#38F281"),
+                    Color.parseColor("#00E5FF"),
+                    Color.parseColor("#00E5FF"),
+                    Color.parseColor("#38F281"),
+                    Color.parseColor("#76FF03")
                 },
                 new float[]{0.0f, 0.25f, 0.45f, 0.55f, 0.75f, 1.0f}
             );
@@ -1381,15 +1433,13 @@ public class FloatingOverlayService extends Service {
             bezelGlowPaint.setShader(sweep);
             bezelGlowPaint.setStrokeWidth(dp(4.6f));
 
-            RectF bezelRect = new RectF(cx - discR, cy - discR, cx + discR, cy + discR);
+            bezelRect.set(cx - discR, cy - discR, cx + discR, cy + discR);
 
-            // Single continuous Bezel path that gracefully flows into the 3 o'clock notch
-            Path bezelPath = new Path();
+            bezelPath.reset();
             float topNotchDeg = 338f;
             float botNotchDeg = 22f;
             bezelPath.arcTo(bezelRect, botNotchDeg, topNotchDeg - botNotchDeg);
 
-            float topNotchX = cx + discR * (float) Math.cos(Math.toRadians(topNotchDeg));
             float topNotchY = cy + discR * (float) Math.sin(Math.toRadians(topNotchDeg));
             float botNotchX = cx + discR * (float) Math.cos(Math.toRadians(botNotchDeg));
             float botNotchY = cy + discR * (float) Math.sin(Math.toRadians(botNotchDeg));
@@ -1406,54 +1456,27 @@ public class FloatingOverlayService extends Service {
                 botNotchX, botNotchY
             );
 
-            // Draw glowing halo and sharp gradient border
-            canvas.drawPath(bezelPath, bezelGlowPaint);
-            canvas.drawPath(bezelPath, bezelPaint);
-
-            // 4. RIGHT-POINTING CHEVRON (>) INSIDE NOTCH
-            Path chPath = new Path();
+            chPath.reset();
             chPath.moveTo(notchInnerX + dp(0.8f), cy - dp(3.2f));
             chPath.lineTo(notchInnerX + dp(3.4f), cy);
             chPath.lineTo(notchInnerX + dp(0.8f), cy + dp(3.2f));
-            canvas.drawPath(chPath, chevronPaint);
 
-            // 5. BOTTOM INSET TAB WITH "BOT" TEXT
             float tabW = dp(28f);
             float tabH = dp(11.0f);
-            float tabTop = cy + discR - dp(11.0f);
-            RectF tabRect = new RectF(cx - tabW / 2f, tabTop, cx + tabW / 2f, tabTop + tabH);
-            float tabR = dp(4.0f);
-            canvas.drawRoundRect(tabRect, tabR, tabR, tabPaint);
-            canvas.drawRoundRect(tabRect, tabR, tabR, tabStrokePaint);
-
-            // Crisp "BOT" text
+            tabTop = cy + discR - dp(11.0f);
+            tabRect.set(cx - tabW / 2f, tabTop, cx + tabW / 2f, tabTop + tabH);
+            tabR = dp(4.0f);
             tabTextPaint.setTextSize(dp(8.0f));
-            canvas.drawText("BOT", cx, tabTop + dp(8.0f), tabTextPaint);
 
-            // 6. VECTOR SCI-FI ROBOT HEAD (Centered Perfectly Above Bottom Tab)
-            float hx = cx;
-            float hy = cy - dp(2.5f);
-            float u = dp(3.1f); // scaled to fill nicely like reference photo
-
-            // Antennas
+            hx = cx;
+            hy = cy - dp(2.5f);
+            u = dp(3.1f);
             antennaPaint.setStrokeWidth(dp(1.8f));
-            canvas.drawLine(hx - 2.8f * u, hy - 2.0f * u, hx - 3.0f * u, hy - 4.8f * u, antennaPaint);
-            canvas.drawLine(hx + 2.8f * u, hy - 2.0f * u, hx + 3.0f * u, hy - 4.8f * u, antennaPaint);
-            // Glowing antenna tips
-            canvas.drawCircle(hx - 3.0f * u, hy - 4.8f * u, dp(1.1f), gemPaint);
-            canvas.drawCircle(hx + 3.0f * u, hy - 4.8f * u, dp(1.1f), gemPaint);
 
-            // Side Ear Cups
-            RectF leftEar = new RectF(hx - 4.6f * u, hy - 1.4f * u, hx - 3.4f * u, hy + 1.8f * u);
-            canvas.drawRoundRect(leftEar, dp(1.5f), dp(1.5f), earFillPaint);
-            canvas.drawRoundRect(leftEar, dp(1.5f), dp(1.5f), earStrokePaint);
+            leftEarRect.set(hx - 4.6f * u, hy - 1.4f * u, hx - 3.4f * u, hy + 1.8f * u);
+            rightEarRect.set(hx + 3.4f * u, hy - 1.4f * u, hx + 4.6f * u, hy + 1.8f * u);
 
-            RectF rightEar = new RectF(hx + 3.4f * u, hy - 1.4f * u, hx + 4.6f * u, hy + 1.8f * u);
-            canvas.drawRoundRect(rightEar, dp(1.5f), dp(1.5f), earFillPaint);
-            canvas.drawRoundRect(rightEar, dp(1.5f), dp(1.5f), earStrokePaint);
-
-            // Metallic Helmet Dome
-            Path domePath = new Path();
+            domePath.reset();
             domePath.moveTo(hx - 3.4f * u, hy + 1.6f * u);
             domePath.lineTo(hx - 3.4f * u, hy - 1.2f * u);
             domePath.cubicTo(hx - 3.2f * u, hy - 4.3f * u, hx + 3.2f * u, hy - 4.3f * u, hx + 3.4f * u, hy - 1.2f * u);
@@ -1468,19 +1491,12 @@ public class FloatingOverlayService extends Service {
                 Color.parseColor("#223645"),
                 Shader.TileMode.CLAMP
             ));
-            canvas.drawPath(domePath, helmetFillPaint);
-            canvas.drawPath(domePath, helmetStrokePaint);
 
-            // Forehead Oval Sensor Gem (Cyan Capsule Glowing)
-            float gemY = hy - 2.5f * u;
-            RectF gemGlowRect = new RectF(hx - dp(4.2f), gemY - dp(2.6f), hx + dp(4.2f), gemY + dp(2.6f));
-            canvas.drawOval(gemGlowRect, gemGlowPaint);
-            RectF gemCoreRect = new RectF(hx - dp(2.8f), gemY - dp(1.8f), hx + dp(2.8f), gemY + dp(1.8f));
-            canvas.drawOval(gemCoreRect, gemPaint);
-            canvas.drawCircle(hx, gemY, dp(0.9f), gemCorePaint);
+            gemY = hy - 2.5f * u;
+            gemGlowRect.set(hx - dp(4.2f), gemY - dp(2.6f), hx + dp(4.2f), gemY + dp(2.6f));
+            gemCoreRect.set(hx - dp(2.8f), gemY - dp(1.8f), hx + dp(2.8f), gemY + dp(1.8f));
 
-            // Dark Obsidian Visor Faceplate
-            Path visorPath = new Path();
+            visorPath.reset();
             float browY = hy - 0.9f * u;
             visorPath.moveTo(hx - 2.7f * u, browY);
             visorPath.quadTo(hx, browY - dp(1.0f), hx + 2.7f * u, browY);
@@ -1489,34 +1505,92 @@ public class FloatingOverlayService extends Service {
             visorPath.lineTo(hx - 2.7f * u, hy + 1.6f * u);
             visorPath.close();
 
-            canvas.drawPath(visorPath, visorPaint);
-            canvas.drawPath(visorPath, visorStrokePaint);
-
-            // Glowing Neon Lime Circular Eyes (Always Vivid Lime Green like reference!)
-            float eyeY = hy + 0.6f * u;
-            float eyeLX = hx - 1.55f * u;
-            float eyeRX = hx + 1.55f * u;
+            eyeY = hy + 0.6f * u;
+            eyeLX = hx - 1.55f * u;
+            eyeRX = hx + 1.55f * u;
 
             eyeGlowPaint.setColor(Color.parseColor("#76FF03"));
             eyePaint.setColor(Color.parseColor("#76FF03"));
             mouthPaint.setColor(Color.parseColor("#76FF03"));
 
-            // Soft glowing halo
+            mouthPath.reset();
+            mouthPath.moveTo(hx - 1.15f * u, hy + 1.6f * u);
+            mouthPath.quadTo(hx, hy + 2.1f * u, hx + 1.15f * u, hy + 1.6f * u);
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            int w = getWidth();
+            int h = getHeight();
+            if (w <= 0 || h <= 0) return;
+            if (w != cachedW || h != cachedH) {
+                updateGeometry(w, h);
+            }
+            try {
+                drawCyberBall(canvas);
+            } catch (Throwable t) {
+                Log.e(TAG, "Error drawing CyberBall: " + t.getMessage(), t);
+            }
+        }
+
+        private void drawCyberBall(Canvas canvas) {
+            // 1. OUTER HOLOGRAPHIC RADAR AURA & RINGS
+            canvas.drawCircle(cx, cy, outerR, glowAuraPaint);
+            canvas.drawCircle(cx, cy, rAura, outerAuraPaint);
+
+            canvas.drawArc(radarRect, 195, 68, false, radarRingPaint);
+            canvas.drawArc(radarRect, 105, 65, false, radarRingPaint);
+            canvas.drawArc(radarRect, 328, 65, false, radarRingPaint);
+
+            canvas.drawCircle(dot1X, dot1Y, dp(1.5f), radarDotPaint);
+            canvas.drawCircle(dot2X, dot2Y, dp(1.5f), radarDotPaint);
+            canvas.drawLine(tickX1, tickY1, tickX2, tickY2, radarRingPaint);
+
+            // 2. MAIN DISC BASE
+            canvas.drawCircle(cx, cy, discR, bgPaint);
+
+            // 3. GLOWING NEON GRADIENT BEZEL
+            canvas.drawPath(bezelPath, bezelGlowPaint);
+            canvas.drawPath(bezelPath, bezelPaint);
+
+            // 4. RIGHT-POINTING CHEVRON (>) INSIDE NOTCH
+            canvas.drawPath(chPath, chevronPaint);
+
+            // 5. BOTTOM INSET TAB WITH "BOT" TEXT
+            canvas.drawRoundRect(tabRect, tabR, tabR, tabPaint);
+            canvas.drawRoundRect(tabRect, tabR, tabR, tabStrokePaint);
+            canvas.drawText("BOT", cx, tabTop + dp(8.0f), tabTextPaint);
+
+            // 6. VECTOR SCI-FI ROBOT HEAD
+            canvas.drawLine(hx - 2.8f * u, hy - 2.0f * u, hx - 3.0f * u, hy - 4.8f * u, antennaPaint);
+            canvas.drawLine(hx + 2.8f * u, hy - 2.0f * u, hx + 3.0f * u, hy - 4.8f * u, antennaPaint);
+            canvas.drawCircle(hx - 3.0f * u, hy - 4.8f * u, dp(1.1f), gemPaint);
+            canvas.drawCircle(hx + 3.0f * u, hy - 4.8f * u, dp(1.1f), gemPaint);
+
+            float earR = dp(1.5f);
+            canvas.drawRoundRect(leftEarRect, earR, earR, earFillPaint);
+            canvas.drawRoundRect(leftEarRect, earR, earR, earStrokePaint);
+            canvas.drawRoundRect(rightEarRect, earR, earR, earFillPaint);
+            canvas.drawRoundRect(rightEarRect, earR, earR, earStrokePaint);
+
+            canvas.drawPath(domePath, helmetFillPaint);
+            canvas.drawPath(domePath, helmetStrokePaint);
+
+            canvas.drawOval(gemGlowRect, gemGlowPaint);
+            canvas.drawOval(gemCoreRect, gemPaint);
+            canvas.drawCircle(hx, gemY, dp(0.9f), gemCorePaint);
+
+            canvas.drawPath(visorPath, visorPaint);
+            canvas.drawPath(visorPath, visorStrokePaint);
+
             canvas.drawCircle(eyeLX, eyeY, dp(3.8f), eyeGlowPaint);
             canvas.drawCircle(eyeRX, eyeY, dp(3.8f), eyeGlowPaint);
-
-            // Solid bright eye
             canvas.drawCircle(eyeLX, eyeY, dp(2.2f), eyePaint);
             canvas.drawCircle(eyeRX, eyeY, dp(2.2f), eyePaint);
-
-            // Crisp pupil center
             canvas.drawCircle(eyeLX, eyeY, dp(0.8f), pupilPaint);
             canvas.drawCircle(eyeRX, eyeY, dp(0.8f), pupilPaint);
 
-            // Cute Smiling Arc Mouth
-            Path mouthPath = new Path();
-            mouthPath.moveTo(hx - 1.15f * u, hy + 1.6f * u);
-            mouthPath.quadTo(hx, hy + 2.1f * u, hx + 1.15f * u, hy + 1.6f * u);
             canvas.drawPath(mouthPath, mouthPaint);
         }
     }

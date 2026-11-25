@@ -162,47 +162,142 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     private long questionWaitingStartTime = 0;
     private String lastWaitingQuestion = "";
     private long emptyNodesStartTime = 0;
+    private volatile long lastScanTickTime = 0;
+    private long lastActiveScanTime = 0;
+    private WindowManager cachedWindowManager = null;
+    private int cachedScreenW = 0;
+    private int cachedScreenH = 0;
+    private long lastScreenSizeCheckTime = 0;
+    private float cachedDensity = 0f;
 
-    private final Pattern mathPattern = Pattern.compile("(\\d+)\\s*([\\+\\-\\–\\—\\*×xX]|÷|\\/)\\s*(\\d+)");
-    private final Pattern mathSlashPattern = Pattern.compile("(\\d+)\\s*\\/\\s*(\\d+)\\s*(?:=|\\?)");
-    private final Pattern numPattern = Pattern.compile("^\\d{3,6}$");
-    private final Pattern percentProgressPattern = Pattern.compile("^\\d{1,3}%$|^\\d{1,3}%\\s*(of|downloaded|complete).*");
+    private static final Pattern mathPattern = Pattern.compile("(\\d+)\\s*([\\+\\-\\–\\—\\*×xX]|÷|\\/)\\s*(\\d+)");
+    private static final Pattern mathSlashPattern = Pattern.compile("(\\d+)\\s*\\/\\s*(\\d+)\\s*(?:=|\\?)");
+    private static final Pattern numPattern = Pattern.compile("^\\d{3,6}$");
+    private static final Pattern percentProgressPattern = Pattern.compile("^\\d{1,3}%$|^\\d{1,3}%\\s*(of|downloaded|complete).*");
+    private static final Pattern SLASH_25_PATTERN = Pattern.compile("(\\d+)\\s*/\\s*25");
+    private static final Pattern GEMS_COLLECTED_PATTERN = Pattern.compile("(\\d+)\\s*gems?\\s*collected", Pattern.CASE_INSENSITIVE);
+    private static final Pattern OPTION_PREFIX_PATTERN = Pattern.compile("^(?i)[A-D1-4][\\s\\.\\)\\:\\-]+");
+    private static final Pattern SKIP_SEC_PATTERN = Pattern.compile(".*skip.*\\d+\\s*s.*");
+
+    private static boolean isIgnorableSpace(char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\u000B' || c == '\u00A0' || c == '\u200B';
+    }
+
+    private static boolean isDigitsOnly(String s) {
+        if (s == null || s.isEmpty()) return false;
+        for (int i = 0, n = s.length(); i < n; i++) {
+            char c = s.charAt(i);
+            if (c < '0' || c > '9') return false;
+        }
+        return true;
+    }
+
+    private static String extractDigits(String raw) {
+        if (raw == null || raw.isEmpty()) return "";
+        int len = raw.length();
+        int digitCount = 0;
+        for (int i = 0; i < len; i++) {
+            char c = raw.charAt(i);
+            if (c >= '0' && c <= '9') digitCount++;
+        }
+        if (digitCount == 0) return "";
+        if (digitCount == len) return raw;
+        StringBuilder sb = new StringBuilder(digitCount);
+        for (int i = 0; i < len; i++) {
+            char c = raw.charAt(i);
+            if (c >= '0' && c <= '9') sb.append(c);
+        }
+        return sb.toString();
+    }
+
+    private static String stripOptionPrefix(String raw) {
+        if (raw == null) return "";
+        String trimmed = raw.trim();
+        if (trimmed.length() < 2) return trimmed;
+        char c0 = trimmed.charAt(0);
+        boolean validLead = (c0 >= 'A' && c0 <= 'D') || (c0 >= 'a' && c0 <= 'd') || (c0 >= '1' && c0 <= '4');
+        if (!validLead) return trimmed;
+        char c1 = trimmed.charAt(1);
+        if (c1 > ' ' && c1 != '.' && c1 != ')' && c1 != ':' && c1 != '-') return trimmed;
+        return OPTION_PREFIX_PATTERN.matcher(trimmed).replaceFirst("").trim();
+    }
 
     private String cleanNumText(String raw) {
-        if (raw == null) return "";
-        return raw.replaceAll("[\\s\\u00A0\\u200B\\r\\n]+", "").trim();
+        if (raw == null || raw.isEmpty()) return "";
+        int len = raw.length();
+        int start = 0;
+        int end = len;
+        while (start < end && (raw.charAt(start) <= ' ' || isIgnorableSpace(raw.charAt(start)))) start++;
+        while (end > start && (raw.charAt(end - 1) <= ' ' || isIgnorableSpace(raw.charAt(end - 1)))) end--;
+        if (start == end) return "";
+        boolean hasMiddleSpace = false;
+        for (int i = start; i < end; i++) {
+            if (isIgnorableSpace(raw.charAt(i))) {
+                hasMiddleSpace = true;
+                break;
+            }
+        }
+        if (!hasMiddleSpace) {
+            return (start == 0 && end == len) ? raw : raw.substring(start, end);
+        }
+        StringBuilder sb = new StringBuilder(end - start);
+        for (int i = start; i < end; i++) {
+            char c = raw.charAt(i);
+            if (!isIgnorableSpace(c)) sb.append(c);
+        }
+        return sb.toString();
     }
 
     private int dp(int value) {
-        float density = getResources().getDisplayMetrics().density;
+        float density = cachedDensity;
+        if (density <= 0f) {
+            density = getResources().getDisplayMetrics().density;
+            cachedDensity = density;
+        }
         return Math.round(value * Math.max(0.75f, density));
     }
 
     /** Returns full physical display dimensions [width, height] matching screen node/gesture coordinates across OEM nav/cutout bars. */
     @SuppressWarnings("deprecation")
     private int[] getRealScreenSize() {
+        long now = SystemClock.uptimeMillis();
+        if (cachedScreenW > 0 && cachedScreenH > 0 && (now - lastScreenSizeCheckTime) < 2000L) {
+            return new int[]{cachedScreenW, cachedScreenH};
+        }
         try {
-            WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+            if (cachedWindowManager == null) {
+                cachedWindowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
+            }
+            WindowManager wm = cachedWindowManager;
             if (wm != null) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                     WindowMetrics metrics = wm.getMaximumWindowMetrics();
                     if (metrics != null) {
                         Rect bounds = metrics.getBounds();
                         if (bounds.width() > 0 && bounds.height() > 0) {
-                            return new int[]{bounds.width(), bounds.height()};
+                            cachedScreenW = bounds.width();
+                            cachedScreenH = bounds.height();
+                            lastScreenSizeCheckTime = now;
+                            return new int[]{cachedScreenW, cachedScreenH};
                         }
                     }
                 } else {
                     DisplayMetrics realDm = new DisplayMetrics();
                     wm.getDefaultDisplay().getRealMetrics(realDm);
                     if (realDm.widthPixels > 0 && realDm.heightPixels > 0) {
-                        return new int[]{realDm.widthPixels, realDm.heightPixels};
+                        cachedScreenW = realDm.widthPixels;
+                        cachedScreenH = realDm.heightPixels;
+                        lastScreenSizeCheckTime = now;
+                        return new int[]{cachedScreenW, cachedScreenH};
                     }
                 }
             }
         } catch (Throwable ignored) {}
         DisplayMetrics dm = getResources().getDisplayMetrics();
-        return new int[]{dm.widthPixels, dm.heightPixels};
+        cachedScreenW = dm.widthPixels;
+        cachedScreenH = dm.heightPixels;
+        lastScreenSizeCheckTime = now;
+        return new int[]{cachedScreenW, cachedScreenH};
     }
 
     private boolean isOemSecurityOrPermissionPkg(String pkg) {
@@ -243,7 +338,10 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     Log.e(TAG, "Recovered in solveScreen loop", t);
                 } finally {
                     if (isRunning) {
-                        loopHandler.postDelayed(this, 140);
+                        long nextDelay = (offerState == OFFER_STATE_APP_ACTIVE ||
+                                          offerState == OFFER_STATE_INSTALLING ||
+                                          adStartTime > 0) ? 650 : 140;
+                        loopHandler.postDelayed(this, nextDelay);
                     }
                 }
             }
@@ -606,8 +704,22 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 }
             }
             if (!isRunning) return;
+            CharSequence evPkgSeq = event.getPackageName();
+            if (evPkgSeq != null) {
+                String evPkg = evPkgSeq.toString();
+                if ("com.quizearn.assistant".equals(evPkg) || "com.android.systemui".equals(evPkg)) {
+                    return;
+                }
+            }
             long now = System.currentTimeMillis();
             if (now - lastTapTime > 260) {
+                int evType = event.getEventType();
+                if (evType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                    long minGap = (offerState == OFFER_STATE_APP_ACTIVE ||
+                                   offerState == OFFER_STATE_INSTALLING ||
+                                   adStartTime > 0) ? 550 : 120;
+                    if (now - lastScanTickTime < minGap) return;
+                }
                 solveScreen();
             }
         } catch (Throwable t) {
@@ -635,6 +747,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
 
         long now = System.currentTimeMillis();
         if (now - lastTapTime < 260) return;
+        lastScanTickTime = now;
 
         AccessibilityNodeInfo root = null;
         try {
@@ -653,6 +766,23 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                 if (isQuizAppPackage(pkg)) {
                     lastActiveQuizPackage = pkg;
                 }
+            }
+            if (offerState == OFFER_STATE_APP_ACTIVE && !isAppCrashStuck &&
+                !offerTargetPackage.isEmpty() && pkg.contains(offerTargetPackage) &&
+                (now - lastActiveScanTime < 1500)) {
+                int[] fastSize = getRealScreenSize();
+                try {
+                    externalAppBackCount = 0;
+                    offerAppLaunchAttempts = 0;
+                    handleActiveAppUsage(now, fastSize[0], fastSize[1], null);
+                } finally {
+                    try { root.recycle(); } catch (Throwable ignored) {}
+                }
+                return;
+            }
+            if (offerState == OFFER_STATE_APP_ACTIVE && !isAppCrashStuck &&
+                !offerTargetPackage.isEmpty() && pkg.contains(offerTargetPackage)) {
+                lastActiveScanTime = now;
             }
             collectAllNodes(root, allNodes, nodesToRecycle, 0);
         }
@@ -1924,9 +2054,9 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     int cy = opt.rect.centerY();
                     if (cy < optMinY || cy > optMaxY) continue;
                     String rawOptText = opt.text != null ? opt.text.trim() : "";
-                    String strippedText = rawOptText.replaceFirst("^(?i)[A-D1-4][\\s\\.\\)\\:\\-]+", "").trim();
+                    String strippedText = stripOptionPrefix(rawOptText);
                     String cleaned = cleanNumText(strippedText);
-                    if (cleaned.length() > 0 && cleaned.matches("^\\d+$")) {
+                    if (isDigitsOnly(cleaned)) {
                         optionNumbers.add(cleaned);
                     }
                 }
@@ -1936,7 +2066,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     int cy = item.rect.centerY();
                     if (cy < qMinY || cy > qMaxY) continue;
                     String raw = cleanNumText(item.text);
-                    if (raw.length() > 0 && raw.matches("^\\d+$")) {
+                    if (isDigitsOnly(raw)) {
                         if (optionNumbers.contains(raw)) {
                             detectedTarget = "CAPTCHA:" + raw;
                             targetAnsStr = raw;
@@ -1983,7 +2113,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                         int cy = item.rect.centerY();
                         if (cy < qMinY || cy > qMaxY) continue;
                         String cleaned = cleanNumText(item.text);
-                        if (cleaned.length() > 0 && cleaned.matches("^\\d+$")) {
+                        if (isDigitsOnly(cleaned)) {
                             int area = item.rect.width() * item.rect.height();
                             if (area > maxArea) {
                                 maxArea = area;
@@ -2053,9 +2183,9 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
                     if (questionCenterY > 0 && cy <= questionCenterY) continue;
 
                     String rawOptText = opt.text != null ? opt.text.trim() : "";
-                    String strippedText = rawOptText.replaceFirst("^(?i)[A-D1-4][\\s\\.\\)\\:\\-]+", "").trim();
+                    String strippedText = stripOptionPrefix(rawOptText);
                     String optText = cleanNumText(strippedText);
-                    String optDesc = cleanNumText(opt.contentDesc != null ? opt.contentDesc.trim().replaceFirst("^(?i)[A-D1-4][\\s\\.\\)\\:\\-]+", "").trim() : "");
+                    String optDesc = cleanNumText(stripOptionPrefix(opt.contentDesc));
                     String rawCleaned = cleanNumText(rawOptText);
 
                     // STRICT EXACT MATCH ONLY!
@@ -2121,10 +2251,9 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
     }
 
     private int detectLiveGemsCount(List<NodeItem> allNodes, int screenW, int screenH) {
-        Pattern slash25Pattern = Pattern.compile("(\\d+)\\s*/\\s*25");
         for (NodeItem item : allNodes) {
-            Matcher m = slash25Pattern.matcher(item.text);
-            if (!m.find() && !item.contentDesc.isEmpty()) m = slash25Pattern.matcher(item.contentDesc);
+            Matcher m = SLASH_25_PATTERN.matcher(item.text);
+            if (!m.find() && !item.contentDesc.isEmpty()) m = SLASH_25_PATTERN.matcher(item.contentDesc);
             if (m.find()) {
                 try { return Integer.parseInt(m.group(1)); } catch (Exception ignored) {}
             }
@@ -2138,7 +2267,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             }
         }
         for (int i = 0; i < allNodes.size() - 1; i++) {
-            if (allNodes.get(i + 1).text.replaceAll("\\s+", "").equals("/25")) {
+            if (cleanNumText(allNodes.get(i + 1).text).equals("/25")) {
                 try {
                     int g = Integer.parseInt(allNodes.get(i).text.trim());
                     if (g >= 0 && g <= 25) return g;
@@ -2151,7 +2280,7 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
             int cx = item.rect.centerX();
             int cy = item.rect.centerY();
             if (cx > (int)(screenW * 0.65f) && cy < (int)(screenH * 0.12f)) {
-                String digits = item.text.replaceAll("[^0-9]", "").trim();
+                String digits = extractDigits(item.text);
                 if (digits.length() >= 1 && digits.length() <= 2) {
                     try {
                         int val = Integer.parseInt(digits);
@@ -2165,16 +2294,15 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         }
         if (headerVal >= 0) return headerVal;
 
-        Pattern gemsCollectedPattern = Pattern.compile("(\\d+)\\s*gems?\\s*collected", Pattern.CASE_INSENSITIVE);
         for (int i = 0; i < allNodes.size(); i++) {
             NodeItem item = allNodes.get(i);
-            Matcher m = gemsCollectedPattern.matcher(item.text);
-            if (!m.find() && !item.contentDesc.isEmpty()) m = gemsCollectedPattern.matcher(item.contentDesc);
+            Matcher m = GEMS_COLLECTED_PATTERN.matcher(item.text);
+            if (!m.find() && !item.contentDesc.isEmpty()) m = GEMS_COLLECTED_PATTERN.matcher(item.contentDesc);
             if (m.find()) {
                 try { return Integer.parseInt(m.group(1)); } catch (Exception ignored) {}
             }
             if (item.text.trim().toLowerCase().contains("gems collected") && i > 0) {
-                String prevDigits = allNodes.get(i - 1).text.replaceAll("[^0-9]", "").trim();
+                String prevDigits = extractDigits(allNodes.get(i - 1).text);
                 if (prevDigits.length() >= 1 && prevDigits.length() <= 2) {
                     try { return Integer.parseInt(prevDigits); } catch (Exception ignored) {}
                 }
@@ -2389,7 +2517,8 @@ public class QuizEarnAccessibilityService extends AccessibilityService {
         String t = item.text.toLowerCase().trim();
         String d = item.contentDesc.toLowerCase().trim();
         String id = item.resId.toLowerCase().trim();
-        if ((t.contains(" in ") || d.contains(" in ") || t.contains(" in:") || t.contains("seconds") || t.matches(".*skip.*\\d+\\s*s.*")) &&
+        if ((t.contains(" in ") || d.contains(" in ") || t.contains(" in:") || t.contains("seconds") ||
+             (t.contains("skip") && SKIP_SEC_PATTERN.matcher(t).matches())) &&
             !t.contains("in 0") && !d.contains("in 0")) {
             return false;
         }
